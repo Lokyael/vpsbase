@@ -274,7 +274,7 @@ opt_exit_status() {
     content=$(cat <<'EOF'
 __exit_status() {
     local status=$?
-    [[ "$status" -ne 0 ]] && printf '\[\e[01;31m\][%s]\[\e[00m\] ' "$status"
+    [[ "$status" -ne 0 ]] && printf '\001\e[01;31m\002[%s]\001\e[00m\002 ' "$status"
 }
 if [[ "$PS1" != *'$(__exit_status)'* ]]; then
     PS1='$(__exit_status)'"$PS1"
