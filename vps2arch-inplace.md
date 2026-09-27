@@ -16,13 +16,7 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { printf '❌ 必须以 root 执行\n' >&2; exit 1; }
 
-if command -v curl >/dev/null 2>&1; then
-    curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/vps2arch-inplace.sh -o /root/vps2arch-inplace.sh
-elif command -v wget >/dev/null 2>&1; then
-    wget -qO /root/vps2arch-inplace.sh https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/vps2arch-inplace.sh
-else
-    printf '❌ 缺少 curl 或 wget\n' >&2; exit 1
-fi
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/vps2arch-inplace.sh -o /root/vps2arch-inplace.sh
 
 bash /root/vps2arch-inplace.sh
 )
