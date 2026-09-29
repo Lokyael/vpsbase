@@ -11,9 +11,9 @@ Git 基础配置与 VPS 终端安全开发实践。
 - 勾选 **Block command line pushes that expose my email**（阻止命令行推送意外泄露真实邮箱）；
 - 确认官方分配的专属匿名地址（通常为 `[ID]+[username]@users.noreply.github.com`）。
 
-### 2. Linux 全局配置
+### 2. 跨平台全局配置
 
-整段执行。交互式输入用户名与邮箱，支持自动推导 GitHub 匿名邮箱：
+整段执行（兼容 Linux / Windows Git Bash）。交互式输入用户名与邮箱，支持自动推导 GitHub 匿名邮箱，统一 LF 换行与 UTF-8 编码：
 
 ```bash
 (
@@ -47,30 +47,26 @@ if [[ -z "$GIT_EMAIL" ]]; then
 fi
 [[ -n "$GIT_EMAIL" ]] || { printf '❌ 邮箱不能为空\n' >&2; exit 1; }
 
+# 用户信息与默认分支
 git config --global user.name "$GIT_USER"
 git config --global user.email "$GIT_EMAIL"
 git config --global init.defaultBranch main
-git config --global core.editor micro
+
+# 编辑器（检测 micro 编辑器，未安装则保持系统默认）
+command -v micro >/dev/null 2>&1 && git config --global core.editor micro
+
+# 跨平台全端统一换行符（LF）
 git config --global core.autocrlf input
+git config --global core.eol lf
 git config --global core.safecrlf warn
+
+# 中文路径与 UTF-8 编码防乱码
 git config --global core.quotepath false
 git config --global i18n.commitencoding utf-8
 git config --global i18n.logoutputencoding utf-8
+
 git config --global --list
 )
-```
-
-### 3. Windows 协同与字符编码
-
-避免换行符冲突及终端中文路径转义、日志乱码：
-
-```bash
-git config --global core.autocrlf true
-git config --global core.safecrlf warn
-git config --global core.quotepath false
-git config --global i18n.commitencoding utf-8
-git config --global i18n.logoutputencoding utf-8
-git config --global core.pager "less -r"
 ```
 
 ## VPS 终端开发
@@ -82,32 +78,38 @@ git config --global core.pager "less -r"
 整段执行，自动生成专属密钥、输出公钥、克隆并局部绑定：
 
 ```bash
+(
+set -euo pipefail
+
 REPO=""
 USER=""
 
 [[ -z "$REPO" ]] && read -rp "仓库名称: " REPO < /dev/tty
 [[ -z "$USER" ]] && read -rp "GitHub 用户名: " USER < /dev/tty
 
-if [[ -n "$REPO" && -n "$USER" ]]; then
-    KEY="$HOME/.ssh/$REPO"
-    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-    [[ -f "$KEY" ]] || ssh-keygen -t ed25519 -f "$KEY" -C "deploy_$REPO" -N "" >/dev/null
+[[ -n "$REPO" && -n "$USER" ]] || { printf '❌ 仓库名与用户名均不能为空\n' >&2; exit 1; }
 
-    printf '\n添加到 GitHub 仓库 Settings -> Deploy keys (勾选 Allow write access):\n\n'
-    cat "${KEY}.pub"
-    printf '\n'
+KEY="$HOME/.ssh/$REPO"
+mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+[[ -f "$KEY" ]] || ssh-keygen -t ed25519 -f "$KEY" -C "deploy_$REPO" -N "" >/dev/null
 
-    read -rp "已在 GitHub 添加该公钥？[y/N]: " READY < /dev/tty
-    if [[ "$READY" =~ ^[yY]$ ]]; then
-        [[ -d "$REPO" ]] || git clone "git@github.com:${USER}/${REPO}.git"
-        cd "$REPO"
-        git config core.sshCommand "ssh -i ~/.ssh/${REPO} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -F none"
-    else
-        printf '已取消\n'
-    fi
-else
-    printf '❌ 仓库名与用户名均不能为空\n' >&2
+printf '\n添加到 GitHub 仓库 Settings -> Deploy keys (勾选 Allow write access):\n\n'
+cat "${KEY}.pub"
+printf '\n'
+
+read -rp "已在 GitHub 添加该公钥？[y/N]: " READY < /dev/tty
+[[ "$READY" =~ ^[yY]$ ]] || { printf '已取消\n'; exit 0; }
+
+SSH_CMD="ssh -i ~/.ssh/${REPO} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -F none"
+
+if [[ ! -d "$REPO" ]]; then
+    GIT_SSH_COMMAND="$SSH_CMD" git clone "git@github.com:${USER}/${REPO}.git"
 fi
+
+cd "$REPO"
+git config core.sshCommand "$SSH_CMD"
+printf '✅ 仓库 %s 初始化并绑定专属密钥成功\n' "$REPO"
+)
 ```
 
 ### 2. GitHub 分支保护

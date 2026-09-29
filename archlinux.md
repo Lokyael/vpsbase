@@ -56,7 +56,7 @@ bash /tmp/archlinux-init.sh --opt
 - **Micro 终端编辑器**：
   现代化终端文本编辑器，具备鼠标滚轮与直观快捷键，自动配置 4 空格缩进、软换行与系统终端剪贴板支持，并设置为系统默认 `EDITOR`。
 - **archlinuxcn 社区源与 paru (AUR 助手)**：
-  配置国内镜像站的 `archlinuxcn` 源并安装官方密钥环、开发编译工具链与 `paru`，便于快速安装与维护 AUR 软件包。
+  配置镜像站的 `archlinuxcn` 源并安装官方密钥环、开发编译工具链与 `paru`，便于快速安装与维护 AUR 软件包。
 - **Node.js LTS 环境 (fnm)**：
   基于 Rust 编写的原生极速 Node.js 多版本管理器，自动安装并设置默认 Node LTS 版本，并在 Shell 中注入目录环境钩子。
 - **Python 极速工具链 (uv)**：
@@ -87,14 +87,17 @@ grep -q "BOOT_IMAGE=" /proc/cmdline && echo "GRUB" || echo "非 GRUB 或未知"
 
 ### 禁用 zswap（GRUB）
 
-若 zswap 为 `Y`，需在 GRUB 中禁用并重启生效：
+若 zswap 为 `Y`，需直接修改主配置文件 `/etc/default/grub` 禁用并重启生效：
 
 ```bash
+(
+set -euo pipefail
 if ! grep -q 'zswap\.enabled=0' /etc/default/grub; then
     sudo sed -i 's/\(GRUB_CMDLINE_LINUX_DEFAULT="[^"]*\)/\1 zswap.enabled=0/' /etc/default/grub
 fi
 sudo grub-mkconfig -o /boot/grub/grub.cfg
 sudo reboot
+)
 ```
 
 ### 配置 zram-generator
@@ -102,6 +105,8 @@ sudo reboot
 重启后确认 zswap 为 `N` 且无活动磁盘 Swap 后执行：
 
 ```bash
+(
+set -euo pipefail
 sudo pacman -S --needed --noconfirm zram-generator
 
 sudo mkdir -p /etc/systemd/zram-generator.conf.d
@@ -120,6 +125,7 @@ sudo systemctl start dev-zram0.swap
 systemctl is-active --quiet dev-zram0.swap && echo "dev-zram0.swap: active" || echo "dev-zram0.swap: failed"
 swapon --show
 cat /sys/block/zram0/comp_algorithm
+)
 ```
 
 ## 后续管理

@@ -4,7 +4,7 @@
 
 ## 一键部署
 
-以具备 `sudo` 权限的普通用户执行。确认 SSH 端口和额外端口后，脚本写入规则、校验并启用 nftables；Fail2ban 默认跳过。
+以具备 `sudo` 权限的普通用户执行。确认 SSH 端口和额外端口后，脚本直接写入 nftables 主配置文件 `/etc/nftables.conf`、校验并启用服务；Fail2ban 默认跳过。
 
 ```bash
 (
@@ -25,7 +25,7 @@ fi
 # 额外端口为空时不生成放行规则
 read -rp '额外开放的 TCP 端口（如 80,443，回车不开放）: ' extra_tcp < /dev/tty
 read -rp '额外开放的 UDP 端口（如 53,443，回车不开放）: ' extra_udp < /dev/tty
-read -rp '是否同时配置 Fail2ban（Web 防扫描 Jail）？[y/N]: ' enable_fail2ban < /dev/tty
+read -rp '是否同时配置 Fail2ban（SSH 增强防护 Jail）？[y/N]: ' enable_fail2ban < /dev/tty
 
 format_ports() {
     local ports="$1"
@@ -116,27 +116,17 @@ sudo systemctl enable --now nftables
 if [[ "$enable_fail2ban" =~ ^[Yy]$ ]]; then
     # Fail2ban 独立使用 f2b-table，不会被上面的规则重载清除
     sudo pacman -S --needed --noconfirm fail2ban
-    sudo install -d -m 755 /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+    sudo install -d -m 755 /etc/fail2ban/jail.d
 
-    sudo tee /etc/fail2ban/filter.d/nginx-badbots.conf > /dev/null <<'EOF'
-[Definition]
-failregex = ^<HOST> - .* "(GET|POST|HEAD).*" (401|403|429) .*$
-            ^<HOST> - .* "(GET|POST|HEAD) .*\.(php|asp|env|git|bak|sql).*" 404 .*$
-ignoreregex =
-EOF
-
-    mkdir -p "$HOME/containers/nginx/logs"
-    touch "$HOME/containers/nginx/logs/access.log"
-    sudo tee /etc/fail2ban/jail.d/nginx-badbots.local > /dev/null <<EOF
-[nginx-badbots]
+    sudo tee /etc/fail2ban/jail.d/sshd.local > /dev/null <<EOF
+[sshd]
 enabled   = true
-port      = 443
-filter    = nginx-badbots
-logpath   = $HOME/containers/nginx/logs/access.log
-backend   = polling
+port      = $SSH_PORT
+mode      = aggressive
+backend   = systemd
 banaction = nftables[type=multiport]
-maxretry  = 5
-findtime  = 300
+maxretry  = 3
+findtime  = 600
 bantime   = 86400
 EOF
 
@@ -153,8 +143,8 @@ EOF
     done
     [[ "$fail2ban_ready" == 1 ]] \
         || { printf '❌ Fail2ban 未就绪，请查看 journalctl -u fail2ban\n' >&2; exit 1; }
-    sudo fail2ban-client status nginx-badbots
-    printf '✅ Fail2ban 已启用\n'
+    sudo fail2ban-client status sshd
+    printf '✅ Fail2ban 已启用 (sshd)\n'
 else
     printf '⏭️ 跳过 Fail2ban\n'
 fi
@@ -204,21 +194,21 @@ sudo nft add element inet filter ssh_dynamic_ban_v6 { 2001:db8::1 }
 
 ### Fail2ban
 
-主脚本选择 `y` 后会配置 `nginx-badbots` Jail。`f2b-table` 按需创建；没有活跃封禁时不存在是正常现象。
+主脚本选择 `y` 后会配置针对 SSH 的 `sshd` Jail（直接监控 systemd journal 认证失败日志，与 nftables 的 4 层速率限制形成纵深防御）。`f2b-table` 按需创建；没有活跃封禁时不存在是正常现象。
 
 ```bash
 # 查看 Jail 与动态表
-sudo fail2ban-client status nginx-badbots
+sudo fail2ban-client status sshd
 sudo nft list table inet f2b-table 2>/dev/null \
   || echo '当前无 Fail2ban 封禁'
 
 # 解封
-sudo fail2ban-client set nginx-badbots unbanip [HERE_IP]
+sudo fail2ban-client set sshd unbanip [HERE_IP]
 
 # 测试封禁联动
-sudo fail2ban-client set nginx-badbots banip 192.0.2.1
+sudo fail2ban-client set sshd banip 192.0.2.1
 sudo nft list table inet f2b-table
-sudo fail2ban-client set nginx-badbots unbanip 192.0.2.1
+sudo fail2ban-client set sshd unbanip 192.0.2.1
 ```
 
 ## 卸载 Fail2ban
@@ -226,6 +216,7 @@ sudo fail2ban-client set nginx-badbots unbanip 192.0.2.1
 确认不再需要 Fail2ban 后执行：
 
 ```bash
+(
 sudo systemctl disable --now fail2ban 2>/dev/null || true
 sudo pacman -Rns --noconfirm fail2ban 2>/dev/null || true
 sudo rm -rf /etc/fail2ban /var/lib/fail2ban /var/log/fail2ban* /run/fail2ban /var/run/fail2ban
@@ -233,6 +224,7 @@ sudo nft destroy table inet f2b-table 2>/dev/null || true
 sudo nft destroy table inet fail2ban 2>/dev/null || true
 sudo nft -f /etc/nftables.conf
 printf '✅ Fail2ban 已移除，nftables 已重载\n'
+)
 ```
 
 防火墙部署完成后进入 [git.md](git.md)。

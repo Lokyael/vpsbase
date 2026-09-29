@@ -77,6 +77,65 @@ has_managed_block() {
 }
 
 # ========================================================
+# 历史记录格式化清洗工具 (Normalize History)
+# ========================================================
+
+normalize_history() {
+    local histfile="${HISTFILE:-$HOME/.bash_history}"
+    [[ -f "$histfile" && -s "$histfile" && -r "$histfile" && -w "$histfile" && ! -L "$histfile" ]] || return 0
+    history -a 2>/dev/null || true
+
+    local has_unformatted=0
+    if awk '
+        BEGIN { bad=0 }
+        /^#[0-9]+$/ { have_stamp=1; next }
+        { if (!have_stamp) { bad=1; exit 0 } }
+        END { if (bad) exit 0; exit 1 }
+    ' "$histfile" 2>/dev/null; then
+        has_unformatted=1
+    fi
+
+    [[ "$has_unformatted" -eq 1 ]] || return 0
+
+    local base_time tmp_norm
+    base_time=$(stat -c '%Y' "$histfile" 2>/dev/null || date +%s)
+    tmp_norm=$(mktemp "${histfile%/*}/.bash_history.norm.XXXXXX") || return 0
+
+    if awk -v btime="$base_time" '
+        BEGIN { count=0; has_cmd=0; has_stamp=0; stamp="" }
+        function flush_line() {
+            if (!has_cmd) return
+            print (has_stamp ? stamp : "#" (btime + count))
+            print cmd
+            count++
+            has_cmd=0; has_stamp=0; stamp=""; cmd=""
+        }
+        /^#[0-9]+$/ {
+            if (has_cmd) flush_line()
+            has_stamp=1; stamp=$0; next
+        }
+        {
+            if (has_stamp) {
+                if (!has_cmd) { cmd=$0; has_cmd=1 }
+                else { cmd=cmd "\n" $0 }
+            } else {
+                if (has_cmd) flush_line()
+                cmd=$0; has_cmd=1; has_stamp=0; stamp=""
+            }
+        }
+        END { flush_line() }
+    ' "$histfile" > "$tmp_norm" && [[ -s "$tmp_norm" ]]; then
+        cp --attributes-only --preserve=mode,ownership "$histfile" "$tmp_norm" 2>/dev/null || true
+        mv -f "$tmp_norm" "$histfile"
+        history -c 2>/dev/null || true
+        history -r 2>/dev/null || true
+        printf '  ℹ️  已自动规范化已有历史记录的时间戳格式\n'
+    else
+        rm -f "$tmp_norm"
+    fi
+}
+
+# ========================================================
 # 阶段 1: 绝对通用的基础环境初始化
 # ========================================================
 
@@ -216,6 +275,9 @@ EOF
 
     upsert_managed_block "$BASHRC" "archlinux-base" "$base_content"
 
+    # 6. 对已有历史记录做首次时间戳合规化清洗（避免未配置 HISTTIMEFORMAT 前产生的裸指令造成格式断层）
+    normalize_history
+
     printf '\n✅ 基础环境初始化完成。\n'
     printf '   用户: %s | 主机名: %s | 时区: UTC | 语言: en_US.UTF-8\n' "$user_name" "$new_host"
 }
@@ -226,7 +288,9 @@ EOF
 
 # 1. 多终端历史实时同步
 opt_sync_history() {
-    printf '==> [配置] 多终端历史实时同步...\n'
+    local action="配置"
+    has_managed_block "$BASHRC" "archlinux:sync-history" && action="覆盖更新"
+    printf '==> [%s] 多终端历史实时同步...\n' "$action"
     local content
     content=$(cat <<'EOF'
 __sync_history() {
@@ -246,7 +310,9 @@ EOF
 
 # 2. Git 分支状态提示符
 opt_git_prompt() {
-    printf '==> [配置] Git 分支状态提示符...\n'
+    local action="配置"
+    has_managed_block "$BASHRC" "archlinux:git-prompt" && action="覆盖更新"
+    printf '==> [%s] Git 分支状态提示符...\n' "$action"
     local content
     content=$(cat <<'EOF'
 __git_info() {
@@ -269,7 +335,9 @@ EOF
 
 # 3. 非零退出码错误高亮
 opt_exit_status() {
-    printf '==> [配置] 非零退出码错误高亮...\n'
+    local action="配置"
+    has_managed_block "$BASHRC" "archlinux:exit-status" && action="覆盖更新"
+    printf '==> [%s] 非零退出码错误高亮...\n' "$action"
     local content
     content=$(cat <<'EOF'
 __exit_status() {
@@ -287,7 +355,12 @@ EOF
 
 # 4. 历史记录去重函数
 opt_dedup_history() {
-    printf '==> [配置] 历史记录去重函数 (dedup-history)...\n'
+    local action="配置"
+    has_managed_block "$BASHRC" "archlinux:dedup-history" && action="覆盖更新"
+    printf '==> [%s] 历史记录去重函数 (dedup-history)...\n' "$action"
+
+    # 执行首次合规化清洗（确保历史文件具备完整时间戳，防止去重校验失败）
+    normalize_history
     local content
     content=$(cat <<'EOF'
 dedup-history() {
@@ -297,64 +370,61 @@ dedup-history() {
     [[ -e "$histfile" ]] || { printf 'HISTFILE 不存在：%s；暂无历史记录，安全结束。\n' "$histfile"; return 0; }
     [[ -f "$histfile" && -r "$histfile" && -w "$histfile" ]] || { printf 'HISTFILE 不是当前用户可读写的普通文件：%s；停止。\n' "$histfile"; return 1; }
     [[ -s "$histfile" ]] || { printf 'HISTFILE 为空：%s；安全结束。\n' "$histfile"; return 0; }
-    awk '
-        function fail(message) { printf "历史文件第 %d 行异常：%s\n", NR, message > "/dev/stderr"; bad=1; exit 2 }
-        {
-            if ($0 ~ /^#[0-9]+$/) {
-                if (!have) { if (NR != 1) fail("记录前出现无时间戳内容") }
-                else if (!has_line) fail("时间戳后没有命令内容")
-                have=1; has_line=0; next
-            }
-            if (!have) fail("文件开头不是 #数字 时间戳")
-            has_line=1
-        }
-        END {
-            if (!bad && !have) { print "历史文件为空或没有记录" > "/dev/stderr"; exit 2 }
-            if (!bad && !has_line) { print "历史文件末尾时间戳后没有命令内容" > "/dev/stderr"; exit 2 }
-        }' "$histfile" || { printf '%s\n' '历史文件不是完整的 Bash 时间戳格式，未执行去重。'; return 1; }
     history -a || { printf '%s\n' 'history -a 失败，未执行去重。'; return 1; }
     local histdir=${histfile%/*}
     [[ "$histdir" != "$histfile" ]] || histdir=.
     tmpfile=$(mktemp "$histdir/.bash_history.tmp.XXXXXX") || { printf '%s\n' '无法创建历史临时文件，未执行去重。'; return 1; }
     if ! awk '
-        function flush() {
-            if (!have) return
-            if (!has_line) { bad=1; return }
-            count++
-            stamp[count]=timestamp
-            text[count]=command
+        function fail(msg) {
+            printf "历史文件第 %d 行格式异常：%s；未执行去重。\n", NR, msg > "/dev/stderr"
+            bad=1
+            exit 2
         }
-        /^#[0-9]+$/ { flush(); timestamp=$0; command=""; has_line=0; have=1; next }
-        !have { bad=1; next }
-        !has_line { command=$0; has_line=1; next }
-        { command=command "\n" $0 }
+        /^#[0-9]+$/ {
+            if (have_stamp && !have_cmd) fail("时间戳后缺少对应命令")
+            if (have_cmd) {
+                count++
+                stamp[count] = curr_stamp
+                text[count] = curr_cmd
+            }
+            have_stamp = 1
+            have_cmd = 0
+            curr_stamp = $0
+            curr_cmd = ""
+            next
+        }
+        {
+            if (!have_stamp) fail("首条命令前缺少 #数字 时间戳")
+            if (!have_cmd) {
+                curr_cmd = $0
+                have_cmd = 1
+            } else {
+                curr_cmd = curr_cmd "\n" $0
+            }
+        }
         END {
-            flush()
-            if (bad || count == 0) exit 2
-            for (i=1; i<=count; i++) last[text[i]]=i
-            for (i=1; i<=count; i++) if (last[text[i]] == i) { print stamp[i]; print text[i] }
+            if (bad) exit 2
+            if (have_stamp && !have_cmd) fail("文件末尾时间戳后缺少对应命令")
+            if (have_cmd) {
+                count++
+                stamp[count] = curr_stamp
+                text[count] = curr_cmd
+            }
+            if (count == 0) fail("未解析到有效命令记录")
+            for (i = 1; i <= count; i++) last[text[i]] = i
+            for (i = 1; i <= count; i++) {
+                if (last[text[i]] == i) {
+                    print stamp[i]
+                    print text[i]
+                }
+            }
         }' "$histfile" > "$tmpfile"; then
         rm -f -- "$tmpfile"
-        printf '%s\n' '历史去重失败，原文件未修改。'
         return 1
     fi
-    if ! awk '
-        function fail(message) { printf "去重结果第 %d 行异常：%s\n", NR, message > "/dev/stderr"; bad=1; exit 2 }
-        {
-            if ($0 ~ /^#[0-9]+$/) {
-                if (!have) { if (NR != 1) fail("记录前出现无时间戳内容") }
-                else if (!has_line) fail("时间戳后没有命令内容")
-                have=1; has_line=0; next
-            }
-            if (!have) fail("文件开头不是 #数字 时间戳")
-            has_line=1
-        }
-        END {
-            if (!bad && !have) { print "去重结果为空或没有记录" > "/dev/stderr"; exit 2 }
-            if (!bad && !has_line) { print "去重结果末尾时间戳后没有命令内容" > "/dev/stderr"; exit 2 }
-        }' "$tmpfile"; then
+    if [[ ! -s "$tmpfile" ]]; then
         rm -f -- "$tmpfile"
-        printf '%s\n' '去重结果格式校验失败，原文件未修改。'
+        printf '%s\n' '去重后结果为空，原文件未修改。'
         return 1
     fi
     if ! cp --attributes-only --preserve=mode,ownership "$histfile" "$tmpfile"; then
@@ -375,7 +445,9 @@ EOF
 
 # 5. Micro 编辑器
 opt_micro() {
-    printf '==> [安装与配置] Micro 终端编辑器...\n'
+    local action="安装与配置"
+    command -v micro >/dev/null 2>&1 && action="覆盖更新"
+    printf '==> [%s] Micro 终端编辑器...\n' "$action"
     sudo pacman -S --needed --noconfirm micro
     mkdir -p "$HOME/.config/micro"
     if [[ ! -f "$HOME/.config/micro/settings.json" ]]; then
@@ -396,12 +468,14 @@ export VISUAL=micro
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:editor-micro" "$content"
-    printf '  ✅ Micro 编辑器已安装，并设为默认系统编辑器\n'
+    printf '  ✅ Micro 编辑器已就绪，并设为默认系统编辑器\n'
 }
 
 # 6. archlinuxcn 源与 paru
 opt_archlinuxcn() {
-    printf '==> [配置] archlinuxcn 软件源与 paru (AUR 助手)...\n'
+    local action="配置"
+    command -v paru >/dev/null 2>&1 && action="覆盖更新"
+    printf '==> [%s] archlinuxcn 软件源与 paru (AUR 助手)...\n' "$action"
     sudo sed -i '/^\[archlinuxcn\]/,/^\[/d' /etc/pacman.conf
     sudo tee -a /etc/pacman.conf > /dev/null <<'EOF'
 [archlinuxcn]
@@ -416,12 +490,14 @@ EOF
     }
     sudo pacman -Sy --needed --noconfirm archlinuxcn-keyring
     sudo pacman -S --needed --noconfirm git base-devel wget paru
-    printf '  ✅ archlinuxcn 源与 paru 安装成功: %s\n' "$(paru --version | head -n1)"
+    printf '  ✅ archlinuxcn 源与 paru 已就绪: %s\n' "$(paru --version | head -n1)"
 }
 
 # 7. Node.js (fnm)
 opt_fnm() {
-    printf '==> [安装与配置] Node.js 环境 (fnm)...\n'
+    local action="安装与配置"
+    command -v fnm >/dev/null 2>&1 && action="覆盖更新"
+    printf '==> [%s] Node.js 环境 (fnm)...\n' "$action"
     sudo pacman -S --needed --noconfirm fnm
     eval "$(fnm env --shell bash)"
     fnm install --lts && fnm default lts-latest && fnm use lts-latest
@@ -433,21 +509,25 @@ fi
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:fnm" "$content"
-    printf '  ✅ Node.js LTS 安装完成: %s (fnm)\n' "$(node --version 2>/dev/null || true)"
+    printf '  ✅ Node.js LTS 已就绪: %s (fnm)\n' "$(node --version 2>/dev/null || true)"
 }
 
 # 8. Python 工具链 (uv)
 opt_uv() {
-    printf '==> [安装] Python 工具链 (uv)...\n'
+    local action="安装"
+    command -v uv >/dev/null 2>&1 && action="更新"
+    printf '==> [%s] Python 工具链 (uv)...\n' "$action"
     sudo pacman -S --needed --noconfirm uv
-    printf '  ✅ uv 安装完成: %s\n' "$(uv --version)"
+    printf '  ✅ uv 已就绪: %s\n' "$(uv --version)"
 }
 
 # 9. GitHub CLI (gh)
 opt_gh() {
-    printf '==> [安装] GitHub CLI (gh)...\n'
+    local action="安装"
+    command -v gh >/dev/null 2>&1 && action="更新"
+    printf '==> [%s] GitHub CLI (gh)...\n' "$action"
     sudo pacman -S --needed --noconfirm github-cli
-    printf '  ✅ GitHub CLI 安装完成: %s\n' "$(gh --version | head -n1)"
+    printf '  ✅ GitHub CLI 已就绪: %s\n' "$(gh --version | head -n1)"
 }
 
 # ========================================================
