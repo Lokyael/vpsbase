@@ -65,7 +65,7 @@ Pi 原生（低摩擦通用主控：日常命令执行、代码生成与主会�
     └── oracle（决策质询与架构评估：提供第二意见，风险攻防与假设挑战）
 ```
 
-整段复制执行。自动校验纯净扩展环境，部署个人标准套件（`pi-search` 与 `pi-subagents`）并交互式引导完成检索服务凭证配置：
+整段复制执行。自动校验纯净扩展环境，一键部署个人标准套件（`pi-search` 与 `pi-subagents`）：
 
 ```bash
 (
@@ -78,6 +78,21 @@ curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-ext
 bash "$SCRIPT_FILE"
 )
 ```
+
+### 检索服务配置 (/search-config)
+
+套件部署完成后，直接在 Pi 会话中输入 `/search-config` 调出交互式图形菜单，按需配置各检索信源：
+
+| 信源 / 选项 | 默认 Base URL / 端点 | 核心定位与用途 | 必要性 |
+|---|---|---|---|
+| **Search API** | 自定义（兼容 OpenAI 端点） | 用于对检索内容进行结构化提炼的 LLM 端点（支持 Gemini / DeepSeek 等） | **必选**（检索基础） |
+| **Context7** | `https://context7.com` | 官方技术库与规范文档检索，自动版本适配并本地缓存 | 选配（开发文档增强） |
+| **Exa** | `https://api.exa.ai` | 高阶 AI 神经搜索引擎，精准获取前沿技术博文与社区深度见解（支持中转代理） | 选配（技术事实调研） |
+| **Tavily** | `https://api.tavily.com` | 事实类 AI 搜索引擎，快速聚合实时新闻与时效事实 | 选配（时效资讯查证） |
+| **Firecrawl** | `https://api.firecrawl.dev` | 动态网页清洗抓取，智能剔除广告与噪点，提取干净 Markdown | 选配（正文分析抓取） |
+
+配置说明：
+- **Exa Base URL**：官方直连端点为 `https://api.exa.ai`（默认直接回车保留）。
 
 常用 CLI 命令与维护速查：
 

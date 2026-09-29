@@ -12,7 +12,7 @@ CONFIG_FILE="${HOME}/.config/pi-search/config.json"
 RECOMMENDED_SEARCH="git:github.com/justhil/pi-search"
 RECOMMENDED_SUBAGENTS="npm:pi-subagents"
 
-MODE="all" # all | install-only | config-only | update | uninstall
+MODE="install" # install | config-only | update | uninstall
 NON_INTERACTIVE=0
 
 CLI_URL=""
@@ -20,6 +20,7 @@ CLI_KEY=""
 CLI_MODEL=""
 CLI_CTX7=""
 CLI_EXA=""
+CLI_EXA_URL=""
 CLI_TAVILY=""
 CLI_FIRECRAWL=""
 
@@ -28,9 +29,9 @@ show_help() {
 用法:
   bash scripts/pi-extensions.sh [选项]
 
-工作模式 (默认执行套件环境检查/安装并引导配置凭证):
-  --install-only              仅检查并安装个人标准扩展套件，跳过检索配置
-  --config-only               仅配置检索服务凭证，跳过扩展安装与环境检查
+工作模式:
+  (无参数，默认)              环境纯净度检查并一键部署个人标准套件 (pi-search, pi-subagents)
+  --config, --config-only     配置检索服务凭证 (日常推荐在 Pi 内输入 /search-config 可视化配置)
   --update                    升级已配置的扩展套件至最新版本 (pi update --extensions)
   --uninstall                 卸载个人标准扩展套件并可选项清理相关配置文件
 
@@ -40,6 +41,7 @@ show_help() {
   -m, --model <id>            检索模型名称 (默认: gemini-2.0-flash 或沿用旧值)
   --context7-key <key>        Context7 API Key (官方文档检索增强，选配)
   --exa-key <key>             Exa API Key (高阶神经搜索，选配)
+  --exa-url <url>             Exa API Base URL (默认: https://api.exa.ai)
   --tavily-key <key>          Tavily API Key (事实类 AI 搜索，选配)
   --firecrawl-key <key>       Firecrawl API Key (动态网页正文清洗抓取，选配)
 
@@ -51,11 +53,11 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --install-only)
-            MODE="install-only"
+        --install|--install-only)
+            MODE="install"
             shift
             ;;
-        --config-only)
+        --config|--config-only)
             MODE="config-only"
             shift
             ;;
@@ -85,6 +87,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --exa-key)
             CLI_EXA="${2:-}"
+            shift 2
+            ;;
+        --exa-url)
+            CLI_EXA_URL="${2:-}"
             shift 2
             ;;
         --tavily-key)
@@ -226,9 +232,11 @@ NODE
         printf '✅ 标准套件安装完成。当前已配置扩展:\n'
         pi list
     fi
+    printf '\n💡 检索服务凭证配置：\n'
+    printf '   启动 Pi 后输入 /search-config 即可调出交互式图形菜单，按需配置 Search API 与各信源凭证。\n'
 fi
 
-if [ "$MODE" = "install-only" ]; then
+if [ "$MODE" = "install" ] || [ "$MODE" = "install-only" ]; then
     exit 0
 fi
 
@@ -258,6 +266,7 @@ if [ -f "$CONFIG_FILE" ]; then
         model: c.model || "",
         ctx7: c.context7ApiKey || "",
         exa: c.exaApiKey || "",
+        exaUrl: c.exaBaseUrl || "",
         tavily: c.tavilyApiKey || "",
         fc: c.firecrawlApiKey || ""
       }));
@@ -271,6 +280,7 @@ NODE
     OLD_MODEL=$(node -e 'console.log(JSON.parse(process.argv[1]).model || "")' "$PREV_JSON")
     OLD_CTX7=$(node -e 'console.log(JSON.parse(process.argv[1]).ctx7 || "")' "$PREV_JSON")
     OLD_EXA=$(node -e 'console.log(JSON.parse(process.argv[1]).exa || "")' "$PREV_JSON")
+    OLD_EXA_URL=$(node -e 'console.log(JSON.parse(process.argv[1]).exaUrl || "")' "$PREV_JSON")
     OLD_TAVILY=$(node -e 'console.log(JSON.parse(process.argv[1]).tavily || "")' "$PREV_JSON")
     OLD_FIRECRAWL=$(node -e 'console.log(JSON.parse(process.argv[1]).fc || "")' "$PREV_JSON")
 fi
@@ -314,6 +324,7 @@ fi
 # 2. 高阶外网信源凭证配置 (Context7 / Exa / Tavily / Firecrawl)
 TARGET_CTX7="${CLI_CTX7:-$OLD_CTX7}"
 TARGET_EXA="${CLI_EXA:-$OLD_EXA}"
+TARGET_EXA_URL="${CLI_EXA_URL:-${OLD_EXA_URL:-https://api.exa.ai}}"
 TARGET_TAVILY="${CLI_TAVILY:-$OLD_TAVILY}"
 TARGET_FIRECRAWL="${CLI_FIRECRAWL:-$OLD_FIRECRAWL}"
 
@@ -345,9 +356,9 @@ if [ "$NON_INTERACTIVE" -eq 0 ] && [ -z "$CLI_CTX7" ] && [ -z "$CLI_EXA" ] && [ 
 fi
 
 # 3. 原子安全落盘
-node - "$CONFIG_FILE" "$TARGET_URL" "$TARGET_KEY" "$TARGET_MODEL" "$TARGET_CTX7" "$TARGET_EXA" "$TARGET_TAVILY" "$TARGET_FIRECRAWL" <<'NODE'
+node - "$CONFIG_FILE" "$TARGET_URL" "$TARGET_KEY" "$TARGET_MODEL" "$TARGET_CTX7" "$TARGET_EXA" "$TARGET_EXA_URL" "$TARGET_TAVILY" "$TARGET_FIRECRAWL" <<'NODE'
 const fs = require("fs");
-const [,, filePath, apiUrl, apiKey, model, ctx7, exa, tavily, fc] = process.argv;
+const [,, filePath, apiUrl, apiKey, model, ctx7, exa, exaUrl, tavily, fc] = process.argv;
 
 let current = {};
 if (fs.existsSync(filePath)) {
@@ -367,7 +378,7 @@ const config = {
   context7ApiKey: ctx7 || current.context7ApiKey || "",
   context7ResolveTtlHours: current.context7ResolveTtlHours || 168,
   context7DocsTtlHours: current.context7DocsTtlHours || 24,
-  exaBaseUrl: current.exaBaseUrl || "https://api.exa.ai",
+  exaBaseUrl: exaUrl || current.exaBaseUrl || "https://api.exa.ai",
   exaApiKey: exa || current.exaApiKey || "",
   tavilyApiKey: tavily || current.tavilyApiKey || "",
   firecrawlApiKey: fc || current.firecrawlApiKey || ""

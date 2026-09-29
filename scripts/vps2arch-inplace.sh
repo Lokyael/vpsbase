@@ -297,22 +297,56 @@ if [[ -z "$DNS_LIST" ]]; then
     ((dns_ok)) || die 'DNS 可用性测试连续 3 次失败，终止操作'
 fi
 
+MIRROR_SPEED=0
 test_mirror() {
     local url="${1%/}"
     [[ "$url" =~ ^https?://[A-Za-z0-9._~:/?#@!$\&\+\-=%]+$ ]] || return 1
-    local sample
-    sample=$(curl --fail --location --proto '=http,https' --connect-timeout 3 --max-time 3 \
-        --silent --show-error --range 0-511 "$url/iso/latest/sha256sums.txt" 2>/dev/null || true)
-    if [[ -n "$sample" ]] && grep -qiE '[0-9a-f]{64}[[:space:]]+archlinux' <<< "$sample" \
-        && ! grep -qiE '<!doctype|<html|<head|<body' <<< "$sample"; then
-        return 0
+    MIRROR_SPEED=0
+
+    local tmp_file
+    tmp_file=$(mktemp)
+
+    # 采样 256KB 评估吞吐，优先探测 core.db
+    local probe_url="$url/core/os/x86_64/core.db"
+    local res
+    res=$(curl --fail --location --proto '=http,https' \
+        --connect-timeout 2 --max-time 4 \
+        --silent --show-error \
+        --range 0-262143 \
+        -w "%{http_code} %{speed_download}" \
+        -o "$tmp_file" \
+        "$probe_url" 2>/dev/null || echo "000 0")
+
+    local code speed
+    read -r code speed <<< "$res"
+
+    # 若 core.db 探测失败则回退探测 sha256sums.txt
+    if [[ "$code" != "200" && "$code" != "206" ]] || grep -aqiE '<!doctype|<html|<head|<body' "$tmp_file"; then
+        probe_url="$url/iso/latest/sha256sums.txt"
+        res=$(curl --fail --location --proto '=http,https' \
+            --connect-timeout 2 --max-time 4 \
+            --silent --show-error \
+            --range 0-262143 \
+            -w "%{http_code} %{speed_download}" \
+            -o "$tmp_file" \
+            "$probe_url" 2>/dev/null || echo "000 0")
+        read -r code speed <<< "$res"
     fi
-    sample=$(curl --fail --location --proto '=http,https' --connect-timeout 3 --max-time 3 \
-        --silent --show-error --range 0-127 "$url/core/os/x86_64/core.db" 2>/dev/null || true)
-    if [[ -n "$sample" ]] && ! grep -qiE '<!doctype|<html|<head|<body' <<< "$sample"; then
-        return 0
+
+    if [[ "$code" != "200" && "$code" != "206" ]] || grep -aqiE '<!doctype|<html|<head|<body' "$tmp_file"; then
+        rm -f "$tmp_file"
+        return 1
     fi
-    return 1
+    rm -f "$tmp_file"
+
+    local speed_int=${speed%%.*}
+    MIRROR_SPEED=$(( speed_int / 1024 ))
+
+    # 吞吐门槛校验: 需 >= 100 KB/s (102400 B/s)
+    if (( speed_int < 102400 )); then
+        return 2
+    fi
+    return 0
 }
 
 DEFAULT_MIRROR=''
@@ -326,8 +360,14 @@ fi
 ARCH_MIRRORS=()
 if test_mirror "$DEFAULT_MIRROR"; then
     ARCH_MIRRORS=("$DEFAULT_MIRROR")
+    success "源镜像校验通过：$DEFAULT_MIRROR (${MIRROR_SPEED} KB/s)"
 else
-    notice "镜像源 [$DEFAULT_MIRROR] 测试失败（响应超时 >3000ms 或被阻断）"
+    ret=$?
+    if [[ "$ret" -eq 2 ]]; then
+        notice "镜像源 [$DEFAULT_MIRROR] 测速未达标（实测: ${MIRROR_SPEED} KB/s，低于 100 KB/s 阈值）"
+    else
+        notice "镜像源 [$DEFAULT_MIRROR] 测试失败（响应超时 >4000ms 或被阻断）"
+    fi
     mirror_ok=0
     for ((attempt=1; attempt<=3; attempt++)); do
         action "[$attempt/3] 请输入 Arch 镜像源 URL: "
@@ -337,10 +377,15 @@ else
             if test_mirror "$input_mirror"; then
                 ARCH_MIRRORS=("$input_mirror")
                 mirror_ok=1
-                success "源镜像校验通过：$input_mirror"
+                success "源镜像校验通过：$input_mirror (${MIRROR_SPEED} KB/s)"
                 break
             else
-                notice "输入的镜像源 [$input_mirror] 测试失败"
+                ret=$?
+                if [[ "$ret" -eq 2 ]]; then
+                    notice "输入的镜像源 [$input_mirror] 测速未达标（实测: ${MIRROR_SPEED} KB/s，低于 100 KB/s 阈值）"
+                else
+                    notice "输入的镜像源 [$input_mirror] 测试失败（无法连接或非合法镜像）"
+                fi
             fi
         else
             notice "输入为空"

@@ -16,7 +16,7 @@
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { printf '❌ 必须以 root 执行\n' >&2; exit 1; }
 
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/vps2arch.sh -o /root/vps2arch.sh
+curl -fL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/vps2arch.sh -o /root/vps2arch.sh
 
 bash /root/vps2arch.sh
 )

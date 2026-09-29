@@ -75,19 +75,35 @@ git config --global --list
 
 ### 1. 仓库初始化与绑定
 
-整段执行，自动生成专属密钥、输出公钥、克隆并局部绑定：
+整段执行，支持交互确认存放目录（默认当前工作目录）、生成专属密钥、输出公钥、克隆并局部绑定：
 
 ```bash
 (
 set -euo pipefail
 
-REPO=""
 USER=""
+REPO=""
+DIR=""
 
-[[ -z "$REPO" ]] && read -rp "仓库名称: " REPO < /dev/tty
 [[ -z "$USER" ]] && read -rp "GitHub 用户名: " USER < /dev/tty
+[[ -z "$REPO" ]] && read -rp "仓库名称: " REPO < /dev/tty
+[[ -z "$DIR" ]] && read -rp "本地存放目录 [默认 $PWD]: " DIR < /dev/tty
 
-[[ -n "$REPO" && -n "$USER" ]] || { printf '❌ 仓库名与用户名均不能为空\n' >&2; exit 1; }
+[[ -n "$USER" && -n "$REPO" ]] || { printf '❌ 用户名与仓库名均不能为空\n' >&2; exit 1; }
+
+DIR="${DIR:-$PWD}"
+DIR="${DIR/#\~/$HOME}"
+mkdir -p "$DIR"
+BASE_DIR="$(cd "$DIR" && pwd)"
+REPO_DIR="${BASE_DIR%/}/$REPO"
+
+if [[ "$BASE_DIR" == "/" ]]; then
+    printf '⚠️  目标存放路径位于根目录 (/)\n' >&2
+    read -rp "确认直接在根目录下创建？[y/N]: " ROOT_CONFIRM < /dev/tty
+    [[ "$ROOT_CONFIRM" =~ ^[yY]$ ]] || { printf '已取消，请重新运行并指定合理存放目录\n'; exit 1; }
+fi
+
+printf '   目标仓库路径: %s\n' "$REPO_DIR"
 
 KEY="$HOME/.ssh/$REPO"
 mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
@@ -102,11 +118,11 @@ read -rp "已在 GitHub 添加该公钥？[y/N]: " READY < /dev/tty
 
 SSH_CMD="ssh -i ~/.ssh/${REPO} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -F none"
 
-if [[ ! -d "$REPO" ]]; then
-    GIT_SSH_COMMAND="$SSH_CMD" git clone "git@github.com:${USER}/${REPO}.git"
+if [[ ! -d "$REPO_DIR" ]]; then
+    GIT_SSH_COMMAND="$SSH_CMD" git clone "git@github.com:${USER}/${REPO}.git" "$REPO_DIR"
 fi
 
-cd "$REPO"
+cd "$REPO_DIR"
 git config core.sshCommand "$SSH_CMD"
 printf '✅ 仓库 %s 初始化并绑定专属密钥成功\n' "$REPO"
 )

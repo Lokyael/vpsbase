@@ -336,22 +336,25 @@ if (remoteData.length > 0) {
     const mt = item.max_output_tokens || item.max_completion_tokens || spec?.limit?.output || 16384;
     const reasoning = spec?.reasoning !== undefined ? Boolean(spec.reasoning) : /thinking|reasoning|think|-r1|luna|sol|o1|o3|o4/i.test(id);
 
+    const rawInput = spec?.modalities?.input || ["text", "image"];
+    const cleanInput = rawInput.filter(i => i === "text" || i === "image");
+
     const modelObj = {
       id,
       name: spec?.name || id,
       api: isGpt ? "openai-responses" : "openai-completions",
       reasoning,
-      input: spec?.modalities?.input || ["text", "image"],
+      input: cleanInput.length > 0 ? cleanInput : ["text", "image"],
       contextWindow: Number(cw),
       maxTokens: Number(mt)
     };
 
-    if (spec?.cost) {
+    if (spec?.cost && typeof spec.cost.input === "number" && typeof spec.cost.output === "number") {
       modelObj.cost = {
-        input: spec.cost.input,
-        output: spec.cost.output,
-        cacheRead: spec.cost.cache_read,
-        cacheWrite: spec.cost.cache_write
+        input: Number(spec.cost.input),
+        output: Number(spec.cost.output),
+        cacheRead: typeof spec.cost.cache_read === "number" ? Number(spec.cost.cache_read) : 0,
+        cacheWrite: typeof spec.cost.cache_write === "number" ? Number(spec.cost.cache_write) : 0
       };
     }
 
