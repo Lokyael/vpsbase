@@ -109,7 +109,7 @@ Pi 仅在发起请求瞬间在内存派生子进程调用 `bw` 注入 Token，�
 运行 [pi.md](pi.md) 检索配置向导时，脚本自动从 `bw` 内存提取并填充，免去手动输入：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --config-only
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --config-only
 ```
 
 ### 3. 服务端自动化运维调用 (svc-ops)

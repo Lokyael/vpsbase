@@ -22,7 +22,28 @@ printf '✅ Node 插件环境 (fnm): %s (npm %s)\n' "$(node -v)" "$(npm -v)"
 )
 ```
 
-## 模型端点与凭证配置
+## 核心配置：Provider、模型与 Pi 偏好
+
+`pi-provider.sh` 一并配置 Provider、模型、凭证和 Pi 基础偏好：
+
+```json
+{
+  "defaultThinkingLevel": "high",
+  "theme": "system",
+  "compaction": {
+    "enabled": false
+  },
+  "cacheWarming": "off",
+  "quietStartup": true,
+  "enableInstallTelemetry": false,
+  "terminal": {
+    "showImages": false
+  },
+  "markdown": {
+    "mermaid": "off"
+  }
+}
+```
 
 适用于兼容反向代理、聚合网关或本地服务（Ollama / vLLM）。配置后即完成核心闭环，可独立进行日常开发对话。
 
@@ -39,7 +60,7 @@ set -Eeuo pipefail
 SCRIPT_FILE=$(mktemp)
 trap 'rm -f "$SCRIPT_FILE"' EXIT
 
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-models.sh -o "$SCRIPT_FILE"
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh -o "$SCRIPT_FILE"
 bash "$SCRIPT_FILE"
 )
 ```
@@ -48,13 +69,13 @@ bash "$SCRIPT_FILE"
 
 ```bash
 # 查看端点配置脚本全部选项
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-models.sh | bash -s -- -h
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh | bash -s -- -h
 
 # 命令行指定 Bitwarden 标志引用模式
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-models.sh | bash -s -- -p cpa -u https://cpa.[DOMAIN]/v1 --mode bw -b cpa
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh | bash -s -- -p cpa -u https://cpa.[DOMAIN]/v1 --mode bw -b cpa
 
 # 命令行指定原生金库模式 (密钥存入 auth.json)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-models.sh | bash -s -- -p cpa -u https://cpa.[DOMAIN]/v1 --mode direct -k "[KEY]"
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh | bash -s -- -p cpa -u https://cpa.[DOMAIN]/v1 --mode direct -k "[KEY]"
 ```
 
 ## 扩展套件与检索配置
@@ -84,7 +105,7 @@ set -Eeuo pipefail
 SCRIPT_FILE=$(mktemp)
 trap 'rm -f "$SCRIPT_FILE"' EXIT
 
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh -o "$SCRIPT_FILE"
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh -o "$SCRIPT_FILE"
 bash "$SCRIPT_FILE"
 )
 ```
@@ -113,22 +134,22 @@ bash "$SCRIPT_FILE"
 pi list
 
 # Bitwarden CLI 自动化静默配置 (需先执行 export BW_SESSION=$(bw unlock --raw))
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --config-only -y
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --config-only -y
 
 # 交互式向导配置 (自动以已存凭据或 bw 条目为默认值，支持回车确认或微调)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --config-only
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --config-only
 
 # 命令行显式指定参数 (配合 bw 动态提取注入)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --config-only \
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --config-only \
 -u https://cpa.[DOMAIN]/v1 \
 -k "$(bw get password cpa)" \
 --exa-key "$(bw get password search-exa)"
 
 # 全局更新已配置的扩展套件至最新版
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --update
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --update
 
 # 卸载个人标准套件
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --uninstall
 ```
 
 ## 多智能体协作分工
@@ -148,11 +169,11 @@ curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-ext
 - **链式流水线（调研到质询）**：`先让 researcher 调研最新规范，再让 oracle 评估方案风险`
 - **后台自主推进**：耗时任务自动转入后台执行，主会话可继续交互，完成后按提示唤回核对。
 
-## 持续运行与状态通知 (herdr + ntfy)
+## 持续运行 (herdr)
 
-基于 `herdr` 实现 SSH 断联会话保活，选配自建私有 `ntfy` 在任务阻塞（`blocked`）与结算（`done`）时异步推送通知。
+基于 `herdr` 实现 SSH 断联会话保活。
 
-整段复制执行。自动安装 `herdr-bin`，按向导选配自建 ntfy 状态监控（若无需通知直接跳过）：
+整段复制执行，自动检查并安装 `herdr-bin`：
 
 ```bash
 (
@@ -166,24 +187,43 @@ bash "$SCRIPT_FILE"
 )
 ```
 
-常用 CLI 命令与维护速查：
+常用命令：
 
 ```bash
-# 启动或连入会话 (SSH 断开不影响后台任务)
+# 启动或连入会话
 herdr
 
-# 快捷分离会话: Ctrl+B 然后按 q
+# 快捷分离会话: Ctrl+B，然后按 q
 
-# 仅更新/配置自建 ntfy 状态通知服务 (选配)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-herdr.sh | bash -s -- --config-ntfy
-
-# 仅安装 herdr (跳过 ntfy 配置)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-herdr.sh | bash -s -- --skip-ntfy
-
-# 查看通知监控服务状态
-systemctl --user status herdr-ntfy
-
-# 卸载监控服务与相关配置
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-herdr.sh | bash -s -- --uninstall
+# 查看 Agent 状态
+bash scripts/pi-herdr.sh --status
 ```
+
+### Pi 通知扩展
+
+扩展监听 `agent_settled` 和 `herdr:blocked`，分别推送完成和等待确认通知。
+
+配置文件：
+
+```text
+$HOME/.config/herdr-ntfy/herdr-ntfy.env
+```
+
+安装扩展：
+
+```bash
+install -Dm644 scripts/pi-herdr-ntfy.js \
+  "$HOME/.pi/agent/extensions/pi-herdr-ntfy.js"
+```
+
+通知正文为纯文本，项目名取当前工作目录最后一级，首字段固定为 `项目`：
+
+```text
+项目: 当前项目
+状态: 已完成
+```
+
+等待确认时将状态改为 `等待确认`，并追加等待原因。
+
+安装后重启 Pi。
 

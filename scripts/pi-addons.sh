@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# scripts/pi-extensions.sh
-# Pi 个人扩展套件 (pi-search & pi-subagents) 部署与检索服务凭证配置脚本
+# scripts/pi-addons.sh
+# Pi 附加组件 (pi-search & pi-subagents) 部署与检索服务凭证配置脚本
 #
 
 set -Eeuo pipefail
@@ -27,7 +27,7 @@ CLI_FIRECRAWL=""
 show_help() {
     cat <<'EOF'
 用法:
-  bash scripts/pi-extensions.sh [选项]
+  bash scripts/pi-addons.sh [选项]
 
 工作模式:
   (无参数，默认)              环境纯净度检查并一键部署个人标准套件 (pi-search, pi-subagents)

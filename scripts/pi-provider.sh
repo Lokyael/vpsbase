@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# scripts/pi-models.sh
-# Pi 兼容端点配置与 models.dev 规格动态匹配脚本 (支持 Bitwarden 标志与 auth.json 两种零泄露模式)
+# scripts/pi-provider.sh
+# Pi Provider、模型与凭证配置脚本 (支持 Bitwarden 标志与 auth.json 两种零泄露模式)
 #
 
 set -Eeuo pipefail
@@ -23,7 +23,7 @@ NON_INTERACTIVE=0
 show_help() {
     cat <<'EOF'
 用法:
-  bash scripts/pi-models.sh [选项]
+  bash scripts/pi-provider.sh [选项]
 
 选项:
   --mode <bw|direct>          凭证管理模式 (默认优先推荐 bw):
@@ -431,20 +431,20 @@ if (remoteData.length > 0) {
     if (!id || /image|embed|tts|audio|whisper|batch|auto-review/i.test(id)) continue;
 
     const spec = findInModelsDev(id);
-    const cw = item.context_window || item.max_context_tokens || item.max_model_len || spec?.limit?.context || 128000;
-    const mt = item.max_output_tokens || item.max_completion_tokens || spec?.limit?.output || 16384;
+    const cw = item.context_window || item.context_length || item.max_context_tokens || item.max_model_len || spec?.limit?.context || 128000;
+    const mt = item.max_output_tokens || item.max_completion_tokens || item.max_tokens || spec?.limit?.output || 16384;
     const reasoning = spec?.reasoning !== undefined
       ? Boolean(spec.reasoning)
       : /thinking|reasoning|think|-r1|luna|sol|o[134]|-high|-medium|-low/i.test(id);
 
-    const rawInput = spec?.modalities?.input || ["text", "image"];
+    const rawInput = spec?.modalities?.input || ["text"];
     const cleanInput = rawInput.filter(i => i === "text" || i === "image");
 
     const modelObj = {
       id,
       name: spec?.name || id,
       reasoning,
-      input: cleanInput.length > 0 ? cleanInput : ["text", "image"],
+      input: cleanInput.length > 0 ? cleanInput : ["text"],
       contextWindow: Number(cw),
       maxTokens: Number(mt)
     };
@@ -481,7 +481,7 @@ if (models.length === 0) {
       id: "claude-3-7-sonnet-20250219",
       name: "Claude 3.7 Sonnet",
       reasoning: true,
-      input: ["text", "image"],
+      input: ["text"],
       contextWindow: 200000,
       maxTokens: 64000
     });
@@ -586,6 +586,49 @@ NODE
     chmod 600 "$SETTINGS_FILE"
     printf '✅ 系统默认供应商已设为 [%s]，默认模型 [%s]\n' "$TARGET_PROVIDER_ID" "$CHOSEN_MODEL"
 fi
+
+# ========================================================
+# 阶段六：Pi 基础偏好
+# ========================================================
+
+node - "$SETTINGS_FILE" <<'NODE'
+const fs = require("fs");
+const settingsPath = process.argv[2];
+let settings = {};
+
+try {
+  settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+} catch (e) {}
+
+Object.assign(settings, {
+  defaultThinkingLevel: "high",
+  theme: "system",
+  cacheWarming: "off",
+  quietStartup: true,
+  enableInstallTelemetry: false
+});
+
+settings.compaction = {
+  ...(settings.compaction || {}),
+  enabled: false
+};
+
+settings.terminal = {
+  ...(settings.terminal || {}),
+  showImages: false
+};
+
+settings.markdown = {
+  ...(settings.markdown || {}),
+  mermaid: "off"
+};
+
+fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\\n");
+NODE
+
+chmod 600 "$SETTINGS_FILE"
+printf '✅ Pi 基础偏好已写入: 思考 high、关闭自动压缩、关闭缓存预热\n'
+printf '   主题 system、静默启动、关闭遥测、Headless 显示优化\n'
 
 printf '\n✅ 端点 [%s] 配置完成: %s\n' "$TARGET_PROVIDER_ID" "$TARGET_URL"
 if [ "$FINAL_MODE" = "bw" ]; then
