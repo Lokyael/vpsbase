@@ -431,10 +431,11 @@ if (remoteData.length > 0) {
     if (!id || /image|embed|tts|audio|whisper|batch|auto-review/i.test(id)) continue;
 
     const spec = findInModelsDev(id);
-    const isGpt = /^gpt-|^o[134]|^chatgpt-/i.test(id);
     const cw = item.context_window || item.max_context_tokens || item.max_model_len || spec?.limit?.context || 128000;
     const mt = item.max_output_tokens || item.max_completion_tokens || spec?.limit?.output || 16384;
-    const reasoning = spec?.reasoning !== undefined ? Boolean(spec.reasoning) : /thinking|reasoning|think|-r1|luna|sol|o1|o3|o4/i.test(id);
+    const reasoning = spec?.reasoning !== undefined
+      ? Boolean(spec.reasoning)
+      : /thinking|reasoning|think|-r1|luna|sol|o[134]|-high|-medium|-low/i.test(id);
 
     const rawInput = spec?.modalities?.input || ["text", "image"];
     const cleanInput = rawInput.filter(i => i === "text" || i === "image");
@@ -442,7 +443,6 @@ if (remoteData.length > 0) {
     const modelObj = {
       id,
       name: spec?.name || id,
-      api: isGpt ? "openai-responses" : "openai-completions",
       reasoning,
       input: cleanInput.length > 0 ? cleanInput : ["text", "image"],
       contextWindow: Number(cw),
@@ -466,7 +466,10 @@ if (models.length === 0) {
   if (isExisting && fs.existsSync(modelsPath)) {
     try {
       const oldCfg = JSON.parse(fs.readFileSync(modelsPath, "utf8"));
-      existingModels = oldCfg.providers?.[providerId]?.models || [];
+      existingModels = (oldCfg.providers?.[providerId]?.models || []).map(m => {
+        const { api, ...rest } = m;
+        return rest;
+      });
     } catch(e) {}
   }
 
@@ -477,7 +480,6 @@ if (models.length === 0) {
     models.push({
       id: "claude-3-7-sonnet-20250219",
       name: "Claude 3.7 Sonnet",
-      api: "openai-completions",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 200000,
