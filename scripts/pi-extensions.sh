@@ -48,6 +48,10 @@ show_help() {
 通用选项:
   -y, --non-interactive       非交互模式 (自动复用已有配置或安全默认值)
   -h, --help                  显示本帮助信息
+
+凭证安全与 Bitwarden 感知:
+  脚本自动检测 bw 命令；保密库解锁后 (BW_SESSION 已设置)，自动从对应条目
+  (cpa、search-exa、search-tavily、search-context7、search-firecrawl) 提取凭据预填。
 EOF
 }
 
@@ -285,6 +289,29 @@ NODE
     OLD_FIRECRAWL=$(node -e 'console.log(JSON.parse(process.argv[1]).fc || "")' "$PREV_JSON")
 fi
 
+# 智能感知并继承既有 Pi 模型端点配置
+if [ -z "$OLD_URL" ] && [ -f "${HOME}/.pi/agent/models.json" ]; then
+    OLD_URL=$(node -e '
+    try {
+      const cfg = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const p = cfg.providers?.cpa || Object.values(cfg.providers || {})[0];
+      console.log(p?.baseUrl || "");
+    } catch(e) {}
+    ' "${HOME}/.pi/agent/models.json" 2>/dev/null || true)
+fi
+
+if [ -z "$OLD_MODEL" ] && [ -f "${HOME}/.pi/agent/models.json" ]; then
+    OLD_MODEL=$(node -e '
+    try {
+      const cfg = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const p = cfg.providers?.cpa || Object.values(cfg.providers || {})[0];
+      const list = p?.models || [];
+      const flash = list.find(m => /flash/i.test(m.id));
+      console.log(flash ? flash.id : (list[0]?.id || ""));
+    } catch(e) {}
+    ' "${HOME}/.pi/agent/models.json" 2>/dev/null || true)
+fi
+
 # 智能感知 Bitwarden 并预载对应凭证作为默认值
 if command -v bw >/dev/null 2>&1; then
     BW_CPA_KEY=$(bw get password cpa 2>/dev/null || true)
@@ -298,6 +325,10 @@ if command -v bw >/dev/null 2>&1; then
     OLD_TAVILY="${OLD_TAVILY:-$BW_TAVILY_KEY}"
     OLD_CTX7="${OLD_CTX7:-$BW_CTX7_KEY}"
     OLD_FIRECRAWL="${OLD_FIRECRAWL:-$BW_FC_KEY}"
+
+    if [ -n "$BW_CPA_KEY" ] || [ -n "$BW_EXA_KEY" ] || [ -n "$BW_TAVILY_KEY" ] || [ -n "$BW_CTX7_KEY" ] || [ -n "$BW_FC_KEY" ]; then
+        printf '🔐 已从 Bitwarden 自动检索并注入对应信源凭据预填\n'
+    fi
 fi
 
 printf '\n⚙️  配置检索服务凭证 (pi-search):\n'

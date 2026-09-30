@@ -91,15 +91,17 @@ bash "$SCRIPT_FILE"
 
 ### 检索服务配置 (/search-config)
 
-套件部署完成后，直接在 Pi 会话中输入 `/search-config` 调出交互式图形菜单，按需配置各检索信源：
+套件部署完成后，支持两种配置模式：
+- **Bitwarden CLI 自动化模式（推荐）**：前置已按 [secrets.md](secrets.md) 录入信源对应条目，解锁保密库后执行脚本自动从内存提取并静默填充，全链路零明文；
+- **Pi 会话内图形交互模式**：启动 Pi 后直接输入 `/search-config` 调出交互式图形菜单，按需手工输入各检索信源。
 
-| 信源 / 选项 | 默认 Base URL / 端点 | 核心定位与用途 | 必要性 |
-|---|---|---|---|
-| **Search API** | 自定义（兼容 OpenAI 端点） | 用于对检索内容进行结构化提炼的 LLM 端点（支持 Gemini / DeepSeek 等） | **必选**（检索基础） |
-| **Context7** | `https://context7.com` | 官方技术库与规范文档检索，自动版本适配并本地缓存 | 选配（开发文档增强） |
-| **Exa** | `https://api.exa.ai` | 高阶 AI 神经搜索引擎，精准获取前沿技术博文与社区深度见解（支持中转代理） | 选配（技术事实调研） |
-| **Tavily** | `https://api.tavily.com` | 事实类 AI 搜索引擎，快速聚合实时新闻与时效事实 | 选配（时效资讯查证） |
-| **Firecrawl** | `https://api.firecrawl.dev` | 动态网页清洗抓取，智能剔除广告与噪点，提取干净 Markdown | 选配（正文分析抓取） |
+| 信源 / 选项 | 默认 Base URL / 端点 | 核心定位与用途 | 必要性 | Bitwarden 条目名 |
+|---|---|---|---|---|
+| **Search API** | 自定义（兼容 OpenAI 端点） | 用于对检索内容进行结构化提炼的 LLM 端点（支持 Gemini / DeepSeek 等） | **必选**（检索基础） | `cpa` |
+| **Context7** | `https://context7.com` | 官方技术库与规范文档检索，自动版本适配并本地缓存 | 选配（开发文档增强） | `search-context7` |
+| **Exa** | `https://api.exa.ai` | 高阶 AI 神经搜索引擎，精准获取前沿技术博文与社区深度见解（支持中转代理） | 选配（技术事实调研） | `search-exa` |
+| **Tavily** | `https://api.tavily.com` | 事实类 AI 搜索引擎，快速聚合实时新闻与时效事实 | 选配（时效资讯查证） | `search-tavily` |
+| **Firecrawl** | `https://api.firecrawl.dev` | 动态网页清洗抓取，智能剔除广告与噪点，提取干净 Markdown | 选配（正文分析抓取） | `search-firecrawl` |
 
 配置说明：
 - **Exa Base URL**：官方直连端点为 `https://api.exa.ai`（默认直接回车保留）。
@@ -110,8 +112,17 @@ bash "$SCRIPT_FILE"
 # 查看已配置扩展
 pi list
 
-# 仅更新检索服务配置（跳过扩展安装与环境检查）
+# Bitwarden CLI 自动化静默配置 (需先执行 export BW_SESSION=$(bw unlock --raw))
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --config-only -y
+
+# 交互式向导配置 (自动以已存凭据或 bw 条目为默认值，支持回车确认或微调)
 curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --config-only
+
+# 命令行显式指定参数 (配合 bw 动态提取注入)
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --config-only \
+-u https://cpa.[DOMAIN]/v1 \
+-k "$(bw get password cpa)" \
+--exa-key "$(bw get password search-exa)"
 
 # 全局更新已配置的扩展套件至最新版
 curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-extensions.sh | bash -s -- --update
