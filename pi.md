@@ -26,6 +26,10 @@ printf '✅ Node 插件环境 (fnm): %s (npm %s)\n' "$(node -v)" "$(npm -v)"
 
 适用于兼容反向代理、聚合网关或本地服务（Ollama / vLLM）。配置后即完成核心闭环，可独立进行日常开发对话。
 
+支持两种凭证安全模式（`models.json` 均零明文落盘）：
+- **Bitwarden 模式**：`models.json` 写入 `!bw get password <item>` 标志引用，详见 [secrets.md](secrets.md)；
+- **Pi 原生金库模式**：密钥存入 `auth.json`（权限 `0600`），`models.json` 彻底移除 `apiKey`，Pi 运行时自动回退匹配。
+
 整段复制执行。自动下载配置脚本并动态匹配参数，执行后自动清理临时文件：
 
 ```bash
@@ -45,6 +49,12 @@ bash "$SCRIPT_FILE"
 ```bash
 # 查看端点配置脚本全部选项
 curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-models.sh | bash -s -- -h
+
+# 命令行指定 Bitwarden 标志引用模式
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-models.sh | bash -s -- -p cpa -u https://cpa.[DOMAIN]/v1 --mode bw -b cpa
+
+# 命令行指定原生金库模式 (密钥存入 auth.json)
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-models.sh | bash -s -- -p cpa -u https://cpa.[DOMAIN]/v1 --mode direct -k "[KEY]"
 ```
 
 ## 扩展套件与检索配置
@@ -126,3 +136,43 @@ curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-ext
 - **并行执行（批量任务）**：`并行运行 2 个 scout，分别排查端点路由与数据模型`
 - **链式流水线（调研到质询）**：`先让 researcher 调研最新规范，再让 oracle 评估方案风险`
 - **后台自主推进**：耗时任务自动转入后台执行，主会话可继续交互，完成后按提示唤回核对。
+
+## 持续运行与状态通知 (herdr + ntfy)
+
+基于 `herdr` 实现 SSH 断联会话保活，选配自建私有 `ntfy` 在任务阻塞（`blocked`）与结算（`done`）时异步推送通知。
+
+整段复制执行。自动安装 `herdr-bin`，按向导选配自建 ntfy 状态监控（若无需通知直接跳过）：
+
+```bash
+(
+set -Eeuo pipefail
+
+SCRIPT_FILE=$(mktemp)
+trap 'rm -f "$SCRIPT_FILE"' EXIT
+
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-herdr.sh -o "$SCRIPT_FILE"
+bash "$SCRIPT_FILE"
+)
+```
+
+常用 CLI 命令与维护速查：
+
+```bash
+# 启动或连入会话 (SSH 断开不影响后台任务)
+herdr
+
+# 快捷分离会话: Ctrl+B 然后按 q
+
+# 仅更新/配置自建 ntfy 状态通知服务 (选配)
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-herdr.sh | bash -s -- --config-ntfy
+
+# 仅安装 herdr (跳过 ntfy 配置)
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-herdr.sh | bash -s -- --skip-ntfy
+
+# 查看通知监控服务状态
+systemctl --user status herdr-ntfy
+
+# 卸载监控服务与相关配置
+curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-herdr.sh | bash -s -- --uninstall
+```
+

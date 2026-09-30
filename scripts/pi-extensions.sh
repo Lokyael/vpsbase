@@ -285,6 +285,21 @@ NODE
     OLD_FIRECRAWL=$(node -e 'console.log(JSON.parse(process.argv[1]).fc || "")' "$PREV_JSON")
 fi
 
+# 智能感知 Bitwarden 并预载对应凭证作为默认值
+if command -v bw >/dev/null 2>&1; then
+    BW_CPA_KEY=$(bw get password cpa 2>/dev/null || true)
+    BW_EXA_KEY=$(bw get password search-exa 2>/dev/null || true)
+    BW_TAVILY_KEY=$(bw get password search-tavily 2>/dev/null || true)
+    BW_CTX7_KEY=$(bw get password search-context7 2>/dev/null || true)
+    BW_FC_KEY=$(bw get password search-firecrawl 2>/dev/null || true)
+
+    OLD_KEY="${OLD_KEY:-$BW_CPA_KEY}"
+    OLD_EXA="${OLD_EXA:-$BW_EXA_KEY}"
+    OLD_TAVILY="${OLD_TAVILY:-$BW_TAVILY_KEY}"
+    OLD_CTX7="${OLD_CTX7:-$BW_CTX7_KEY}"
+    OLD_FIRECRAWL="${OLD_FIRECRAWL:-$BW_FC_KEY}"
+fi
+
 printf '\n⚙️  配置检索服务凭证 (pi-search):\n'
 
 # 1. 核心 LLM 检索模型配置
