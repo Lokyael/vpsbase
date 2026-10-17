@@ -36,8 +36,8 @@ pwsh -File scripts\apps\zen-browser.ps1 -CheckOnly
 # 3. 仅更新企业策略、语言包与扩展（跳过程序下载）
 pwsh -File scripts\apps\zen-browser.ps1 -ConfigOnly
 
-# 4. 彻底清洁重装（强制终止进程，抹除安装目录与本地缓存，全新拉取重构）
-pwsh -File scripts\apps\zen-browser.ps1 -Clean
+# 4. 彻底清洁卸载（强制终止进程，注销系统关联并抹除安装目录与本地缓存）
+pwsh -File scripts\apps\zen-browser.ps1 -Uninstall
 ```
 
 ---

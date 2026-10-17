@@ -16,13 +16,11 @@
     6. 用户偏好规范化：修正各登录账号下载速率单位为直观的标准字节/秒 (MB/s)。
     7. 交付 No-Browser 快捷方式：生成无嵌入式浏览器模式快捷方式 (-no-browser)，内存占用从 1GB+ 降至约 50MB，秒级极速拉起。
 
-.PARAMETER Clean
-    清洁重装模式。终止运行进程、清理开机自启注册表与快捷方式、彻底抹除安装目录核心程序（保护 steamapps 游戏本体以防丢失）并重新拉取部署。
-    别名: -Fresh, -Reset
+.PARAMETER Uninstall
+    彻底清洁卸载模式。终止运行进程、清理开机自启注册表与快捷方式、彻底抹除安装目录核心程序（保护 steamapps 游戏本体以防丢失）。
 
 .PARAMETER CheckOnly
     只查不改模式（体检巡检）。逐项比对 Steam 安装状态、开机自启项、全局网络/CPU 策略与账号偏好，高亮输出 Diff，零写入安全退出。
-    别名: -Audit
 
 .PARAMETER ConfigOnly
     仅执行开机自启动抑制、全局基线配置、账号偏好修复与 No-Browser 快捷方式生成，不重新下载安装 Steam 客户端本体。
@@ -46,16 +44,13 @@
     # 仅修复配置、禁用自启与生成 No-Browser 快捷方式
     pwsh -File .\scripts\apps\steam.ps1 -ConfigOnly
 
-    # 彻底清洁重装
-    pwsh -File .\scripts\apps\steam.ps1 -Clean
+    # 彻底清洁卸载
+    pwsh -File .\scripts\apps\steam.ps1 -Uninstall
 #>
 
 [CmdletBinding()]
 param(
-    [Alias("Fresh", "Reset")]
-    [switch]$Clean,
-
-    [Alias("Audit")]
+    [switch]$Uninstall,
     [switch]$CheckOnly,
 
     [switch]$ConfigOnly,
@@ -81,10 +76,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 $steamReg = Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -ErrorAction SilentlyContinue
 
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-    if ($Clean) {
-        # 清洁重装模式下强制锚定工程黄金基线，彻底切断对历史旧路径的继承
-        $InstallDir = (Test-Path "D:\") ? "D:\prog\Steam" : (Join-Path $env:ProgramFiles "(x86)\Steam")
-    } elseif ($steamReg.SteamPath) {
+    if ($steamReg.SteamPath) {
         $InstallDir = $steamReg.SteamPath -replace '/', '\'
     } else {
         $InstallDir = (Test-Path "D:\") ? "D:\prog\Steam" : (Join-Path $env:ProgramFiles "(x86)\Steam")
@@ -101,18 +93,18 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "📂 部署基准目录: 安装目录 [$InstallDir]`n" -ForegroundColor Cyan
 
 # ==============================================================================
-# 阶段 A: 清洁卸载与环境重置 (-Clean)
+# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
 # ==============================================================================
-if ($Clean) {
+if ($Uninstall) {
     if (-not $NonInteractive -and -not $Yes) {
-        $confirmClean = Read-Host "⚠️ [Clean 警示] 将清理 Steam 客户端核心与注册表自启 (保留游戏库 steamapps 与用户存档)，确认继续? [y/N]"
-        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将清理 Steam 客户端核心与注册表自启 (保留游戏库 steamapps 与用户存档)，确认继续? [y/N]"
+        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
 
-    Write-Host "🧹 [清洁重装模式] 正在终止常驻进程并清理 Steam 环境..." -ForegroundColor Yellow
+    Write-Host "🧹 [清洁卸载模式] 正在终止常驻进程并清理 Steam 环境..." -ForegroundColor Yellow
 
     # 1. 强力终止 Steam 进程
     Get-Process -Name "steam", "steamwebhelper", "gameoverlayui" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -142,7 +134,8 @@ if ($Clean) {
         Get-ChildItem -Path $InstallDir -Exclude "steamapps", "userdata" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "✅ [清洁完成] Steam 核心运行时与注册表自启已清理。`n" -ForegroundColor Green
+    Write-Host "✅ [清洁卸载完成] Steam 核心运行时与注册表自启已清理 (steamapps 游戏资产完整保留)。`n" -ForegroundColor Green
+    return
 }
 
 # ==============================================================================
@@ -376,7 +369,7 @@ if (-not $NonInteractive -and -not $Yes) {
 if (-not $ConfigOnly) {
     $needInstall = -not (Test-Path $steamExe)
 
-    if ($needInstall -or $Clean) {
+    if ($needInstall -or $InstallOnly) {
         Write-Host "⬇️  正在准备安装 Steam 客户端至: $InstallDir..." -ForegroundColor Cyan
 
         # 前置抹除注册表中历史安装路径残留，杜绝 NSIS 安装器内核逻辑强制回退覆盖命令行目标目录

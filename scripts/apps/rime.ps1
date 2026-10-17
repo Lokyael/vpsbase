@@ -14,15 +14,9 @@
 
 .PARAMETER CheckOnly
     只查不改模式（体检巡检）。逐项比对系统 TSF 注册状态、NTFS Junction 挂载点、雾凇词库及 YAML 补丁，高亮输出 Diff，零写入安全退出。
-    别名: -Audit
 
-.PARAMETER Clean
-    清洁安装模式。强制终止常驻进程、清理旧 AppData 挂载点、归档旧配置并 100% 全新拉取与重构环境。
-    别名: -Fresh, -Reset
-
-.PARAMETER UninstallOnly
-    仅执行完整卸载与系统组件清理（注销 TSF、清理注册表自启项与残留文件、刷新 Explorer），不执行重新安装。
-    别名: -Uninstall, -Remove
+.PARAMETER Uninstall
+    彻底清洁卸载模式。强制终止常驻进程、注销系统 TSF 组件与注册表自启项、解除 Junction 软链接、彻底抹除程序与词库目录并刷新资源管理器。
 
 .PARAMETER InstallOnly
     仅执行小狼毫二进制本体的下载与静默安装，不配置词库与用户偏好。
@@ -49,8 +43,8 @@
     # 仅增量检查并更新雾凇词库与 YAML 策略（零重复下载安装器）
     pwsh -File .\scripts\apps\rime.ps1 -ConfigOnly
 
-    # 彻底清洁重装
-    pwsh -File .\scripts\apps\rime.ps1 -Clean
+    # 彻底清洁卸载
+    pwsh -File .\scripts\apps\rime.ps1 -Uninstall
 
     # 只查不改体检巡检
     pwsh -File .\scripts\apps\rime.ps1 -CheckOnly
@@ -58,13 +52,7 @@
 
 [CmdletBinding()]
 param(
-    [Alias("Fresh", "Reset")]
-    [switch]$Clean,
-
-    [Alias("Uninstall", "Remove")]
-    [switch]$UninstallOnly,
-
-    [Alias("Audit")]
+    [switch]$Uninstall,
     [switch]$CheckOnly,
 
     [switch]$InstallOnly,
@@ -145,10 +133,7 @@ $weaselReg = if ($weaselReg32 -and $weaselReg32.WeaselRoot) { $weaselReg32 }
              else { $weaselRegCU }
 
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-    if ($Clean) {
-        # 清洁重装模式下强制锚定工程黄金基线，彻底切断对历史旧路径的继承
-        $InstallDir = (Test-Path "D:\") ? "D:\prog\Rime" : "C:\Program Files\Rime"
-    } elseif ($weaselReg -and $weaselReg.WeaselRoot -and (Test-Path $weaselReg.WeaselRoot)) {
+    if ($weaselReg -and $weaselReg.WeaselRoot -and (Test-Path $weaselReg.WeaselRoot)) {
         $InstallDir = $weaselReg.WeaselRoot
     } elseif ($weaselReg -and $weaselReg.InstallDir -and (Test-Path $weaselReg.InstallDir)) {
         $InstallDir = $weaselReg.InstallDir
@@ -189,13 +174,13 @@ Write-Host "==========================================================" -Foregro
 Write-Host "📂 部署基准目录: 安装目录 [$InstallDir] | 配置目录 [$ConfDir]`n" -ForegroundColor Cyan
 
 # ==============================================================================
-# 阶段 A: 清洁卸载与环境重置 (-Clean / -UninstallOnly: 彻底注销与零残留清理)
+# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
 # ==============================================================================
-if ($Clean -or $UninstallOnly) {
+if ($Uninstall) {
     if (-not $NonInteractive -and -not $Yes) {
-        $confirmClean = Read-Host "⚠️ [Clean 警示] 将彻底注销系统 TSF 组件并清理小狼毫安装目录、配置及软链，确认继续? [y/N]"
-        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将彻底注销系统 TSF 组件并清理小狼毫安装目录、配置及软链，确认继续? [y/N]"
+        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
@@ -317,23 +302,10 @@ if ($Clean -or $UninstallOnly) {
     New-Item -ItemType Directory -Path $ConfDir -Force | Out-Null
     Write-Host "   - 已彻底完全粉碎清空配置目录: $ConfDir (零历史残留)" -ForegroundColor Gray
 
-    if ($UninstallOnly) {
-        # 强制重启资源管理器以彻底刷新任务栏托盘幽灵图标与语言栏会话内存缓存
-        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-        Write-Host "`n✅ 小狼毫全量系统侵入已彻底注销拔除，已重载桌面 Explorer 彻底清除右下角一切缓存！" -ForegroundColor Green
-        return
-    }
-
-    if ($Clean) {
-        $deployerExe = $null
-        $realServerExe = $null
-        $weaselReg = $null
-        if (-not $PSBoundParameters.ContainsKey("InstallDir")) {
-            $InstallDir = (Test-Path "D:\") ? "D:\prog\Rime" : "C:\Program Files\Rime"
-        }
-    }
-
-    Write-Host "✅ 系统内所有小狼毫侵入点已彻底完全清理归零，准备执行全新初始化。`n" -ForegroundColor Green
+    # 强制重启资源管理器以彻底刷新任务栏托盘幽灵图标与语言栏会话内存缓存
+    Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+    Write-Host "`n✅ [清洁卸载完成] 小狼毫全量系统侵入已彻底注销拔除，已重载桌面 Explorer 彻底清除右下角一切缓存！`n" -ForegroundColor Green
+    return
 }
 
 # ==============================================================================
@@ -613,13 +585,13 @@ if (-not $ConfigOnly) {
     }
     $needInstall = $true
 
-    if (($deployerExe -and (Test-Path $deployerExe)) -and -not $Clean) {
+    if ($deployerExe -and (Test-Path $deployerExe)) {
         $needInstall = $false
         Write-Host "⏭️  检测到已存在安装 ($deployerExe)，跳过安装包重复下载与安装。" -ForegroundColor Gray
     }
 
     if ($needInstall) {
-        # 全新安装或 Clean 模式下，未显式指定路径时强制确保目标目录为工程黄金基线
+        # 全新安装模式下，未显式指定路径时强制确保目标目录为工程黄金基线
         if (-not $PSBoundParameters.ContainsKey("InstallDir")) {
             $InstallDir = (Test-Path "D:\") ? "D:\prog\Rime" : "C:\Program Files\Rime"
         }
@@ -777,7 +749,7 @@ if ($needJunction) {
 $schemaFile = Join-Path $ConfDir "rime_ice.schema.yaml"
 $needIce = $true
 
-if ((Test-Path $schemaFile) -and -not $Clean) {
+if (Test-Path $schemaFile) {
     $needIce = $false
     Write-Host "⏭️  保留现有雾凇词库，跳过重新下载。" -ForegroundColor Gray
 }

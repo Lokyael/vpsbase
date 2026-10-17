@@ -10,13 +10,11 @@
     3. 系统级图像关联与默认应用点亮：向注册表写入 ProgID (PicView.Image)、Capabilities 与 RegisteredApplications，在 Win11 设置中点亮 PicView，并注册 13 种主流图片格式。
     4. 现代化看图体验黄金基线：注入 Config\UserSettings.json，固化简体中文界面、单窗口复用防多开霸屏、ESC 直接退出、循环看图与超大图自适应窗口。
 
-.PARAMETER Clean
-    清洁卸载模式。清理注册表系统关联与 Capabilities，清理 Config 配置，并通过 Scoop 卸载客户端本体。
-    别名: -Fresh, -Reset
+.PARAMETER Uninstall
+    彻底清洁卸载模式。清理注册表系统关联与 Capabilities，清理 Config 配置，并通过 Scoop 卸载客户端本体。
 
 .PARAMETER CheckOnly
     只查不改模式（体检巡检）。逐项深入比对 PicView 安装状态、系统图像关联注册表与 UserSettings.json 核心参数基线，高亮输出 Diff，零写入安全退出。
-    别名: -Audit
 
 .PARAMETER ConfigOnly
     仅执行系统图像关联注册与 UserSettings.json 黄金基线注入，不重新安装或更新二进制程序。
@@ -46,16 +44,13 @@
     # 仅修复系统图像关联与体验基线配置
     pwsh -File .\scripts\apps\picview.ps1 -ConfigOnly
 
-    # 彻底清洁重装
-    pwsh -File .\scripts\apps\picview.ps1 -Clean
+    # 彻底清洁卸载
+    pwsh -File .\scripts\apps\picview.ps1 -Uninstall
 #>
 
 [CmdletBinding()]
 param(
-    [Alias("Fresh", "Reset")]
-    [switch]$Clean,
-
-    [Alias("Audit")]
+    [switch]$Uninstall,
     [switch]$CheckOnly,
 
     [switch]$ConfigOnly,
@@ -121,18 +116,18 @@ $imgExts = @(".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".ico", ".tiff", 
 $progId  = "PicView.Image"
 
 # ==============================================================================
-# 阶段 A: 清洁卸载与环境重置 (-Clean)
+# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
 # ==============================================================================
-if ($Clean) {
+if ($Uninstall) {
     if (-not $NonInteractive -and -not $Yes) {
-        $confirmClean = Read-Host "⚠️ [Clean 警示] 将注销系统图片关联并彻底清理 PicView 及其全部配置，确认继续? [y/N]"
-        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将注销系统图片关联并彻底清理 PicView 及其全部配置，确认继续? [y/N]"
+        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
 
-    Write-Host "🧹 [清洁重装模式] 正在清理 PicView 系统关联与配置..." -ForegroundColor Yellow
+    Write-Host "🧹 [清洁卸载模式] 正在清理 PicView 系统关联与配置..." -ForegroundColor Yellow
 
     # 1. 终止进程
     Get-Process -Name "PicView" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -160,7 +155,7 @@ if ($Clean) {
         }
     }
 
-    Write-Host "✅ [清洁完成] PicView 系统注册与本体已彻底清除。`n" -ForegroundColor Green
+    Write-Host "✅ [清洁卸载完成] PicView 系统注册与本体已彻底清除。`n" -ForegroundColor Green
     return
 }
 

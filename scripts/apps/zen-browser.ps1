@@ -19,17 +19,11 @@
 .PARAMETER ConfigOnly
     仅执行本地扩展校验、企业策略增量比对与首选项注入，不重新下载安装程序。
 
-.PARAMETER Clean
-    清洁安装模式。强制终止常驻进程、清理安装目录、抹除本地用户数据缓存并 100% 全新拉取与重构环境。
-    别名: -Fresh, -Reset
-
-.PARAMETER UninstallOnly
-    仅执行完整卸载与残留清理（注销协议注册、清理注册表关联与快捷方式、抹除安装目录与数据），不执行重新安装。
-    别名: -Uninstall, -Remove
+.PARAMETER Uninstall
+    彻底清洁卸载模式。强制终止常驻进程、注销系统协议注册与注册表关联、清理快捷方式并彻底抹除安装目录与用户数据缓存。
 
 .PARAMETER CheckOnly
     只查不改模式（体检巡检）。逐项比对二进制存在性、企业策略 (policies.json)、偏好配置与默认浏览器关联，高亮输出 Diff，零写入安全退出。
-    别名: -Audit
 
 .PARAMETER InstallOnly
     仅执行二进制文件的下载、提取与快捷方式创建，不配置企业策略。
@@ -53,8 +47,8 @@
     # 仅增量检查并更新策略与扩展（零重复 I/O）
     pwsh -File .\scripts\apps\zen-browser.ps1 -ConfigOnly
 
-    # 彻底清洁重装
-    pwsh -File .\scripts\apps\zen-browser.ps1 -Clean
+    # 彻底清洁卸载
+    pwsh -File .\scripts\apps\zen-browser.ps1 -Uninstall
 
     # 只查不改体检巡检
     pwsh -File .\scripts\apps\zen-browser.ps1 -CheckOnly
@@ -62,13 +56,7 @@
 
 [CmdletBinding()]
 param(
-    [Alias("Fresh", "Reset")]
-    [switch]$Clean,
-
-    [Alias("Uninstall", "Remove")]
-    [switch]$UninstallOnly,
-
-    [Alias("Audit")]
+    [switch]$Uninstall,
     [switch]$CheckOnly,
 
     [switch]$InstallOnly,
@@ -241,13 +229,13 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "📂 部署基准目录: $InstallDir`n" -ForegroundColor Cyan
 
 # ==============================================================================
-# 阶段 A: 清洁卸载与环境重置 (-Clean / -UninstallOnly)
+# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
 # ==============================================================================
-if ($Clean -or $UninstallOnly) {
+if ($Uninstall) {
     if (-not $NonInteractive -and -not $Yes) {
-        $confirmClean = Read-Host "⚠️ [Clean 警示] 将彻底清除 Zen Browser 二进制本体、注册表关联与所有用户数据，确认继续? [y/N]"
-        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将彻底清除 Zen Browser 二进制本体、注册表关联与所有用户数据，确认继续? [y/N]"
+        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
@@ -301,10 +289,8 @@ if ($Clean -or $UninstallOnly) {
         Remove-Item -Path $zenLocalAppData -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "✅ [清洁完成] Zen Browser 二进制本体、注册表关联与用户数据已彻底清除。" -ForegroundColor Green
-    if ($UninstallOnly) {
-        return
-    }
+    Write-Host "✅ [清洁卸载完成] Zen Browser 二进制本体、注册表关联与用户数据已彻底清除。`n" -ForegroundColor Green
+    return
 }
 
 # ==============================================================================
@@ -322,7 +308,7 @@ if (Test-Path $policyPath) {
 
 $extDir = Join-Path $InstallDir "distribution\extensions"
 $uBlockPath = Join-Path $extDir "uBlock0@raymondhill.net.xpi"
-$langPackPath = Join-Path $extDir "langpack-zh-CN@zen-browser.org.xpi"
+$langPackPath = Join-Path $extDir "langpack-zh-CN@firefox.mozilla.org.xpi"
 
 $prefFile = Join-Path $InstallDir "defaults\pref\zen-baseline.js"
 
@@ -584,7 +570,12 @@ if ((Test-Path $ublockFile) -and ((Get-Item $ublockFile).Length -gt 0)) {
     Write-Host "   - [已就绪] uBlock Origin 离线包已存在，跳过重复下载。" -ForegroundColor Gray
 } else {
     Write-Host "   - ⬇️  正在预下载 uBlock Origin..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi" -OutFile $ublockFile
+    try {
+        Invoke-WebRequest -Uri "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi" -OutFile $ublockFile
+    } catch {
+        if (Test-Path $ublockFile) { Remove-Item $ublockFile -Force -ErrorAction SilentlyContinue }
+        throw
+    }
 }
 
 # 2. 检查 Bitwarden
@@ -593,7 +584,12 @@ if ((Test-Path $bwFile) -and ((Get-Item $bwFile).Length -gt 0)) {
     Write-Host "   - [已就绪] Bitwarden 离线包已存在，跳过重复下载。" -ForegroundColor Gray
 } else {
     Write-Host "   - ⬇️  正在预下载 Bitwarden..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri "https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi" -OutFile $bwFile
+    try {
+        Invoke-WebRequest -Uri "https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi" -OutFile $bwFile
+    } catch {
+        if (Test-Path $bwFile) { Remove-Item $bwFile -Force -ErrorAction SilentlyContinue }
+        throw "Bitwarden 离线包下载失败: $_"
+    }
 }
 
 # 3. 动态精准匹配与当前内核主版本一致的简体中文语言包
@@ -622,7 +618,12 @@ if ($needDownloadLang) {
         Write-Host "   - [提示] AMO API 检索回退至内置兜底版本。" -ForegroundColor Yellow
     }
     Write-Host "   - ⬇️  正在下载简体中文语言包 ($major)..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri $langUrl -OutFile $langFile
+    try {
+        Invoke-WebRequest -Uri $langUrl -OutFile $langFile
+    } catch {
+        if (Test-Path $langFile) { Remove-Item $langFile -Force -ErrorAction SilentlyContinue }
+        throw "简体中文语言包下载失败: $_"
+    }
 }
 
 Write-Host "`n⚙️  [受控配置基线] 正在应用以下黄金策略:" -ForegroundColor Cyan

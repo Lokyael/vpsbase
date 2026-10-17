@@ -6,7 +6,7 @@
 .DESCRIPTION
     Windows 11 消费级预装应用卸载、废弃按需功能 (FOD) 剥离与过时 CBS 可选特性裁剪模块。
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线。
-    2. 批量清理 32 项消费级 UWP 预装应用（Xbox 全套、Copilot、Clipchamp、DevHome、新闻天气、Solitaire 等）。
+    2. 批量清理 31 项消费级 UWP 预装应用（Xbox 全套、Copilot、Clipchamp、DevHome、新闻天气、Solitaire 等）。
     3. 剥离 8 项废弃按需功能 (FOD: 经典 WMP、写字板、步骤记录器、XPS 查看器等)。
     4. 禁用 8 项淘汰 CBS 可选特性 (SMBv1、PSv2、Telnet、TFTP 等)。
     5. 禁用系统保留存储 (DISM Reserved Storage)，释放 7GB+ 固态磁盘物理空间。
@@ -93,7 +93,7 @@ function Test-RegDword([string]$Path, [string]$Name, [int]$Expected) {
 # ==============================================================================
 $items = @(
     [PSCustomObject]@{
-        Name   = "批量卸载 Xbox/Copilot/媒体等 30 项 UWP 预装应用"
+        Name   = "批量卸载 Xbox/Copilot/媒体等 31 项 UWP 预装应用"
         Check  = {
             try {
                 $bloatware = @(
@@ -106,10 +106,9 @@ $items = @(
                     "Microsoft.YourPhone", "MicrosoftWindows.CrossDevice", "Microsoft.Windows.Ai.Copilot.Provider",
                     "Microsoft.Copilot", "Microsoft.OutlookForWindows", "Clipchamp.Clipchamp",
                     "Microsoft.ZuneMusic", "Microsoft.ZuneVideo", "Microsoft.549981C3F5F10",
-                    "MicrosoftTeams", "MSTeams", "Microsoft.BingSearch", "Microsoft.Windows.DevHome",
-                    "Microsoft.Windows.NarratorQuickStart"
+                    "MicrosoftTeams", "MSTeams", "Microsoft.BingSearch", "Microsoft.Windows.DevHome"
                 )
-                $installed = Get-AppxPackage -AllUsers -ErrorAction Stop | Where-Object { $bloatware -contains $_.Name }
+                $installed = Get-AppxPackage -AllUsers -ErrorAction Stop | Where-Object { ($bloatware -contains $_.Name) -and -not $_.NonRemovable }
                 return ($null -eq $installed -or $installed.Count -eq 0)
             } catch { return $false }
         }
@@ -125,12 +124,15 @@ $items = @(
                 "Microsoft.YourPhone", "MicrosoftWindows.CrossDevice", "Microsoft.Windows.Ai.Copilot.Provider",
                 "Microsoft.Copilot", "Microsoft.OutlookForWindows", "Clipchamp.Clipchamp",
                 "Microsoft.ZuneMusic", "Microsoft.ZuneVideo", "Microsoft.549981C3F5F10",
-                "MicrosoftTeams", "MSTeams", "Microsoft.BingSearch", "Microsoft.Windows.DevHome",
-                "Microsoft.Windows.NarratorQuickStart"
+                "MicrosoftTeams", "MSTeams", "Microsoft.BingSearch", "Microsoft.Windows.DevHome"
             )
             foreach ($app in $bloatware) {
-                Get-AppxPackage -Name $app -AllUsers -ErrorAction SilentlyContinue | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
-                Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.PackageName -like "*$app*" } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+                try {
+                    Get-AppxPackage -Name $app -AllUsers -ErrorAction SilentlyContinue | Where-Object { -not $_.NonRemovable } | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+                } catch { }
+                try {
+                    Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.PackageName -like "*$app*" } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+                } catch { }
             }
         }
     },

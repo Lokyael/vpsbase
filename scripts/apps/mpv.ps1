@@ -10,13 +10,11 @@
     3. 系统级关联与默认程序注册：直接调用 mpv 原生 --register 注册系统播放器协议、ProgID (io.mpv.file) 与 RegisteredApplications（在 Win11 默认应用中点亮）。
     4. 现代化画质与硬解黄金基线：注入 portable_config\mpv.conf，固化 auto-safe GPU 硬解、新一代高质量渲染器 (vo=gpu-next/d3d11)、断点记忆、窗口居中自适应、字幕/音频模糊匹配、微软雅黑中文字体与无损 PNG 截图。
 
-.PARAMETER Clean
-    清洁卸载模式。调用原生 --unregister 注销系统关联，清理 portable_config 配置，并通过 Scoop 卸载客户端本体。
-    别名: -Fresh, -Reset
+.PARAMETER Uninstall
+    彻底清洁卸载模式。调用原生 --unregister 注销系统关联，清理 portable_config 配置，并通过 Scoop 卸载客户端本体。
 
 .PARAMETER CheckOnly
     只查不改模式（体检巡检）。逐项深入比对 mpv 安装状态、系统文件关联注册表与 mpv.conf 核心参数基线，高亮输出 Diff，零写入安全退出。
-    别名: -Audit
 
 .PARAMETER ConfigOnly
     仅执行系统文件关联注册与 mpv.conf 黄金基线注入，不重新安装或更新二进制程序。
@@ -46,16 +44,13 @@
     # 仅修复系统关联与硬解基线配置
     pwsh -File .\scripts\apps\mpv.ps1 -ConfigOnly
 
-    # 彻底清洁重装
-    pwsh -File .\scripts\apps\mpv.ps1 -Clean
+    # 彻底清洁卸载
+    pwsh -File .\scripts\apps\mpv.ps1 -Uninstall
 #>
 
 [CmdletBinding()]
 param(
-    [Alias("Fresh", "Reset")]
-    [switch]$Clean,
-
-    [Alias("Audit")]
+    [switch]$Uninstall,
     [switch]$CheckOnly,
 
     [switch]$ConfigOnly,
@@ -178,18 +173,18 @@ screenshot-template="~/Pictures/mpv/mpv-screen-%F-%p-%n"
 '@
 
 # ==============================================================================
-# 阶段 A: 清洁卸载与环境重置 (-Clean)
+# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
 # ==============================================================================
-if ($Clean) {
+if ($Uninstall) {
     if (-not $NonInteractive -and -not $Yes) {
-        $confirmClean = Read-Host "⚠️ [Clean 警示] 将注销系统媒体关联并彻底清理 mpv 及其全部配置，确认继续? [y/N]"
-        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将注销系统媒体关联并彻底清理 mpv 及其全部配置，确认继续? [y/N]"
+        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
 
-    Write-Host "🧹 [清洁重装模式] 正在注销系统关联并清理 mpv 环境..." -ForegroundColor Yellow
+    Write-Host "🧹 [清洁卸载模式] 正在注销系统关联并清理 mpv 环境..." -ForegroundColor Yellow
 
     # 1. 终止进程
     Get-Process -Name "mpv" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -225,7 +220,7 @@ if ($Clean) {
         }
     }
 
-    Write-Host "✅ [清洁完成] mpv 系统注册与本体已彻底清除。`n" -ForegroundColor Green
+    Write-Host "✅ [清洁卸载完成] mpv 系统注册与本体已彻底清除。`n" -ForegroundColor Green
     return
 }
 

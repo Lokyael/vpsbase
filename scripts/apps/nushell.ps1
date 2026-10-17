@@ -10,13 +10,11 @@
     3. 官方核心插件自治管理与自愈：管理并自动重新签名注册 5 大官方核心插件 (polars, formats, gstat, query, inc)，彻底解决 Nushell 版本升级导致插件签名协议失效 (invalid) 的问题。
     4. 现代化历史体验黄金基线：注入 config.nu 托管配置块，固化 SQLite 数据库结构化存储、多终端跨会话即时同步与前缀检索。
 
-.PARAMETER Clean
-    清洁卸载模式。清理 config.nu 托管块，注销核心插件，并通过 Scoop 卸载客户端本体。
-    别名: -Fresh, -Reset
+.PARAMETER Uninstall
+    彻底清洁卸载模式。清理 config.nu 托管块，注销核心插件并删除缓存，通过 Scoop 卸载客户端本体。
 
 .PARAMETER CheckOnly
     只查不改模式（体检巡检）。逐项深入比对 Nushell 安装状态、核心插件有效性与 config.nu 核心参数基线，高亮输出 Diff，零写入安全退出。
-    别名: -Audit
 
 .PARAMETER ConfigOnly
     仅执行插件重新注册与 config.nu 黄金基线注入，不重新安装或更新二进制程序。
@@ -46,16 +44,13 @@
     # 仅修复插件注册与历史基线配置
     pwsh -File .\scripts\apps\nushell.ps1 -ConfigOnly
 
-    # 彻底清洁重装
-    pwsh -File .\scripts\apps\nushell.ps1 -Clean
+    # 彻底清洁卸载
+    pwsh -File .\scripts\apps\nushell.ps1 -Uninstall
 #>
 
 [CmdletBinding()]
 param(
-    [Alias("Fresh", "Reset")]
-    [switch]$Clean,
-
-    [Alias("Audit")]
+    [switch]$Uninstall,
     [switch]$CheckOnly,
 
     [switch]$ConfigOnly,
@@ -163,18 +158,18 @@ $env.config.edit_mode = "emacs"
 '@
 
 # ==============================================================================
-# 阶段 A: 清洁卸载模式 (-Clean)
+# 阶段 A: 彻底清洁卸载模式 (-Uninstall)
 # ==============================================================================
-if ($Clean) {
+if ($Uninstall) {
     if (-not $NonInteractive -and -not $Yes) {
-        $confirmClean = Read-Host "⚠️ [Clean 警示] 将清理 Nushell 核心配置与插件并卸载本体，确认继续? [y/N]"
-        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将清理 Nushell 核心配置与插件并卸载本体，确认继续? [y/N]"
+        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
 
-    Write-Host "🧹 [清洁重装模式] 正在清理 Nushell 配置与插件环境..." -ForegroundColor Yellow
+    Write-Host "🧹 [清洁卸载模式] 正在清理 Nushell 配置与插件环境..." -ForegroundColor Yellow
 
     # 1. 终止可能运行的 nu 进程
     Get-Process -Name "nu" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -207,7 +202,7 @@ if ($Clean) {
         }
     }
 
-    Write-Host "✅ [清洁完成] Nushell 托管配置与本体已彻底清除。`n" -ForegroundColor Green
+    Write-Host "✅ [清洁卸载完成] Nushell 托管配置与本体已彻底清除。`n" -ForegroundColor Green
     return
 }
 

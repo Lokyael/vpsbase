@@ -49,11 +49,11 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "CheckOnly")]
-    [string]$Mode,
+    [ValidateSet("Sync", "CheckOnly", "")]
+    [string]$Mode = "",
 
-    [ValidateSet("Full", "General")]
-    [string]$Profile,
+    [ValidateSet("Full", "General", "")]
+    [string]$Profile = "",
 
     [string[]]$Modules,
 
@@ -107,7 +107,7 @@ $WindowsDir = $null
 $TempSandboxDir = $null
 
 $localCandidates = @(
-    (if ($PSScriptRoot) { Join-Path $PSScriptRoot "windows" }),
+    $(if ($PSScriptRoot) { Join-Path $PSScriptRoot "windows" }),
     (Join-Path $PWD "scripts\windows"),
     (Join-Path $PWD "windows")
 ) | Where-Object { $_ -and (Test-Path $_) }
@@ -170,6 +170,18 @@ try {
             continue
         }
 
+        # 校验系统加固模块正交参数契约支持度 (-Mode / -Profile)
+        $paramNames = @()
+        if ($ast.ParamBlock -and $ast.ParamBlock.Parameters) {
+            $paramNames = @($ast.ParamBlock.Parameters.Name.VariablePath.UserPath)
+        }
+
+        $hasStandardContract = ($paramNames -contains "Mode") -and ($paramNames -contains "Profile")
+        if (-not $hasStandardContract) {
+            Write-Warning "子模块 [$mId.ps1] 未完整实现系统加固正交参数契约 (-Mode / -Profile)，已跳过。"
+            continue
+        }
+
         # 提取 .SYNOPSIS 首行作为展示名称
         $displayName = $mId
         $commentTokens = @($tokens | Where-Object { $_.Kind -eq "Comment" })
@@ -225,6 +237,38 @@ try {
         $idx++
     }
     Write-Host "└──────────────────────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
+
+    # 交互式模块切片勾选 (若未传 -Modules 且非静默模式)
+    if ($null -eq $Modules -and -not $Yes -and -not $NonInteractive) {
+        Write-Host "`n💡 请选择要纳入本次调度的系统模块 [直接回车全选]:" -ForegroundColor Cyan
+        Write-Host "   - 输入序号多选 (例如: 1,2,5)" -ForegroundColor Gray
+        Write-Host "   - 直接回车调度全量 7 大模块" -ForegroundColor Gray
+        Write-Host "   - 输入 'Q' 退出`n" -ForegroundColor Gray
+
+        $modChoice = (Read-Host "选择要调度的模块编号 [默认: 全部调度]").Trim()
+        if ($modChoice -match '^[Qq]$') {
+            Write-Host "操作已由用户取消，安全退出。`n" -ForegroundColor DarkGray
+            return
+        } elseif (-not [string]::IsNullOrWhiteSpace($modChoice) -and $modChoice.ToUpper() -ne "A" -and $modChoice.ToLower() -ne "all") {
+            $TargetModules.Clear()
+            $indices = @($modChoice.Split(',') | ForEach-Object { $_.Trim() })
+            foreach ($idxStr in $indices) {
+                if ($idxStr -match '^\d+$') {
+                    $pickedIdx = [int]$idxStr
+                    if ($pickedIdx -ge 1 -and $pickedIdx -le $CanonicalOrder.Count) {
+                        $pickedKey = $CanonicalOrder[$pickedIdx - 1]
+                        if ($DiscoveredModules.Contains($pickedKey)) {
+                            $TargetModules.Add($DiscoveredModules[$pickedKey])
+                        }
+                    }
+                }
+            }
+            if ($TargetModules.Count -eq 0) {
+                Write-Warning "未选定任何有效模块，编排器退出。"
+                return
+            }
+        }
+    }
 
     # ==============================================================================
     # 8. 第二阶段：模式决策 (Gate & Profile Decision)
@@ -289,6 +333,7 @@ try {
     Write-Host "`n======================= 开始流水线调度系统模块加固 =======================" -ForegroundColor Cyan
     Write-Host ("  [执行参数] 操作模式: {0} | 配置预设: {1} | 交互放行: {2}`n" -f $Mode, $Profile, ($Yes ? "自动确认 (-Yes)" : "交互审查")) -ForegroundColor DarkGray
 
+    $executionReport = [System.Collections.Generic.List[PSCustomObject]]::new()
     $moduleExecuted = 0
     foreach ($mod in $TargetModules) {
         $moduleExecuted++
@@ -301,10 +346,30 @@ try {
         if ($Yes) { $subParams["Yes"] = $true }
         if ($NonInteractive) { $subParams["NonInteractive"] = $true }
 
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
             & $mod.FullName @subParams
+            $sw.Stop()
+
+            $executionReport.Add([PSCustomObject]@{
+                模块名称 = $mod.Name
+                模块标识 = $mod.Id
+                执行模式 = $Mode
+                执行预设 = $Profile
+                执行耗时 = "$([math]::Round($sw.Elapsed.TotalSeconds, 2))s"
+                状态     = "✔ 成功"
+            })
         } catch {
-            Write-Warning "子模块 [$($mod.Id)] 执行异常: $($_.Exception.Message)"
+            $sw.Stop()
+            Write-Error "子模块 [$($mod.Id)] 执行异常: $($_.Exception.Message)"
+            $executionReport.Add([PSCustomObject]@{
+                模块名称 = $mod.Name
+                模块标识 = $mod.Id
+                执行模式 = $Mode
+                执行预设 = $Profile
+                执行耗时 = "$([math]::Round($sw.Elapsed.TotalSeconds, 2))s"
+                状态     = "✘ 失败"
+            })
         }
     }
 
@@ -315,11 +380,12 @@ try {
     }
 
     # ==============================================================================
-    # 10. 第四阶段：尾部简报汇总
+    # 10. 第四阶段：尾部简报汇总 (Report)
     # ==============================================================================
-    Write-Host "`n========================= 调度流水线执行报告 =========================" -ForegroundColor Cyan
-    Write-Host ("共调度模块: {0} 个 | 模式: {1} | 预设: {2}" -f $TargetModules.Count, $Mode, $Profile)
-    Write-Host "【完成】所选受控模块已顺利完成自治对齐与管线流转！`n" -ForegroundColor Green
+    Write-Host "`n====================================================================" -ForegroundColor Green
+    Write-Host "                      系统加固最终执行简报                        " -ForegroundColor Green
+    Write-Host "====================================================================" -ForegroundColor Green
+    $executionReport | Format-Table -Property 模块名称, 模块标识, 执行模式, 执行预设, 执行耗时, 状态 -AutoSize
 
 } finally {
     if ($TempSandboxDir -and (Test-Path $TempSandboxDir)) {

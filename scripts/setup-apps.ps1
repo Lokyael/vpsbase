@@ -12,15 +12,16 @@
     3. 与包管理器的协同契约：
        - 纳管对象涵盖 D:\prog\<app> 独立原生维护应用，以及具备系统特权提权（免 UAC 计划任务）、TUN 网络集成或运行态并发保护的 Scoop 增强应用；
        - 针对 Scoop 托管的应用，恪守“二进制版本迭代委托 Scoop 原生管道、配置持久化尊重 persist 规范、系统提权与基线巡检由子脚本自治闭环”的协同契约。
-    4. 支持五大正交生命周期操作模式：
+    4. 支持现代正交生命周期操作模式与复合编排：
        - Sync (增量对齐/默认): 缺失则安装，偏离则单向修复，保留既有用户数据；
        - ConfigOnly (纯配置重置): 本体不动，强制将受控策略、注册表与软链接重写为黄金基线；
-       - InstallOnly (覆盖升级本体): 仅更新/重新解压二进制程序，严禁触碰用户数据；
-       - Clean (彻底清洁重装): 终止进程，彻底清除安装目录、用户配置与注册表，从零重构；
-       - CheckOnly (状态体检巡检): 逐项比对所有受控属性，高亮输出 Diff，零写入安全退出。
+       - Uninstall (彻底清洁卸载): 终止进程，注销系统关联与快捷方式，抹除软件目录与数据；
+       - Reinstall (深度清洁重装): 双阶流水线编排——先调用 Uninstall 彻底抹除，再调用 Sync 全新构建；
+       - CheckOnly (状态体检巡检): 逐项比对所有受控属性，高亮输出 Diff，零写入安全退出；
+       - InstallOnly (覆盖升级本体): 仅解包覆盖程序本体，不重写配置。
 
 .PARAMETER Mode
-    指定全局生命周期模式，可选值: Sync, ConfigOnly, InstallOnly, Clean, CheckOnly。默认交互选择。
+    指定全局生命周期模式，可选值: Sync, ConfigOnly, Uninstall, Reinstall, CheckOnly, InstallOnly。默认交互选择。
 
 .PARAMETER Apps
     指定要执行的应用标识列表 (以逗号分隔，如 'zen-browser,steam' 或 'all')。默认交互选择。
@@ -37,12 +38,18 @@
 
     # 静默增量对齐 Zen Browser 与 Steam
     pwsh -File .\scripts\setup-apps.ps1 -Mode Sync -Apps zen-browser,steam -NonInteractive
+
+    # 深度清洁重装指定应用 (双阶自动流转: 先彻底卸载，再全新构建)
+    pwsh -File .\scripts\setup-apps.ps1 -Mode Reinstall -Apps zen-browser
+
+    # 彻底清洁卸载指定应用 (下线退役并扫除一切关联)
+    pwsh -File .\scripts\setup-apps.ps1 -Mode Uninstall -Apps steam
 #>
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "ConfigOnly", "InstallOnly", "Clean", "CheckOnly")]
-    [string]$Mode,
+    [ValidateSet("Sync", "ConfigOnly", "Uninstall", "Reinstall", "CheckOnly", "InstallOnly", "")]
+    [string]$Mode = "",
 
     [string[]]$Apps,
 
@@ -59,11 +66,16 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw "本编排门面已全面转向 PowerShell 7+ (pwsh)，不兼容旧版 Windows PowerShell 5.1。请使用 'pwsh' 执行本脚本。"
 }
 
-$ScriptDir = $PSScriptRoot
-$AppsDir   = Join-Path $ScriptDir "apps"
+$localCandidates = @(
+    $(if ($PSScriptRoot) { Join-Path $PSScriptRoot "apps" }),
+    (Join-Path $PWD "scripts/apps"),
+    (Join-Path $PWD "apps")
+) | Where-Object { $_ -and (Test-Path $_) }
 
-if (-not (Test-Path -Path $AppsDir -PathType Container)) {
-    throw "应用脚本归档目录不存在: [$AppsDir]。"
+if ($localCandidates.Count -gt 0) {
+    $AppsDir = (Get-Item $localCandidates[0]).FullName
+} else {
+    throw "应用脚本归档目录不存在: 未找到本地 apps 归档目录。"
 }
 
 # ==============================================================================
@@ -104,9 +116,9 @@ foreach ($file in $scriptFiles) {
         $paramNames = @($ast.ParamBlock.Parameters.Name.VariablePath.UserPath)
     }
 
-    $hasStandardContract = ($paramNames -contains "CheckOnly") -and ($paramNames -contains "Clean")
+    $hasStandardContract = ($paramNames -contains "CheckOnly") -and ($paramNames -contains "Uninstall")
     if (-not $hasStandardContract) {
-        Write-Warning "子脚本 [$($file.Name)] 未完整实现生命周期正交参数契约 (-CheckOnly / -Clean)，已自动过滤。"
+        Write-Warning "子脚本 [$($file.Name)] 未完整实现生命周期正交参数契约 (-CheckOnly / -Uninstall)，已自动过滤。"
         continue
     }
 
@@ -228,11 +240,12 @@ if ($selectedIds.Count -eq 0) {
 # 2. 判定生命周期操作模式
 if ([string]::IsNullOrWhiteSpace($Mode) -and -not $NonInteractive) {
     Write-Host "`n⚙️  请选择要执行的通用生命周期模式:" -ForegroundColor Cyan
-    Write-Host "  [1] 增量对齐 (Sync)        - 推荐：缺失则装、偏离则修，保留用户数据" -ForegroundColor White
-    Write-Host "  [2] 纯配置重置 (ConfigOnly) - 强制回正策略、注册表与软链为黄金基线" -ForegroundColor White
-    Write-Host "  [3] 覆盖升级程序 (InstallOnly) - 重新解包/升级程序本体，绝不触碰用户数据" -ForegroundColor White
-    Write-Host "  [4] 彻底清洁重装 (Clean)      - 终止常驻进程、抹除软件目录与数据全量重构" -ForegroundColor Yellow
+    Write-Host "  [1] 增量对齐 (Sync)          - 推荐：缺失则装、偏离则修，保留用户数据" -ForegroundColor White
+    Write-Host "  [2] 纯配置重置 (ConfigOnly)   - 强制回正策略、注册表与软链为黄金基线" -ForegroundColor White
+    Write-Host "  [3] 彻底清洁卸载 (Uninstall) - 终止进程、注销系统关联并抹除软件与数据" -ForegroundColor Yellow
+    Write-Host "  [4] 深度清洁重装 (Reinstall) - 双阶流水线：先清洁卸载抹除，再全新构建基线" -ForegroundColor Magenta
     Write-Host "  [5] 状态体检巡检 (CheckOnly)  - 100% 只读比对所有配置项 Diff，零写入安全退出" -ForegroundColor Green
+    Write-Host "  [6] 覆盖升级程序 (InstallOnly)- 重新解包/升级程序本体，绝不触碰用户数据" -ForegroundColor White
     Write-Host "  [Q] 退出编排器`n" -ForegroundColor Gray
 
     $modeChoice = Read-Host "选择操作模式 [默认: 1 (Sync 增量对齐)]"
@@ -242,9 +255,10 @@ if ([string]::IsNullOrWhiteSpace($Mode) -and -not $NonInteractive) {
     }
     $Mode = switch ($modeChoice.Trim()) {
         "2" { "ConfigOnly" }
-        "3" { "InstallOnly" }
-        "4" { "Clean" }
+        "3" { "Uninstall" }
+        "4" { "Reinstall" }
         "5" { "CheckOnly" }
+        "6" { "InstallOnly" }
         default { "Sync" }
     }
 } elseif ([string]::IsNullOrWhiteSpace($Mode)) {
@@ -264,20 +278,29 @@ foreach ($key in $selectedIds) {
     Write-Host "▶ 正在调度应用子系统: $($app.Name) [$($app.Id)]" -ForegroundColor Cyan
     Write-Host "════════════════════════════════════════════════════════════════════" -ForegroundColor DarkCyan
 
-    # 参数透传映射 (Hashtable Splatting)
-    $splat = @{}
-    if ($NonInteractive) { $splat["NonInteractive"] = $true }
-    switch ($Mode) {
-        "ConfigOnly"  { $splat["ConfigOnly"]  = $true }
-        "InstallOnly" { $splat["InstallOnly"] = $true }
-        "Clean"       { $splat["Clean"]       = $true }
-        "CheckOnly"   { $splat["CheckOnly"]   = $true }
-    }
-
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        # 直接调度自治子脚本，原生输出与 Manual Checklist 实时直出
-        & $app.FullName @splat
+        if ($Mode -eq "Reinstall") {
+            Write-Host "  ▶ [流水线 1/2] 正在彻底清洁卸载: $($app.Name)..." -ForegroundColor Yellow
+            $uninstSplat = @{ Uninstall = $true }
+            if ($NonInteractive) { $uninstSplat["NonInteractive"] = $true }
+            & $app.FullName @uninstSplat
+
+            Write-Host "`n  ▶ [流水线 2/2] 正在全新装配黄金基线: $($app.Name)..." -ForegroundColor Cyan
+            $syncSplat = @{}
+            if ($NonInteractive) { $syncSplat["NonInteractive"] = $true }
+            & $app.FullName @syncSplat
+        } else {
+            $splat = @{}
+            if ($NonInteractive) { $splat["NonInteractive"] = $true }
+            switch ($Mode) {
+                "ConfigOnly"  { $splat["ConfigOnly"]  = $true }
+                "InstallOnly" { $splat["InstallOnly"] = $true }
+                "Uninstall"   { $splat["Uninstall"]   = $true }
+                "CheckOnly"   { $splat["CheckOnly"]   = $true }
+            }
+            & $app.FullName @splat
+        }
         $sw.Stop()
 
         $executionReport.Add([PSCustomObject]@{

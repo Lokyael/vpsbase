@@ -93,8 +93,12 @@ function Test-RegDword([string]$Path, [string]$Name, [int]$Expected) {
 }
 
 function Update-ManagedConfigFile([string]$FilePath, [string]$BlockTag, [string]$BlockContent) {
+    if ([string]::IsNullOrWhiteSpace($FilePath)) {
+        throw "Update-ManagedConfigFile: 目标文件路径不可为空。"
+    }
+
     $parentDir = Split-Path -Path $FilePath -Parent
-    if (-not (Test-Path -Path $parentDir)) {
+    if (-not [string]::IsNullOrWhiteSpace($parentDir) -and -not (Test-Path -Path $parentDir)) {
         New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
     }
 
@@ -201,23 +205,43 @@ $items = @(
                 }
                 if (-not $qa) { return $true }
 
-                $targetPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                # 靶向系统出厂预置库目录 (Documents, Pictures, Music, Videos, 3D Objects 等)
+                $factoryPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 @(
-                    [Environment]::GetFolderPath("Desktop"),
-                    (Join-Path $env:USERPROFILE "Downloads")
-                ) | Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { [void]$targetPaths.Add((Get-Item $_).FullName) }
-
-                $hasStray = $false
-                foreach ($item in $qa.Items()) {
-                    $itemPath = $item.Path
-                    if ([string]::IsNullOrWhiteSpace($itemPath) -or (-not (Test-Path $itemPath))) { continue }
-                    $full = (Get-Item $itemPath -ErrorAction SilentlyContinue).FullName
-                    if ($full -and (-not $targetPaths.Contains($full))) {
-                        $hasStray = $true
-                        break
+                    [Environment]::GetFolderPath("MyDocuments"),
+                    [Environment]::GetFolderPath("MyPictures"),
+                    [Environment]::GetFolderPath("MyMusic"),
+                    [Environment]::GetFolderPath("MyVideos"),
+                    (Join-Path $env:USERPROFILE "Documents"),
+                    (Join-Path $env:USERPROFILE "Pictures"),
+                    (Join-Path $env:USERPROFILE "Music"),
+                    (Join-Path $env:USERPROFILE "Videos"),
+                    (Join-Path $env:USERPROFILE "3D Objects")
+                ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
+                    [void]$factoryPaths.Add($_)
+                    if (Test-Path $_) {
+                        $fn = (Get-Item $_ -ErrorAction SilentlyContinue).FullName
+                        if ($fn) { [void]$factoryPaths.Add($fn) }
                     }
                 }
-                return (-not $hasStray)
+
+                $factoryNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                @("Documents", "文档", "Pictures", "图片", "Music", "音乐", "Videos", "视频", "3D Objects", "3D 对象") | ForEach-Object {
+                    [void]$factoryNames.Add($_)
+                }
+
+                foreach ($item in $qa.Items()) {
+                    $p = $item.Path
+                    if (-not [string]::IsNullOrWhiteSpace($p)) {
+                        if ($factoryPaths.Contains($p)) { return $false }
+                        if (Test-Path $p) {
+                            $full = (Get-Item $p -ErrorAction SilentlyContinue).FullName
+                            if ($full -and $factoryPaths.Contains($full)) { return $false }
+                        }
+                    }
+                    if ($factoryNames.Contains($item.Name)) { return $false }
+                }
+                return $true
             } catch {
                 return $true
             }
@@ -240,20 +264,48 @@ $items = @(
                     if ($folder -and $folder.Items().Count -gt 0) { $qa = $folder; break }
                 }
                 if ($qa) {
-                    $keepPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    $factoryPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                     @(
-                        [Environment]::GetFolderPath("Desktop"),
-                        (Join-Path $env:USERPROFILE "Downloads")
-                    ) | Where-Object { $_ -and (Test-Path $_) } | ForEach-Object { [void]$keepPaths.Add((Get-Item $_).FullName) }
+                        [Environment]::GetFolderPath("MyDocuments"),
+                        [Environment]::GetFolderPath("MyPictures"),
+                        [Environment]::GetFolderPath("MyMusic"),
+                        [Environment]::GetFolderPath("MyVideos"),
+                        (Join-Path $env:USERPROFILE "Documents"),
+                        (Join-Path $env:USERPROFILE "Pictures"),
+                        (Join-Path $env:USERPROFILE "Music"),
+                        (Join-Path $env:USERPROFILE "Videos"),
+                        (Join-Path $env:USERPROFILE "3D Objects")
+                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
+                        [void]$factoryPaths.Add($_)
+                        if (Test-Path $_) {
+                            $fn = (Get-Item $_ -ErrorAction SilentlyContinue).FullName
+                            if ($fn) { [void]$factoryPaths.Add($fn) }
+                        }
+                    }
+
+                    $factoryNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    @("Documents", "文档", "Pictures", "图片", "Music", "音乐", "Videos", "视频", "3D Objects", "3D 对象") | ForEach-Object {
+                        [void]$factoryNames.Add($_)
+                    }
 
                     foreach ($item in $qa.Items()) {
                         $p = $item.Path
-                        $resolved = if ($p -and (Test-Path $p)) { (Get-Item $p -ErrorAction SilentlyContinue).FullName } else { $null }
-                        if (-not $resolved -or (-not $keepPaths.Contains($resolved))) {
+                        $isStock = $false
+                        if (-not [string]::IsNullOrWhiteSpace($p)) {
+                            if ($factoryPaths.Contains($p)) { $isStock = $true }
+                            elseif (Test-Path $p) {
+                                $full = (Get-Item $p -ErrorAction SilentlyContinue).FullName
+                                if ($full -and $factoryPaths.Contains($full)) { $isStock = $true }
+                            }
+                        }
+                        if ($factoryNames.Contains($item.Name)) { $isStock = $true }
+
+                        if ($isStock) {
                             $verbs = $item.Verbs()
                             for ($i = 0; $i -lt $verbs.Count(); $i++) {
                                 $v = $verbs.Item($i)
-                                if ($v.Name -match '从快速访问取消固定|从“主页”取消固定|Unpin from Quick access|Unpin from Home') {
+                                $cleanVerb = $v.Name -replace '&', '' -replace '\([A-Za-z]\)', ''
+                                if ($cleanVerb -match '从快速访问取消固定|从“主页”取消固定|从主页取消固定|Unpin from Quick access|Unpin from Home') {
                                     $v.DoIt()
                                     break
                                 }
@@ -709,15 +761,15 @@ $items = @(
         }
     },
     [PSCustomObject]@{
-        Name   = "配置 pwsh 前缀历史滚动基准 ($PROFILE)"
+        Name   = "配置 pwsh 前缀历史滚动基准 (Microsoft.PowerShell_profile.ps1)"
         Check  = {
-            $pwshProfilePath = if ($PROFILE) { $PROFILE } else { Join-Path $env:USERPROFILE "Documents\PowerShell\Microsoft.PowerShell_profile.ps1" }
+            $pwshProfilePath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell\Microsoft.PowerShell_profile.ps1"
             if (-not (Test-Path $pwshProfilePath)) { return $false }
             $c = (Get-Content -Path $pwshProfilePath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) ?? ""
             return ($c -match 'HistorySearchBackward' -and $c -match 'HistorySearchForward')
         }
         Action = {
-            $pwshProfilePath = if ($PROFILE) { $PROFILE } else { Join-Path $env:USERPROFILE "Documents\PowerShell\Microsoft.PowerShell_profile.ps1" }
+            $pwshProfilePath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell\Microsoft.PowerShell_profile.ps1"
             $pwshBlock = @'
 # PSReadLine 按键绑定: 根据已输入前缀滚动历史记录
 if (Get-Module -ListAvailable -Name PSReadLine) {

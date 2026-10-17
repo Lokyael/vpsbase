@@ -10,13 +10,11 @@
     3. 注入 %APPDATA%\Zed\settings.json 黄金基线配置：固化工作站官方等宽字体基线 (Maple Mono NL NFMono CN)、关闭代码连字、规范 2 空格缩进、失焦自动保存、pwsh 终端集成与现代排版。
     4. 采用无破坏增量合并机制纳管 settings.json：原生兼容 JSONC 注释与尾随逗号，完整保留用户自定义主题、插件与客制配置。
 
-.PARAMETER Clean
-    清洁卸载模式。强杀常驻进程，清理 Zed 配置与缓存目录，并通过 Scoop 卸载客户端本体。
-    别名: -Fresh, -Reset
+.PARAMETER Uninstall
+    彻底清洁卸载模式。强杀常驻进程，清理 Zed 配置与缓存目录，并通过 Scoop 卸载客户端本体。
 
 .PARAMETER CheckOnly
     只查不改模式（体检巡检）。逐项深入比对 Zed 安装状态与 settings.json 核心受控基线，高亮输出 Diff，零写入安全退出。
-    别名: -Audit
 
 .PARAMETER ConfigOnly
     仅执行 settings.json 黄金基线注入，不重新安装或更新二进制程序。
@@ -46,16 +44,13 @@
     # 仅修复字体与黄金基线配置
     pwsh -File .\scripts\apps\zed.ps1 -ConfigOnly
 
-    # 彻底清洁重装
-    pwsh -File .\scripts\apps\zed.ps1 -Clean
+    # 彻底清洁卸载
+    pwsh -File .\scripts\apps\zed.ps1 -Uninstall
 #>
 
 [CmdletBinding()]
 param(
-    [Alias("Fresh", "Reset")]
-    [switch]$Clean,
-
-    [Alias("Audit")]
+    [switch]$Uninstall,
     [switch]$CheckOnly,
 
     [switch]$ConfigOnly,
@@ -119,13 +114,13 @@ Write-Host "📂 安装基准目录: $InstallDir" -ForegroundColor Cyan
 Write-Host "📁 配置基准目录: $ConfDir`n" -ForegroundColor Cyan
 
 # ==============================================================================
-# 阶段 A: 清洁卸载与环境重置 (-Clean)
+# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
 # ==============================================================================
-if ($Clean) {
+if ($Uninstall) {
     if (-not $NonInteractive -and -not $Yes) {
-        $confirmClean = Read-Host "⚠️ [Clean 警示] 将彻底终止 Zed 进程、清理配置目录并卸载本体，确认继续? [y/N]"
-        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将彻底终止 Zed 进程、清理配置目录并卸载本体，确认继续? [y/N]"
+        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
@@ -154,7 +149,7 @@ if ($Clean) {
         scoop uninstall zed 2>$null | Out-Null
     }
 
-    Write-Host "✅ [清洁完成] Zed 编辑器本体与配置环境已彻底清除。`n" -ForegroundColor Green
+    Write-Host "✅ [清洁卸载完成] Zed 编辑器本体与配置环境已彻底清除。`n" -ForegroundColor Green
     return
 }
 
@@ -194,10 +189,12 @@ $baselineProps = [ordered]@{
     "current_line_highlight"             = @{ Expected = "all";                     Desc = "当前活动行与行号区高亮" }
 
     # 2. 现代工程代码缩进与排版规范
+    "base_keymap"                        = @{ Expected = "Zed";                     Desc = "基础按键映射 (Zed 原生)" }
     "tab_size"                           = @{ Expected = 2;                         Desc = "Tab 制表符宽度 (2 空格)" }
     "hard_tabs"                          = @{ Expected = $false;                    Desc = "强制使用空格替换真实 Tab" }
     "auto_indent"                        = @{ Expected = $true;                     Desc = "语法树自适应自动缩进" }
     "auto_indent_on_paste"               = @{ Expected = $true;                     Desc = "多行粘贴自适应缩进对齐" }
+    "line_ending"                        = @{ Expected = "lf";                      Desc = "全链路 POSIX 换行符 (LF)" }
     "format_on_save"                     = @{ Expected = "on";                      Desc = "文件保存时自动格式化" }
     "autosave"                           = @{ Expected = "on_focus_change";         Desc = "窗口失焦时即时自动保存" }
     "remove_trailing_whitespace_on_save" = @{ Expected = $true;                     Desc = "保存时自动剔除行尾无用空格" }
@@ -211,7 +208,7 @@ $baselineProps = [ordered]@{
 
     # 3. 视觉感知与无干扰辅助
     "colorize_brackets"                  = @{ Expected = $true;                     Desc = "彩虹配对括号高亮" }
-    "sticky_scroll"                      = @{ Expected = $true;                     Desc = "长函数/类名顶部吸附 (Sticky Scroll)" }
+    "sticky_scroll.enabled"              = @{ Expected = $true;                     Desc = "长函数/类名顶部吸附 (Sticky Scroll)" }
     "minimap.show"                       = @{ Expected = "never";                   Desc = "彻底关闭右侧代码小地图 (降噪提速)" }
     "confirm_quit"                       = @{ Expected = $true;                     Desc = "退出应用防误触二次确认" }
 
@@ -230,8 +227,11 @@ $baselineProps = [ordered]@{
     # 6. Git 与项目工作树
     "git.inline_blame.enabled"           = @{ Expected = $true;                     Desc = "光标行末轻量显示 Git Blame" }
     "diff_view_style"                    = @{ Expected = "split";                   Desc = "Git 差异双栏并排对比 (Split Diff)" }
+    "project_panel.dock"                 = @{ Expected = "left";                    Desc = "项目工程树停靠左侧" }
     "project_panel.auto_reveal_entries"  = @{ Expected = $true;                     Desc = "活动文件左侧树自适应高亮定位" }
     "project_panel.git_status"           = @{ Expected = $true;                     Desc = "项目树展示 Git 变动状态色" }
+    "tabs.file_icons"                    = @{ Expected = $true;                     Desc = "标签页展示文件类型图标" }
+    "tabs.git_status"                    = @{ Expected = $true;                     Desc = "标签页展示 Git 状态着色" }
 
     # 7. 隐私加固、遥测阻断与包管理器协同
     "telemetry.diagnostics"              = @{ Expected = $false;                    Desc = "切断崩溃与诊断遥测日志上传" }
@@ -239,6 +239,7 @@ $baselineProps = [ordered]@{
     "disable_ai"                         = @{ Expected = $true;                     Desc = "禁用内置 AI 遥测与闭源模型调用" }
     "auto_update"                        = @{ Expected = $false;                    Desc = "禁用内置自更新 (委托 Scoop 纳管)" }
     "suggest_extensions"                 = @{ Expected = $false;                    Desc = "禁用扩展弹窗推荐与横幅干扰" }
+    "redact_private_values"              = @{ Expected = $true;                     Desc = "变量与敏感凭据自动脱敏" }
 }
 
 $chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
