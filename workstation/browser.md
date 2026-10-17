@@ -60,17 +60,9 @@ pwsh -File scripts\apps\zen-browser.ps1 -Clean
 
 ---
 
-## uBlock Origin 核心防护规则
+## uBlock Origin 防护基线
 
-全局拦截防护统一收敛至 uBlock Origin，在扩展控制面板中固化基线：
-
-1. **设置**：
-   - 勾选 `阻止 WebRTC 泄露本地 IP 地址`
-   - 勾选 `屏蔽预读取`
-   - 勾选 `禁用超链接审计`
-2. **规则列表**：
-   - 勾选 `Privacy` 下的所有官方规则集（`EasyPrivacy`、`AdGuard URL Tracking Protection` 等）
-   - 勾选 `Block Outsider Intrusion into LAN`（阻断外网页面探测局域网）
+全局拦截防护统一收敛至 uBlock Origin 扩展。核心策略涵盖阻断 WebRTC 本地 IP 泄漏、禁用超链接审计与页面预读取，并激活 EasyPrivacy 与 Block Outsider Intrusion into LAN（阻断外网探测局域网）规则集。
 
 ---
 

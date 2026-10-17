@@ -216,7 +216,7 @@ $chkList | Format-Table -AutoSize | Out-String | Write-Host
 $driftCount = $pendingItems.Count
 
 if ($driftCount -eq 0) {
-    Write-Host "🎉 [状态完美] 边缘后台服务与遥测计划任务全部合规，无需调整。`n" -ForegroundColor Green
+    Write-Host "✨ [状态合规] 边缘后台服务与遥测计划任务全部合规，无需调整。`n" -ForegroundColor Green
     return
 }
 

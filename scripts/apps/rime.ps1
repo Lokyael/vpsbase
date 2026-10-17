@@ -21,7 +21,7 @@
     别名: -Fresh, -Reset
 
 .PARAMETER UninstallOnly
-    仅执行取证级彻底卸载与全量系统侵入清理（注销 TSF、清理注册表自启项与文件、刷新 Explorer），不执行重新安装。
+    仅执行完整卸载与系统组件清理（注销 TSF、清理注册表自启项与残留文件、刷新 Explorer），不执行重新安装。
     别名: -Uninstall, -Remove
 
 .PARAMETER InstallOnly
@@ -70,6 +70,7 @@ param(
     [switch]$InstallOnly,
     [switch]$ConfigOnly,
     [switch]$NonInteractive,
+    [switch]$Yes,
     [string]$InstallDir,
     [string]$ConfDir
 )
@@ -188,98 +189,18 @@ Write-Host "==========================================================" -Foregro
 Write-Host "📂 部署基准目录: 安装目录 [$InstallDir] | 配置目录 [$ConfDir]`n" -ForegroundColor Cyan
 
 # ==============================================================================
-# 只查不改体检巡检模式 (-CheckOnly / -Audit)
-# ==============================================================================
-if ($CheckOnly) {
-    Write-Host "`n🔍 [只查不改模式] 正在对小狼毫输入法执行逐项状态与配置巡检..." -ForegroundColor Cyan
-
-    $chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-    # 1. TSF 注册状态
-    $isReg = ($null -ne $weaselReg -and (-not [string]::IsNullOrEmpty($weaselReg.InstallDir) -or -not [string]::IsNullOrEmpty($weaselReg.WeaselRoot)))
-    $regShort = if ($weaselReg.PSPath -like "*WOW6432Node*") { "已注册 (WOW6432)" } elseif ($weaselReg) { "已注册" } else { "未注册" }
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "系统 TSF 集成"
-        "受控属性" = "WeaselServer 注册表项"
-        "期望基线" = "HKLM\SOFTWARE\...\Weasel"
-        "实机状态" = $regShort
-        "判定"     = $isReg ? "✔ 匹配" : "✘ 缺失"
-    })
-
-    # 2. 二进制本体
-    $hasExe = ($null -ne $realServerExe -and (Test-Path $realServerExe))
-    $exeShort = if ($hasExe) {
-        $parentLeaf = Split-Path (Split-Path $realServerExe -Parent) -Leaf
-        if ($parentLeaf -like "weasel-*") { "已就绪 ($parentLeaf)" } else { "已就绪" }
-    } else {
-        "未安装"
-    }
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "程序本体"
-        "受控属性" = "核心服务 (WeaselServer.exe)"
-        "期望基线" = "已安装 (WeaselServer.exe)"
-        "实机状态" = $exeShort
-        "判定"     = $hasExe ? "✔ 匹配" : "✘ 缺失"
-    })
-
-    # 3. Junction 目录重定向挂载
-    $appDataRime = Join-Path $env:APPDATA "Rime"
-    $hasJunction = Test-Path $appDataRime
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "存储持久化"
-        "受控属性" = "配置目录挂载 (%APPDATA%\Rime)"
-        "期望基线" = "软链接映射至 $ConfDir"
-        "实机状态" = $hasJunction ? "已挂载" : "未建立"
-        "判定"     = $hasJunction ? "✔ 匹配" : "✘ 缺失"
-    })
-
-    # 4. 纯全拼与外观配置源码
-    $hasDefCustom = Test-Path (Join-Path $ConfDir "default.custom.yaml")
-    $hasWeaselCustom = Test-Path (Join-Path $ConfDir "weasel.custom.yaml")
-    $srcReady = $hasDefCustom -and $hasWeaselCustom
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "配置源码"
-        "受控属性" = "声明式补丁 (default/weasel.custom.yaml)"
-        "期望基线" = "源码补丁就绪"
-        "实机状态" = $srcReady ? "已固化" : ($hasDefCustom ? "部分就绪" : "缺失")
-        "判定"     = $srcReady ? "✔ 匹配" : "✘ 漂移"
-    })
-
-    # 5. 衍生编译产物终态校验 (拒绝只查源码伪合规)
-    $buildDefault = Join-Path $ConfDir "build\default.yaml"
-    $isBuildReady = $false
-    $buildStatus = "未编译"
-    if (Test-Path $buildDefault) {
-        try {
-            $buildContent = Get-Content -Path $buildDefault -Raw -Encoding utf8NoBOM -ErrorAction SilentlyContinue
-            if ($buildContent -match 'schema_id:\s*(rime_ice|luna_pinyin)' -or $buildContent -match 'schema_list:') {
-                $isBuildReady = $true
-                $buildStatus = "已编译生效"
-            } else {
-                $buildStatus = "产物内容未匹配"
-            }
-        } catch {
-            $buildStatus = "读取异常"
-        }
-    }
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "编译终态"
-        "受控属性" = "衍生编译产物 (build\default.yaml)"
-        "期望基线" = "包含已生效 schema_list 编译缓存"
-        "实机状态" = $buildStatus
-        "判定"     = $isBuildReady ? "✔ 匹配" : "✘ 待编译"
-    })
-
-    $chkList | Format-Table -AutoSize
-    Write-Host "✔ 巡检完成，未对磁盘与注册表执行任何写入。`n" -ForegroundColor Green
-    return
-}
-
-# ==============================================================================
-# 清洁卸载与环境重置 (-Clean / -UninstallOnly: 取证级彻底注销与零残留清理)
+# 阶段 A: 清洁卸载与环境重置 (-Clean / -UninstallOnly: 彻底注销与零残留清理)
 # ==============================================================================
 if ($Clean -or $UninstallOnly) {
-    Write-Host "🧹 [清洁卸载模式] 正在执行全量系统侵入反注册与地毯式深度清理..." -ForegroundColor Yellow
+    if (-not $NonInteractive -and -not $Yes) {
+        $confirmClean = Read-Host "⚠️ [Clean 警示] 将彻底注销系统 TSF 组件并清理小狼毫安装目录、配置及软链，确认继续? [y/N]"
+        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+            return
+        }
+    }
+
+    Write-Host "🧹 [清洁卸载模式] 正在执行系统反注册与深度清理..." -ForegroundColor Yellow
 
     # 1. 强力终止小狼毫全套相关进程 (释放所有被占用的 TSF DLL 与句柄)
     @("WeaselServer", "WeaselDeployer", "WeaselSetup", "WeaselIME") | ForEach-Object {
@@ -288,7 +209,7 @@ if ($Clean -or $UninstallOnly) {
     Start-Sleep -Milliseconds 600
 
     # 2. 优先调用官方标准卸载机制 (注销 TSF 输入法类与语言配置文件)
-    Write-Host "👉 [操作说明] 若屏幕弹出官方卸载确认、完成对话框或向导窗口，直接点击【确定 / 关闭】即可；后续地毯式注销由脚本全自动闭环接管。" -ForegroundColor Yellow
+    Write-Host "👉 [操作说明] 若屏幕弹出官方卸载确认、完成对话框或向导窗口，直接点击【确定 / 关闭】即可；后续反注册清理由脚本自动完成。" -ForegroundColor Yellow
 
     $deployerCandidates = [System.Collections.Generic.List[string]]::new()
     $uninstCandidates   = [System.Collections.Generic.List[string]]::new()
@@ -324,7 +245,7 @@ if ($Clean -or $UninstallOnly) {
         }
     }
 
-    # 3. 注册表 TSF / TIP 节点精确地毯式兜底拔除 (小狼毫专属 TIP 与 Profile GUID)
+    # 3. 注册表 TSF / TIP 节点精确清理 (小狼毫专属 TIP 与 Profile GUID)
     $rimeGuids = @(
         "{A3FCE4F5-3493-4192-94C0-0A7786E082EC}",
         "{E7EA138E-CEF2-4788-AB8A-E44B1595433D}"
@@ -416,7 +337,275 @@ if ($Clean -or $UninstallOnly) {
 }
 
 # ==============================================================================
-# 阶段 1: 小狼毫二进制本体安装 (先检后配)
+# 阶段 B: 全量只读嗅探与差异呈现 (Plan & Diff)
+# ==============================================================================
+$chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
+$diffList = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+# 1. TSF 注册状态
+$isReg = ($null -ne $weaselReg -and (-not [string]::IsNullOrEmpty($weaselReg.InstallDir) -or -not [string]::IsNullOrEmpty($weaselReg.WeaselRoot)))
+$regShort = if ($weaselReg.PSPath -like "*WOW6432Node*") { "已注册 (WOW6432)" } elseif ($weaselReg) { "已注册" } else { "未注册" }
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "系统 TSF 集成"
+    "受控属性" = "WeaselServer 注册表项"
+    "期望基线" = "HKLM\SOFTWARE\...\Weasel"
+    "实机状态" = $regShort
+    "判定"     = $isReg ? "✔ 匹配" : "✘ 缺失"
+})
+if (-not $isReg) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "系统 TSF 集成"
+        "受控属性" = "WeaselServer 注册表项"
+        "实机状态" = $regShort
+        "期望基线" = "已注册 (HKLM\SOFTWARE\Rime\Weasel)"
+    })
+}
+
+# 2. 二进制本体
+$hasExe = ($null -ne $realServerExe -and (Test-Path $realServerExe))
+$exeShort = if ($hasExe) {
+    $parentLeaf = Split-Path (Split-Path $realServerExe -Parent) -Leaf
+    if ($parentLeaf -like "weasel-*") { "已就绪 ($parentLeaf)" } else { "已就绪" }
+} else {
+    "未安装"
+}
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "程序本体"
+    "受控属性" = "核心服务 (WeaselServer.exe)"
+    "期望基线" = "已安装 (WeaselServer.exe)"
+    "实机状态" = $exeShort
+    "判定"     = $hasExe ? "✔ 匹配" : "✘ 缺失"
+})
+if (-not $hasExe) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "程序本体"
+        "受控属性" = "核心服务 (WeaselServer.exe)"
+        "实机状态" = $exeShort
+        "期望基线" = "已安装于 $InstallDir"
+    })
+}
+
+# 3. Junction 目录重定向挂载 (深入细化检查真实 Target)
+$appDataRime = Join-Path $env:APPDATA "Rime"
+$isJunctionReady = $false
+$junctionStatus = "未建立"
+if (Test-Path $appDataRime) {
+    $item = Get-Item $appDataRime -ErrorAction SilentlyContinue
+    if ($item -and $item.Attributes -match "ReparsePoint") {
+        $target = $item.Target
+        if ($target -and ($target.TrimEnd('\') -eq $ConfDir.TrimEnd('\'))) {
+            $isJunctionReady = $true
+            $junctionStatus = "已正确连接至 $ConfDir"
+        } else {
+            $junctionStatus = "已挂载但目标偏离 ($target)"
+        }
+    } else {
+        $junctionStatus = "存在物理目录 (需迁移为软链)"
+    }
+}
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "存储持久化"
+    "受控属性" = "配置目录挂载 (%APPDATA%\Rime)"
+    "期望基线" = "软链接映射至 $ConfDir"
+    "实机状态" = $junctionStatus
+    "判定"     = $isJunctionReady ? "✔ 匹配" : "✘ 缺失/偏离"
+})
+if (-not $isJunctionReady -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "存储持久化"
+        "受控属性" = "配置目录挂载 (%APPDATA%\Rime)"
+        "实机状态" = $junctionStatus
+        "期望基线" = "软链接映射至 $ConfDir"
+    })
+}
+
+# 4. 雾凇词库打底状态 (深入细化检查主方案 schema 文件)
+$iceSchemaFile = Join-Path $ConfDir "rime_ice.schema.yaml"
+$isIceReady = (Test-Path $iceSchemaFile) -and ((Get-Item $iceSchemaFile).Length -gt 1024)
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "词库打底"
+    "受控属性" = "雾凇拼音现代词库 (rime_ice.schema.yaml)"
+    "期望基线" = "完整存在于配置目录"
+    "实机状态" = $isIceReady ? "已就绪" : "缺失或不完整"
+    "判定"     = $isIceReady ? "✔ 匹配" : "✘ 缺失"
+})
+if (-not $isIceReady -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "词库打底"
+        "受控属性" = "雾凇拼音现代词库 (rime_ice.schema.yaml)"
+        "实机状态" = $isIceReady ? "已就绪" : "缺失或不完整"
+        "期望基线" = "完整存在于 $ConfDir"
+    })
+}
+
+# 5. 纯全拼与外观配置源码 (深入细化检查关键参数)
+$defCustomPath = Join-Path $ConfDir "default.custom.yaml"
+$weaselCustomPath = Join-Path $ConfDir "weasel.custom.yaml"
+
+$hasDefCustom = Test-Path $defCustomPath
+$hasWeaselCustom = Test-Path $weaselCustomPath
+
+$defCustomValid = $false
+$weaselCustomValid = $false
+
+if ($hasDefCustom) {
+    $defRaw = Get-Content -Path $defCustomPath -Raw -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+    $defCustomValid = ($defRaw -match 'schema:\s*rime_ice') -and
+                      ($defRaw -match 'menu/page_size:\s*5') -and
+                      ($defRaw -match 'Control_L:\s*commit_code')
+}
+
+if ($hasWeaselCustom) {
+    $weaselRaw = Get-Content -Path $weaselCustomPath -Raw -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+    $weaselCustomValid = ($weaselRaw -match 'style/direct_write:\s*true')
+}
+
+$srcReady = $defCustomValid -and $weaselCustomValid
+$srcStatus = if ($srcReady) { "已固化黄金策略" } elseif ($hasDefCustom -or $hasWeaselCustom) { "部分键值偏离" } else { "源码缺失" }
+
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "配置源码"
+    "受控属性" = "声明式补丁键值 (rime_ice + Control切换 + DirectWrite)"
+    "期望基线" = "全部固化"
+    "实机状态" = $srcStatus
+    "判定"     = $srcReady ? "✔ 匹配" : "✘ 偏离"
+})
+if (-not $srcReady -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "配置源码"
+        "受控属性" = "声明式补丁键值 (default/weasel.custom.yaml)"
+        "实机状态" = $srcStatus
+        "期望基线" = "全部固化 (rime_ice + Control切换 + DirectWrite)"
+    })
+}
+
+# 6. 衍生编译产物终态校验 (拒绝只查源码伪合规)
+$buildDefault = Join-Path $ConfDir "build\default.yaml"
+$buildWeasel = Join-Path $ConfDir "build\weasel.yaml"
+$isBuildReady = $false
+$buildStatus = "未编译"
+
+if (Test-Path $buildDefault) {
+    try {
+        $buildContent = Get-Content -Path $buildDefault -Raw -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+        $hasIceInBuild = ($buildContent -match 'schema:\s*rime_ice') -or ($buildContent -match 'schema_id:\s*rime_ice')
+        $hasCtrlInBuild = ($buildContent -match 'Control_L:\s*commit_code')
+
+        $hasDwInBuild = $true
+        if (Test-Path $buildWeasel) {
+            $weaselBuildRaw = Get-Content -Path $buildWeasel -Raw -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+            $hasDwInBuild = ($weaselBuildRaw -match 'direct_write:\s*true')
+        }
+
+        if ($hasIceInBuild -and $hasCtrlInBuild -and $hasDwInBuild) {
+            $isBuildReady = $true
+            $buildStatus = "已编译生效 (rime_ice + Control + DirectWrite)"
+        } elseif ($hasIceInBuild) {
+            $buildStatus = "已编译但快捷键/渲染键未同步"
+        } else {
+            $buildStatus = "产物内容未匹配期望方案"
+        }
+    } catch {
+        $buildStatus = "读取异常: $($_.Exception.Message)"
+    }
+}
+
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "编译终态"
+    "受控属性" = "衍生编译产物 (build\default.yaml + weasel.yaml)"
+    "期望基线" = "包含已生效 schema_list 与按键编译缓存"
+    "实机状态" = $buildStatus
+    "判定"     = $isBuildReady ? "✔ 匹配" : "✘ 待编译"
+})
+if (-not $isBuildReady -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "编译终态"
+        "受控属性" = "衍生编译产物 (build\default.yaml + weasel.yaml)"
+        "实机状态" = $buildStatus
+        "期望基线" = "经 Deployer 编译生效"
+    })
+}
+
+# 只查不改模式 (-CheckOnly) 立即输出看板后安全退出
+if ($CheckOnly) {
+    Write-Host "`n📊 [巡检看板] 小狼毫输入法深入基线审计清单:" -ForegroundColor Cyan
+    $chkList | Format-Table -AutoSize | Out-String | Write-Host
+
+    if ($diffList.Count -eq 0) {
+        Write-Host "✔ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需调整。`n" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  共发现 $($diffList.Count) 项基线偏离。执行默认模式 (-Sync) 或纯配置模式 (-ConfigOnly) 即可自动对齐自愈。`n" -ForegroundColor Yellow
+        if (-not $hasExe) {
+            Write-Host "💡 提示: 未检测到客户端安装，运行本脚本默认模式即可自动拉取最新 Release 安装包全新部署。" -ForegroundColor Gray
+        }
+    }
+    return
+}
+
+# 判定是否需要安装本体
+$needInstall = (-not $hasExe)
+
+# 若无偏离且无安装诉求，直接提前安全退出
+if ($diffList.Count -eq 0 -and -not $needInstall -and -not $InstallOnly) {
+    Write-Host "`n📊 [巡检看板] 小狼毫输入法深入基线审计清单:" -ForegroundColor Cyan
+    $chkList | Format-Table -AutoSize | Out-String | Write-Host
+    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+    return
+}
+
+# 发现基线偏离，高亮输出差异清单
+Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离黄金基线:" -ForegroundColor Cyan
+$diffList | Format-Table -AutoSize | Out-String | Write-Host
+
+# ==============================================================================
+# 阶段 C: 模式审查门禁 (Gate)
+# ==============================================================================
+# 1. 运行态并发防覆写硬门禁
+$runningWeasel = Get-Process -Name "WeaselServer" -ErrorAction SilentlyContinue
+if ($runningWeasel) {
+    if (-not $NonInteractive -and -not $Yes) {
+        Write-Warning "检测到 WeaselServer 输入法核心服务正在运行！部署前需安全终止服务以重新加载 DLL 与词库。"
+        $confirmProc = Read-Host "是否立即关闭 WeaselServer 进程以继续应用基线? [Y/n]"
+        if ($confirmProc.Trim() -match "^(n|no)$") {
+            Write-Host "用户已取消操作，安全退出。`n" -ForegroundColor Yellow
+            return
+        }
+    }
+    @("WeaselServer", "WeaselDeployer", "WeaselSetup") | ForEach-Object {
+        Stop-Process -Name $_ -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Milliseconds 600
+}
+
+# 2. 未安装本体时的安装审查门禁
+if ($needInstall) {
+    if ($ConfigOnly) {
+        throw "未检测到小狼毫客户端安装。本工具专注于 TSF 注册与拼音基线配置，请先安装后再执行配置。"
+    }
+
+    if (-not $NonInteractive -and -not $Yes) {
+        $shouldInstall = Read-Host "未检测到小狼毫二进制本体，是否立即拉取官方最新 Release 进行安装？[Y/n]"
+        if ($shouldInstall.Trim() -match "^(n|no)$") {
+            Write-Host "操作已由用户取消，安全退出。`n" -ForegroundColor Yellow
+            return
+        }
+    }
+}
+
+# 3. 策略审查门禁 (Shift-Left Gate: 改动理由与生效机制)
+if (-not $NonInteractive -and -not $Yes) {
+    Write-Host "💡 [改动说明与生效机制]" -ForegroundColor Cyan
+    Write-Host "   - 核心意图: 建立 %APPDATA%\Rime 到 $ConfDir 的 NTFS Junction，部署雾凇词库打底" -ForegroundColor Gray
+    Write-Host "   - 拼音体验: 下发纯全拼补丁、Control 键接管中英切换 (Shift 设为 noop 防误触)、DirectWrite 磨砂亚克力视觉并编译生效" -ForegroundColor Gray
+    $gateChoice = Read-Host "`n确认应用上述黄金基线配置? [Y] 确认应用 / [Q] 退出 (默认 Y)"
+    if ($gateChoice.Trim() -match '^(q|quit|n|no)$') {
+        Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
+        return
+    }
+}
+
+# ==============================================================================
+# 阶段 D: 二进制本体安装 (-InstallOnly / 缺失时自动安装)
 # ==============================================================================
 if (-not $ConfigOnly) {
     if (-not $deployerExe -or -not (Test-Path $deployerExe)) {
@@ -549,8 +738,9 @@ if ($InstallOnly) {
 }
 
 # ==============================================================================
-# 阶段 2: 数据持久化与 NTFS Junction 挂载 (先检后配)
+# 阶段 E: 词库打底、补丁下发与编译生效 (Apply)
 # ==============================================================================
+# 1. 数据持久化与 NTFS Junction 挂载 (先检后配)
 Write-Host "`n📦 检查配置目录持久化与 Junction 状态..." -ForegroundColor Cyan
 if (-not (Test-Path $ConfDir)) {
     New-Item -ItemType Directory -Path $ConfDir -Force | Out-Null
@@ -583,9 +773,7 @@ if ($needJunction) {
     Write-Host "✅ 已建立 NTFS Junction: $appdataRime -> $ConfDir" -ForegroundColor Green
 }
 
-# ==============================================================================
-# 阶段 3: 雾凇拼音 (rime-ice) 词库打底 (先检后配)
-# ==============================================================================
+# 2. 雾凇拼音 (rime-ice) 词库打底 (先检后配)
 $schemaFile = Join-Path $ConfDir "rime_ice.schema.yaml"
 $needIce = $true
 
@@ -627,9 +815,7 @@ if ($needIce) {
     }
 }
 
-# ==============================================================================
-# 阶段 4: 纯拼音与 Control 切换声明式补丁下发
-# ==============================================================================
+# 3. 纯拼音与 Control 切换声明式补丁下发
 Write-Host "`n⚙️  [受控配置基线] 正在应用以下黄金策略:" -ForegroundColor Cyan
 Write-Host "   ▶ [输入体验] Control 键接管中英切换 (Shift 设为 noop 彻底杜绝打代码与游戏时误触)" -ForegroundColor White
 Write-Host "   ▶ [界面视觉] DirectWrite 矢量抗锯齿 + Win11 亚克力磨砂自适应 (横向 5 候选词)`n" -ForegroundColor White
@@ -723,9 +909,7 @@ $gitIgnorePath = Join-Path $ConfDir ".gitignore"
 [System.IO.File]::WriteAllText($gitIgnorePath, $gitIgnoreContent.Trim() + "`r`n", [System.Text.UTF8Encoding]::new($false))
 Write-Host "   - [防污染] .gitignore (隔离 /build/ 字典二进制与运行时缓存，持久化目录零脏污)" -ForegroundColor Green
 
-# ==============================================================================
-# 阶段 5: 触发 WeaselDeployer 重新编译与部署
-# ==============================================================================
+# 4. 触发 WeaselDeployer 重新编译与部署
 Write-Host "`n🚀 正在触发小狼毫底层编译与重新部署 (WeaselDeployer)..." -ForegroundColor Cyan
 if (-not $deployerExe -or -not (Test-Path $deployerExe)) {
     $foundDep = Get-ChildItem -Path $InstallDir -Filter "WeaselDeployer.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -754,6 +938,9 @@ Get-ChildItem -Path $ConfDir -Filter "tmp_ice_*" -Directory -ErrorAction Silentl
     Remove-Item -Path $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# ==============================================================================
+# 阶段 F: 尾部结报与手动引导清单 (Report)
+# ==============================================================================
 Write-Host "`n==========================================================" -ForegroundColor Green
 Write-Host "  小狼毫现代纯拼音基线部署完成！" -ForegroundColor Green
 Write-Host "  - 核心方案: 雾凇拼音 (rime-ice) 纯简体全拼" -ForegroundColor Gray
@@ -766,8 +953,8 @@ Write-Host "==========================================================" -Foregro
 
 Write-Host "`n--------------------------------------------------" -ForegroundColor DarkGray
 Write-Host "📋 [手动收尾引导清单 (Manual Checklist)]" -ForegroundColor Cyan
-Write-Host " 1. 方案校验: 按快捷键 Ctrl + `` 呼出方案菜单，确认已选中【雾凇拼音】方案" -ForegroundColor Gray
-Write-Host " 2. 托盘部署: 若遇到第三方应用未即刻刷新，在右下角托盘图标右键点击【重新部署】" -ForegroundColor Gray
-Write-Host " 3. 中英切换: 单按键盘 [Control] 键验证中英文秒级切换 (Shift 已屏蔽防误触)" -ForegroundColor Gray
+Write-Host " 1. 中英切换: 单按 [Control] 切换中英文（Shift 已屏蔽防误触）" -ForegroundColor Gray
+Write-Host " 2. 方案选单: 按快捷键 Ctrl + `` 呼出方案菜单，确认选中【雾凇拼音】" -ForegroundColor Gray
+Write-Host " 3. 部署刷新: 如遇应用未即时响应，右键托盘小狼毫图标点击【重新部署】" -ForegroundColor Gray
 Write-Host "--------------------------------------------------`n" -ForegroundColor DarkGray
 Write-Host "👉 现在即可在任意输入框体验现代纯全拼输入法！" -ForegroundColor Green

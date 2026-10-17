@@ -220,7 +220,7 @@ $chkList | Format-Table -AutoSize | Out-String | Write-Host
 $driftCount = $pendingItems.Count
 
 if ($driftCount -eq 0) {
-    Write-Host "🎉 [状态完美] 网络协议与系统更新通道策略全部合规，无需调整。`n" -ForegroundColor Green
+    Write-Host "✨ [状态合规] 网络协议与系统更新通道策略全部合规，无需调整。`n" -ForegroundColor Green
     return
 }
 

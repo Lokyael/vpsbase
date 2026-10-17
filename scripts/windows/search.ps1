@@ -162,7 +162,7 @@ $chkList | Format-Table -AutoSize | Out-String | Write-Host
 $driftCount = $pendingItems.Count
 
 if ($driftCount -eq 0) {
-    Write-Host "🎉 [状态完美] 搜索与 AI 助理切断基线全部合规，无需调整。`n" -ForegroundColor Green
+    Write-Host "✨ [状态合规] 搜索与 AI 助理切断基线全部合规，无需调整。`n" -ForegroundColor Green
     return
 }
 

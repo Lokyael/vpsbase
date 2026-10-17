@@ -93,21 +93,6 @@ Set-ItemProperty -Path $wuKey -Name "ProductVersion" -Type String -Value "Window
 > }
 > ```
 
-### 禁用存储感知企业组策略 (Storage Sense)
-
-开发工作站防止系统在后台自动扫描并静默清理 `Downloads` 文件夹、回收站或强制使本地云端文件脱水（Dehydration）。通过企业组策略全局禁用（设置界面变灰锁定且停止后台计划任务）：
-
-```powershell
-$senseKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\StorageSense"
-if (-not (Test-Path $senseKey)) { New-Item -Path $senseKey -Force | Out-Null }
-Set-ItemProperty -Path $senseKey -Name "AllowStorageSense" -Type DWord -Value 0 -Force
-```
-
-> **恢复默认存储感知策略**：
-> ```powershell
-> Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\StorageSense" -Name "AllowStorageSense" -ErrorAction SilentlyContinue
-> ```
-
 ### DLSS 3 帧生成开启 HAGS
 
 显卡为 NVIDIA RTX 40 系列且游戏需要 DLSS 3 帧生成时开启（重启生效）：

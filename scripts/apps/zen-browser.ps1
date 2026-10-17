@@ -24,7 +24,7 @@
     别名: -Fresh, -Reset
 
 .PARAMETER UninstallOnly
-    仅执行取证级彻底卸载与全量系统侵入清理（注销协议注册、清理注册表关联与快捷方式、抹除安装目录与数据），不执行重新安装。
+    仅执行完整卸载与残留清理（注销协议注册、清理注册表关联与快捷方式、抹除安装目录与数据），不执行重新安装。
     别名: -Uninstall, -Remove
 
 .PARAMETER CheckOnly
@@ -74,6 +74,7 @@ param(
     [switch]$InstallOnly,
     [switch]$ConfigOnly,
     [switch]$NonInteractive,
+    [switch]$Yes,
     [string]$InstallDir
 )
 
@@ -240,10 +241,18 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "📂 部署基准目录: $InstallDir`n" -ForegroundColor Cyan
 
 # ==============================================================================
-# 清洁卸载与环境重置 (-Clean / -UninstallOnly)
+# 阶段 A: 清洁卸载与环境重置 (-Clean / -UninstallOnly)
 # ==============================================================================
 if ($Clean -or $UninstallOnly) {
-    Write-Host "🧹 [清洁卸载模式] 正在执行全量系统侵入反注册与地毯式深度清理..." -ForegroundColor Yellow
+    if (-not $NonInteractive -and -not $Yes) {
+        $confirmClean = Read-Host "⚠️ [Clean 警示] 将彻底清除 Zen Browser 二进制本体、注册表关联与所有用户数据，确认继续? [y/N]"
+        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+            return
+        }
+    }
+
+    Write-Host "🧹 [清洁卸载模式] 正在执行系统反注册与环境清理..." -ForegroundColor Yellow
 
     # 1. 强力终止 Zen 常驻进程
     Get-Process -Name zen -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -299,80 +308,211 @@ if ($Clean -or $UninstallOnly) {
 }
 
 # ==============================================================================
-# 只查不改体检巡检模式 (-CheckOnly / -Audit)
+# 阶段 B: 全量只读嗅探与差异呈现 (Plan & Diff)
 # ==============================================================================
-if ($CheckOnly) {
-    Write-Host "`n🔍 [只查不改模式] 正在对 Zen Browser 执行逐项状态与配置巡检..." -ForegroundColor Cyan
-    $zenExe = Join-Path $InstallDir "zen.exe"
-    $policyPath = Join-Path $InstallDir "distribution\policies.json"
-    $policyData = $null
-    if (Test-Path $policyPath) {
-        try { $policyData = (Get-Content -Path $policyPath -Raw -Encoding utf8NoBOM | ConvertFrom-Json).policies } catch {}
+$zenExe = Join-Path $InstallDir "zen.exe"
+$isInstalled = Test-Path $zenExe
+$needExtract = -not $isInstalled
+
+$policyPath = Join-Path $InstallDir "distribution\policies.json"
+$policyData = $null
+if (Test-Path $policyPath) {
+    try { $policyData = (Get-Content -Path $policyPath -Raw -Encoding utf8NoBOM | ConvertFrom-Json).policies } catch {}
+}
+
+$extDir = Join-Path $InstallDir "distribution\extensions"
+$uBlockPath = Join-Path $extDir "uBlock0@raymondhill.net.xpi"
+$langPackPath = Join-Path $extDir "langpack-zh-CN@zen-browser.org.xpi"
+
+$prefFile = Join-Path $InstallDir "defaults\pref\zen-baseline.js"
+
+$chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
+$diffList = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+# 1. 二进制安装
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "客户端本体"
+    "受控属性" = "二进制程序本体 (zen.exe)"
+    "期望基线" = "已安装于 $InstallDir"
+    "实机状态" = $isInstalled ? "已就绪" : "未安装"
+    "判定"     = $isInstalled ? "✔ 匹配" : "✘ 缺失"
+})
+if (-not $isInstalled) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "客户端本体"
+        "受控属性" = "二进制程序本体 (zen.exe)"
+        "实机状态" = "未安装"
+        "期望基线" = "已安装于 $InstallDir"
+    })
+}
+
+# 2. 深入细化检查 policies.json 核心策略
+$corePolicies = @(
+    @{ Name = "DisableFirefoxAccounts"; Expected = $true;  Desc = "底层切除账号登录 (DisableFirefoxAccounts)" },
+    @{ Name = "DisableTelemetry";       Expected = $true;  Desc = "禁用隐私遥测 (DisableTelemetry)" },
+    @{ Name = "DisablePocket";          Expected = $true;  Desc = "禁用 Pocket 资讯推荐 (DisablePocket)" },
+    @{ Name = "OfferToSaveLogins";      Expected = $false; Desc = "禁用内置密码提示 (OfferToSaveLogins)" },
+    @{ Name = "PasswordManagerEnabled"; Expected = $false; Desc = "禁用密码管理器 (PasswordManagerEnabled)" }
+)
+
+foreach ($cp in $corePolicies) {
+    $actual = if ($policyData -and $null -ne $policyData.$($cp.Name)) { $policyData.$($cp.Name) } else { $null }
+    $actualStr = if ($null -eq $actual) { "<缺省未设>" } else { "$actual" }
+    $matched = ($null -ne $actual -and [bool]$actual -eq [bool]$cp.Expected)
+
+    $chkList.Add([PSCustomObject]@{
+        "配置模块" = "企业策略"
+        "受控属性" = $cp.Desc
+        "期望基线" = "$($cp.Expected)"
+        "实机状态" = $actualStr
+        "判定"     = $matched ? "✔ 匹配" : "✘ 偏离"
+    })
+
+    if (-not $matched -and -not $InstallOnly) {
+        $diffList.Add([PSCustomObject]@{
+            "受控模块" = "企业策略"
+            "受控属性" = $cp.Desc
+            "实机状态" = $actualStr
+            "期望基线" = "$($cp.Expected)"
+        })
     }
+}
 
-    $chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-    # 1. 二进制安装
-    $chkList.Add([PSCustomObject]@{
-        "配置项目" = "二进制程序本体 (zen.exe)"
-        "期望状态" = "已安装于 $InstallDir"
-        "实机状态" = (Test-Path $zenExe) ? "已就绪" : "未安装"
-        "判定"     = (Test-Path $zenExe) ? "✔ 匹配" : "✘ 缺失"
+# 3. 核心离线扩展与语言包
+$uBlockReady = Test-Path $uBlockPath
+$langPackReady = Test-Path $langPackPath
+$extReady = $uBlockReady -and $langPackReady
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "离线扩展"
+    "受控属性" = "核心离线扩展包 (uBlock Origin + 简体中文语言包)"
+    "期望基线" = "均已固化至 distribution\extensions"
+    "实机状态" = $extReady ? "已固化 (2/2)" : ($uBlockReady ? "仅 uBlock" : ($langPackReady ? "仅语言包" : "均缺失"))
+    "判定"     = $extReady ? "✔ 匹配" : "✘ 缺失"
+})
+if (-not $extReady -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "离线扩展"
+        "受控属性" = "核心离线扩展包 (uBlock Origin + 简体中文语言包)"
+        "实机状态" = $extReady ? "已固化" : "部分或全部缺失"
+        "期望基线" = "全部固化 (distribution\extensions)"
     })
+}
 
-    # 2. 账号登录入口切除
-    $accVal = ($policyData -and $policyData.DisableFirefoxAccounts -eq $true)
-    $chkList.Add([PSCustomObject]@{
-        "配置项目" = "底层切除账号登录 (DisableFirefoxAccounts)"
-        "期望状态" = "True (物理禁用)"
-        "实机状态" = $accVal ? "True" : "False/未配置"
-        "判定"     = $accVal ? "✔ 匹配" : "✘ 漂移"
+# 4. 全局首选项预置
+$prefReady = (Test-Path $prefFile)
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "全局预置"
+    "受控属性" = "全局默认首选项 (defaults\pref\zen-baseline.js)"
+    "期望基线" = "已固化托管块"
+    "实机状态" = $prefReady ? "已固化" : "文件缺失"
+    "判定"     = $prefReady ? "✔ 匹配" : "✘ 偏离"
+})
+if (-not $prefReady -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "全局预置"
+        "受控属性" = "全局默认首选项 (defaults\pref\zen-baseline.js)"
+        "实机状态" = $prefReady ? "已固化" : "文件缺失"
+        "期望基线" = "已固化托管配置"
     })
+}
 
-    # 3. 遥测采集
-    $telemVal = ($policyData -and $policyData.DisableTelemetry -eq $true)
-    $chkList.Add([PSCustomObject]@{
-        "配置项目" = "禁用隐私遥测 (DisableTelemetry)"
-        "期望状态" = "True"
-        "实机状态" = $telemVal ? "True" : "False/未配置"
-        "判定"     = $telemVal ? "✔ 匹配" : "✘ 漂移"
-    })
-
-    # 4. Pocket 资讯
-    $pocketVal = ($policyData -and $policyData.DisablePocket -eq $true)
-    $chkList.Add([PSCustomObject]@{
-        "配置项目" = "禁用 Pocket 资讯推荐 (DisablePocket)"
-        "期望状态" = "True"
-        "实机状态" = $pocketVal ? "True" : "False/未配置"
-        "判定"     = $pocketVal ? "✔ 匹配" : "✘ 漂移"
-    })
-
-    # 5. 默认应用关联
-    $currHttp = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
-    $isDef = ($currHttp -like "*zen*" -or $currHttp -eq "ZenURL" -or $currHttp -eq "ZenHTML")
-    $chkList.Add([PSCustomObject]@{
-        "配置项目" = "系统默认浏览器 (HTTP 关联)"
-        "期望状态" = "Zen Browser (ZenURL/ZenHTML)"
+# 5. 系统默认应用关联
+$currHttp = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
+$isDef = ($currHttp -like "*zen*" -or $currHttp -eq "ZenURL" -or $currHttp -eq "ZenHTML")
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "系统集成"
+    "受控属性" = "系统默认浏览器 (HTTP 关联)"
+    "期望基线" = "Zen Browser (ZenURL/ZenHTML)"
+    "实机状态" = [string]::IsNullOrEmpty($currHttp) ? "[未关联]" : $currHttp
+    "判定"     = $isDef ? "✔ 匹配" : "✘ 偏离"
+})
+if (-not $isDef -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "系统集成"
+        "受控属性" = "系统默认浏览器 (HTTP 关联)"
         "实机状态" = [string]::IsNullOrEmpty($currHttp) ? "[未关联]" : $currHttp
-        "判定"     = $isDef ? "✔ 匹配" : "✘ 漂移"
+        "期望基线" = "Zen Browser (ZenURL/ZenHTML)"
     })
+}
 
-    # 6. 开始菜单快捷方式
-    $shortcutAudit = Sync-ZenShortcuts -AuditOnly
-    $chkList.Add([PSCustomObject]@{
-        "配置项目" = "开始菜单快捷方式 (Zen Browser.lnk)"
-        "期望状态" = "已就绪"
+# 6. 开始菜单快捷方式
+$shortcutAudit = Sync-ZenShortcuts -AuditOnly
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "系统集成"
+    "受控属性" = "开始菜单快捷方式 (Zen Browser.lnk)"
+    "期望基线" = "已就绪"
+    "实机状态" = $shortcutAudit.StatusText
+    "判定"     = $shortcutAudit.IsReady ? "✔ 匹配" : "✘ 缺失/偏离"
+})
+if (-not $shortcutAudit.IsReady -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "系统集成"
+        "受控属性" = "开始菜单快捷方式 (Zen Browser.lnk)"
         "实机状态" = $shortcutAudit.StatusText
-        "判定"     = $shortcutAudit.IsReady ? "✔ 匹配" : "✘ 缺失/漂移"
+        "期望基线" = "已就绪"
     })
+}
 
-    $chkList | Format-Table -AutoSize
-    Write-Host "✔ 巡检完成，未对磁盘与注册表执行任何写入。`n" -ForegroundColor Green
+# 只查不改模式 (-CheckOnly) 立即输出看板后安全退出
+if ($CheckOnly) {
+    Write-Host "`n📊 [巡检看板] Zen Browser 受控属性深入基线审计清单:" -ForegroundColor Cyan
+    $chkList | Format-Table -AutoSize | Out-String | Write-Host
+
+    if ($diffList.Count -eq 0) {
+        Write-Host "✔ [状态合规] 所有受控属性均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
+    } else {
+        Write-Host "⚠️  共发现 $($diffList.Count) 项基线偏离。执行默认模式 (-Sync) 或纯配置模式 (-ConfigOnly) 即可自动对齐。`n" -ForegroundColor Yellow
+        if (-not $isInstalled) {
+            Write-Host "💡 提示: 未检测到客户端安装，运行本脚本默认模式即可自动拉取最新 Release 纯净解包安装。" -ForegroundColor Gray
+        }
+    }
     return
 }
 
+# 若无偏离且无安装诉求，直接提前安全退出
+if ($diffList.Count -eq 0 -and -not $InstallOnly) {
+    Write-Host "`n📊 [巡检看板] Zen Browser 受控属性深入基线审计清单:" -ForegroundColor Cyan
+    $chkList | Format-Table -AutoSize | Out-String | Write-Host
+    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+    return
+}
+
+# 发现基线偏离，高亮输出差异清单
+Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离黄金基线:" -ForegroundColor Cyan
+$diffList | Format-Table -AutoSize | Out-String | Write-Host
+
 # ==============================================================================
-# 阶段 1: 纯净二进制提取与安装 (先检查后提取)
+# 阶段 C: 模式审查门禁 (Gate)
+# ==============================================================================
+# 1. 运行态并发防覆写硬门禁
+$runningZen = Get-Process -Name zen -ErrorAction SilentlyContinue
+if ($runningZen) {
+    if (-not $NonInteractive -and -not $Yes) {
+        Write-Warning "检测到 Zen Browser 当前正在运行！外部修改会被退出时的内存状态覆写。"
+        $confirmProc = Read-Host "是否立即关闭正在运行的 Zen Browser 进程以继续应用基线? [Y/n]"
+        if ($confirmProc.Trim() -match "^(n|no)$") {
+            Write-Host "用户已取消操作，安全退出。`n" -ForegroundColor Yellow
+            return
+        }
+    }
+    $runningZen | Stop-Process -Force
+    Start-Sleep -Milliseconds 600
+}
+
+# 2. 策略审查门禁 (Shift-Left Gate: 改动理由与生效机制)
+if (-not $NonInteractive -and -not $Yes) {
+    Write-Host "💡 [改动说明与生效机制]" -ForegroundColor Cyan
+    Write-Host "   - 核心意图: 纯净部署 Zen 运行时、安装 uBlock 扩展与语言包、注入 policies.json 屏蔽遥测/云账号" -ForegroundColor Gray
+    Write-Host "   - 体验基线: 固化 WebRTC 防泄漏、GPU 硬解加速、极简视效并在系统注册默认浏览器" -ForegroundColor Gray
+    $gateChoice = Read-Host "`n确认应用上述黄金基线配置? [Y] 确认应用 / [Q] 退出 (默认 Y)"
+    if ($gateChoice.Trim() -match '^(q|quit|n|no)$') {
+        Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
+        return
+    }
+}
+
+# ==============================================================================
+# 阶段 D: 纯净二进制提取与安装 (-InstallOnly / 缺失时自动提取)
 # ==============================================================================
 if (-not $ConfigOnly) {
     $zenExe = Join-Path $InstallDir "zen.exe"
@@ -423,8 +563,9 @@ if ($InstallOnly) {
 }
 
 # ==============================================================================
-# 阶段 2: 核心扩展与语言包先检后配 (零重复下载)
+# 阶段 E: 策略注入、扩展分发与系统注册 (Apply)
 # ==============================================================================
+# 1. 核心扩展与语言包先检后配 (零重复下载)
 
 # 运行状态检查：写入 policies 与扩展前必须退出浏览器
 if (Get-Process -Name zen -ErrorAction SilentlyContinue) {
@@ -493,9 +634,7 @@ $optSearch         = $true
 $optCompact        = $true
 $optDefaultBrowser = $true
 
-# ==============================================================================
-# 阶段 3: policies.json 先检后写 (严格无 BOM)
-# ==============================================================================
+# 2. policies.json 先检后写 (严格无 BOM)
 $policiesObj = [ordered]@{
     RequestedLocales           = @("zh-CN", "en-US")
     DisableFirefoxAccounts     = $true
@@ -594,9 +733,7 @@ if ((Test-Path $policyPath) -and ((Get-Content -Path $policyPath -Raw -Encoding 
     Write-Host "✅ [更新] 已成功写入企业策略: $policyPath (UTF-8 No-BOM)" -ForegroundColor Green
 }
 
-# ==============================================================================
-# 阶段 4: defaults\pref\ 全局默认首选项先检后写
-# ==============================================================================
+# 3. defaults\pref\ 全局默认首选项先检后写
 $defaultsPrefDir = Join-Path $InstallDir "defaults\pref"
 New-Item -ItemType Directory -Path $defaultsPrefDir -Force | Out-Null
 $defaultsPrefFile = Join-Path $defaultsPrefDir "zen-overrides.js"
@@ -621,6 +758,10 @@ $prefLines.Add('pref("browser.aboutwelcome.enabled", false);')
 $prefLines.Add('pref("trailhead.firstrun.didSeeAboutWelcome", true);')
 $prefLines.Add('pref("browser.startup.homepage_override.mstone", "ignore");')
 $prefLines.Add('pref("zen.workspaces.open-new-tab-if-last-unpinned-tab-is-closed", true);')
+
+# 代码块等宽字体固化 (Maple Mono NL NFMono CN)
+$prefLines.Add('pref("font.name.monospace.zh-CN", "Maple Mono NL NFMono CN");')
+$prefLines.Add('pref("font.name.monospace.x-western", "Maple Mono NL NFMono CN");')
 
 if ($optCompact) {
     # 紧凑模式与视口布局
@@ -674,9 +815,7 @@ if ((Test-Path $defaultsPrefFile) -and ((Get-Content -Path $defaultsPrefFile -Ra
     Write-Host "✅ [更新] 已成功写入全局默认首选项: $defaultsPrefFile" -ForegroundColor Green
 }
 
-# ==============================================================================
-# 阶段 5: Profile user.js 增量智能合并与可观测对比 (非破坏性维护)
-# ==============================================================================
+# 4. Profile user.js 增量智能合并与可观测对比 (非破坏性维护)
 # 组装待比对的目标字典
 $desiredPrefsMap = [ordered]@{
     "intl.locale.requested"                                        = "zh-CN"
@@ -697,6 +836,8 @@ $desiredPrefsMap = [ordered]@{
     "trailhead.firstrun.didSeeAboutWelcome"                        = $true
     "browser.startup.homepage_override.mstone"                     = "ignore"
     "zen.workspaces.open-new-tab-if-last-unpinned-tab-is-closed"    = $true
+    "font.name.monospace.zh-CN"                                   = "Maple Mono NL NFMono CN"
+    "font.name.monospace.x-western"                                 = "Maple Mono NL NFMono CN"
 }
 
 if ($optCompact) {
@@ -754,9 +895,7 @@ if ($profiles) {
     Write-Host "💡 尚未检测到用户 Profile 目录，全新安装将在首次启动浏览器时由全局 defaults\pref\ 自动初始化。" -ForegroundColor Gray
 }
 
-# ==============================================================================
-# 阶段 6: 系统浏览器注册与默认应用配置 (先检后配与闭环反馈)
-# ==============================================================================
+# 5. 系统浏览器注册与默认应用配置 (先检后配与闭环反馈)
 if ($optDefaultBrowser) {
     Write-Host "`n🌐 检查系统浏览器注册与默认应用状态..." -ForegroundColor Cyan
 
@@ -941,6 +1080,9 @@ if ($optDefaultBrowser) {
     }
 }
 
+# ==============================================================================
+# 阶段 F: 尾部结报与手动引导清单 (Report)
+# ==============================================================================
 Write-Host "`n==================================================" -ForegroundColor Green
 Write-Host "  ✅ Zen Browser 全流程策略与首选项校验完成！" -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Green
@@ -957,6 +1099,5 @@ if (-not $isNowDefault) {
     Write-Host " 1. 默认应用: 底层协议已注册，请在弹出的【默认应用】设置中将 Zen Browser 设为默认浏览器" -ForegroundColor Yellow
 }
 Write-Host " 2. 扩展图标: uBlock Origin 与 Bitwarden 已预置生效，启动后请在工具栏拼图菜单中固定图标" -ForegroundColor Gray
-Write-Host " 3. 紧凑视图: 已注入触顶悬浮紧凑模式样式，可根据屏幕视网膜 DPI 在侧栏按需体验" -ForegroundColor Gray
 Write-Host "--------------------------------------------------`n" -ForegroundColor DarkGray
 Write-Host "👉 启动浏览器即可立即检验全量生效状态！" -ForegroundColor Green

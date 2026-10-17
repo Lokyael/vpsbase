@@ -551,6 +551,18 @@ $items = @(
                 foreach ($file in $ttfFiles) {
                     $fontsFolder.CopyHere($file.FullName, 0x10)
                 }
+
+                # 轮询等待系统注册表生效，杜绝后台 Shell 异步复制与临时沙盒提前删除竞争
+                $regHklm = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+                $regHkcu = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                while ($sw.Elapsed.TotalSeconds -lt 10) {
+                    $hasHklm = (Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
+                    $hasHkcu = (Get-ItemProperty -Path $regHkcu -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
+                    if ($hasHklm -or $hasHkcu) { break }
+                    Start-Sleep -Milliseconds 500
+                }
+
                 Write-Host "  [+] Maple Mono NL 等宽字体基线已成功装配至系统字体库" -ForegroundColor Green
             } catch {
                 Write-Warning "拉取或安装云端预编译字体包失败: $($_.Exception.Message)。跳过字体配置。"
@@ -783,7 +795,7 @@ $chkList | Format-Table -AutoSize | Out-String | Write-Host
 $driftCount = $pendingItems.Count
 
 if ($driftCount -eq 0) {
-    Write-Host "🎉 [状态完美] 外壳交互与终端底座基线全部合规，无需调整。`n" -ForegroundColor Green
+    Write-Host "✨ [状态合规] 外壳交互与终端底座基线全部合规，无需调整。`n" -ForegroundColor Green
     return
 }
 

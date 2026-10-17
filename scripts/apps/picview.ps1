@@ -5,8 +5,8 @@
 
 .DESCRIPTION
     PicView 极简快速看图工具 (Windows) 系统图像关联注册与体验偏好基线配置工具。
-    1. 专为 PowerShell 7+ (pwsh) 编写，遵循“先检查后配置、幂等无冗余”原则。
-    2. 基于 Scoop 纳管的二进制本体（D:\prog\scoop\apps\picview\current\PicView.exe），前置安装状态探测。
+    1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线（Plan -> Diff -> Gate -> Apply -> Report）。
+    2. 基于 Scoop 纳管的二进制本体（D:\prog\scoop\apps\picview\current\PicView.exe），前置深入细化状态诊断。
     3. 系统级图像关联与默认应用点亮：向注册表写入 ProgID (PicView.Image)、Capabilities 与 RegisteredApplications，在 Win11 设置中点亮 PicView，并注册 13 种主流图片格式。
     4. 现代化看图体验黄金基线：注入 Config\UserSettings.json，固化简体中文界面、单窗口复用防多开霸屏、ESC 直接退出、循环看图与超大图自适应窗口。
 
@@ -15,7 +15,7 @@
     别名: -Fresh, -Reset
 
 .PARAMETER CheckOnly
-    只查不改模式（体检巡检）。逐项比对 PicView 安装状态、系统图像关联注册表与 UserSettings.json 核心参数基线，高亮输出 Diff，零写入安全退出。
+    只查不改模式（体检巡检）。逐项深入比对 PicView 安装状态、系统图像关联注册表与 UserSettings.json 核心参数基线，高亮输出 Diff，零写入安全退出。
     别名: -Audit
 
 .PARAMETER ConfigOnly
@@ -26,6 +26,9 @@
 
 .PARAMETER NonInteractive
     非交互模式，静默全盘采纳所有推荐基线（用于自动化流水线）。
+
+.PARAMETER Yes
+    一键全量确认放行（同 -NonInteractive）。
 
 .PARAMETER InstallDir
     PicView 安装目标目录，默认优先自适应探测 Scoop 路径（如 D:\prog\scoop\apps\picview\current）。
@@ -58,6 +61,7 @@ param(
     [switch]$ConfigOnly,
     [switch]$InstallOnly,
     [switch]$NonInteractive,
+    [switch]$Yes,
     [string]$InstallDir,
     [string]$ConfDir
 )
@@ -120,6 +124,14 @@ $progId  = "PicView.Image"
 # 阶段 A: 清洁卸载与环境重置 (-Clean)
 # ==============================================================================
 if ($Clean) {
+    if (-not $NonInteractive -and -not $Yes) {
+        $confirmClean = Read-Host "⚠️ [Clean 警示] 将注销系统图片关联并彻底清理 PicView 及其全部配置，确认继续? [y/N]"
+        if ($confirmClean.Trim() -notmatch '^(y|yes)$') {
+            Write-Host "用户已取消清洁重装操作，安全退出。`n" -ForegroundColor DarkGray
+            return
+        }
+    }
+
     Write-Host "🧹 [清洁重装模式] 正在清理 PicView 系统关联与配置..." -ForegroundColor Yellow
 
     # 1. 终止进程
@@ -153,140 +165,205 @@ if ($Clean) {
 }
 
 # ==============================================================================
-# 阶段 B: 只查不改体检巡检 (-CheckOnly / -Audit)
+# 阶段 B: 全量只读嗅探与差异呈现 (Plan & Diff)
 # ==============================================================================
-if ($CheckOnly) {
-    Write-Host "🔍 [只查不改模式] 正在对 PicView 看图工具与系统级偏好执行逐项巡检..." -ForegroundColor Cyan
+$chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
+$diffList = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-    $chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-    # 1. 二进制安装
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "客户端本体"
+# 1. 二进制安装
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "客户端本体"
+    "受控属性" = "二进制程序 (PicView.exe)"
+    "期望基线" = "已安装于 Scoop 环境"
+    "实机状态" = $isInstalled ? "已安装 ($pvExe)" : "未安装"
+    "判定"     = $isInstalled ? "✔ 匹配" : "✘ 缺失"
+})
+if (-not $isInstalled) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "客户端本体"
         "受控属性" = "二进制程序 (PicView.exe)"
-        "期望基线" = "已安装于 Scoop 环境"
-        "实机状态" = $isInstalled ? "已安装 ($pvExe)" : "未安装"
-        "判定"     = $isInstalled ? "✔ 匹配" : "✘ 缺失"
+        "实机状态" = "未安装"
+        "期望基线" = "已安装 ($pvExe)"
     })
+}
 
-    # 2. 系统 RegisteredApplications 与 ProgID 注册
-    $regApp = (Get-ItemProperty "HKLM:\SOFTWARE\RegisteredApplications" -Name "PicView" -ErrorAction SilentlyContinue).PicView
-    if (-not $regApp) {
-        $regApp = (Get-ItemProperty "HKCU:\Software\RegisteredApplications" -Name "PicView" -ErrorAction SilentlyContinue).PicView
+# 2. 系统 RegisteredApplications 与 ProgID 注册
+$regApp = (Get-ItemProperty "HKLM:\SOFTWARE\RegisteredApplications" -Name "PicView" -ErrorAction SilentlyContinue).PicView
+if (-not $regApp) {
+    $regApp = (Get-ItemProperty "HKCU:\Software\RegisteredApplications" -Name "PicView" -ErrorAction SilentlyContinue).PicView
+}
+$hasApp = (Test-Path "HKLM:\SOFTWARE\Classes\Applications\PicView.exe") -or (Test-Path "HKCU:\Software\Classes\Applications\PicView.exe")
+$hasProgId = Test-Path "HKLM:\SOFTWARE\Classes\$progId"
+$isRegistered = ($null -ne $regApp -and $hasApp -and $hasProgId)
+
+$chkList.Add([PSCustomObject]@{
+    "配置模块" = "系统集成"
+    "受控属性" = "全功能看图器注册 (Capabilities)"
+    "期望基线" = "已注册并点亮默认应用"
+    "实机状态" = $isRegistered ? "已注册 (RegisteredApplications)" : "未完整注册"
+    "判定"     = $isRegistered ? "✔ 匹配" : "✘ 缺失"
+})
+if (-not $isRegistered -and -not $InstallOnly) {
+    $diffList.Add([PSCustomObject]@{
+        "受控模块" = "系统集成"
+        "受控属性" = "全功能看图器注册 (Capabilities)"
+        "实机状态" = $isRegistered ? "已注册" : "未完整注册"
+        "期望基线" = "已注册 (RegisteredApplications + ProgID)"
+    })
+}
+
+# 3. 深入细化检查 UserSettings.json 受控属性基线
+$settingsJson = $null
+if (Test-Path $confFile) {
+    try {
+        $settingsJson = Get-Content -Path $confFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue | ConvertFrom-Json
+    } catch { }
+}
+
+$corePrefs = @(
+    @{ Path = "UIProperties.UserLanguage";            Expected = "zh-CN"; Desc = "界面语言 (简体中文)" },
+    @{ Path = "UIProperties.OpenInSameWindow";        Expected = "True";  Desc = "单窗口复用 (防多开霸屏)" },
+    @{ Path = "UIProperties.ShowConfirmationOnEsc";   Expected = "False"; Desc = "ESC 直接退出 (免弹窗打扰)" },
+    @{ Path = "UIProperties.ShowFullPathInTitleBar";  Expected = "True";  Desc = "标题栏显示完整路径" },
+    @{ Path = "UIProperties.Looping";                 Expected = "True";  Desc = "循环看图" },
+    @{ Path = "StartUp.OpenLastFile";                 Expected = "False"; Desc = "启动时不自动打开上次文件" },
+    @{ Path = "ImageScaling.ZoomToFit";               Expected = "True";  Desc = "超大图自适应窗口" },
+    @{ Path = "WindowProperties.KeepCentered";        Expected = "True";  Desc = "窗口居中呈现" },
+    @{ Path = "Navigation.IsFileWatcherEnabled";      Expected = "True";  Desc = "文件变动智能监视" }
+)
+
+function Get-JsonValueByPath($obj, [string]$propPath) {
+    if ($null -eq $obj) { return $null }
+    $parts = $propPath.Split('.')
+    $curr = $obj
+    foreach ($p in $parts) {
+        if ($null -eq $curr -or -not ($curr.PSObject.Properties.Match($p).Count)) {
+            return $null
+        }
+        $curr = $curr.$p
     }
-    $hasApp = (Test-Path "HKLM:\SOFTWARE\Classes\Applications\PicView.exe") -or (Test-Path "HKCU:\Software\Classes\Applications\PicView.exe")
-    $hasProgId = Test-Path "HKLM:\SOFTWARE\Classes\$progId"
-    $isRegistered = ($null -ne $regApp -and $hasApp -and $hasProgId)
+    return "$curr"
+}
+
+foreach ($p in $corePrefs) {
+    $actual = Get-JsonValueByPath $settingsJson $p.Path
+    $actualStr = if ($null -eq $actual) { "<缺省未设>" } else { $actual }
+    $matched = ($actualStr -eq $p.Expected)
 
     $chkList.Add([PSCustomObject]@{
-        "配置模块" = "系统集成"
-        "受控属性" = "系统全功能看图器注册 (Capabilities)"
-        "期望基线" = "已注册并点亮默认应用"
-        "实机状态" = $isRegistered ? "已注册 (RegisteredApplications)" : "未完整注册"
-        "判定"     = $isRegistered ? "✔ 匹配" : "✘ 缺失"
+        "配置模块" = "偏好配置"
+        "受控属性" = "$($p.Desc) ($($p.Path))"
+        "期望基线" = $p.Expected
+        "实机状态" = $actualStr
+        "判定"     = $matched ? "✔ 匹配" : "✘ 偏离"
     })
 
-    # 3. UserSettings.json 体验基线偏好就绪度
-    $hasConfig = $false
-    $langVal = "缺失"
-    $sameWinVal = "缺失"
-    $escVal = "缺失"
-
-    if (Test-Path $confFile) {
-        try {
-            $json = Get-Content -Path $confFile -Raw -Encoding UTF8 | ConvertFrom-Json
-            $langVal = $json.UIProperties.UserLanguage
-            $sameWinVal = $json.UIProperties.OpenInSameWindow.ToString()
-            $escVal = $json.UIProperties.ShowConfirmationOnEsc.ToString()
-
-            $hasConfig = ($json.UIProperties.UserLanguage -eq "zh-CN" -and
-                          $json.UIProperties.OpenInSameWindow -eq $true -and
-                          $json.UIProperties.ShowConfirmationOnEsc -eq $false)
-        } catch { }
+    if (-not $matched -and -not $InstallOnly) {
+        $diffList.Add([PSCustomObject]@{
+            "受控模块" = "偏好配置"
+            "受控属性" = "$($p.Desc) ($($p.Path))"
+            "实机状态" = $actualStr
+            "期望基线" = $p.Expected
+        })
     }
+}
 
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "偏好配置"
-        "受控属性" = "界面语言 (UserLanguage)"
-        "期望基线" = "zh-CN (简体中文)"
-        "实机状态" = $langVal
-        "判定"     = ($langVal -eq "zh-CN") ? "✔ 匹配" : "✘ 偏离"
-    })
-
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "偏好配置"
-        "受控属性" = "单窗口复用 (OpenInSameWindow)"
-        "期望基线" = "True (防多开霸屏)"
-        "实机状态" = $sameWinVal
-        "判定"     = ($sameWinVal -eq "True") ? "✔ 匹配" : "✘ 偏离"
-    })
-
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "偏好配置"
-        "受控属性" = "ESC退出确认 (ShowConfirmationOnEsc)"
-        "期望基线" = "False (直接退出)"
-        "实机状态" = $escVal
-        "判定"     = ($escVal -eq "False") ? "✔ 匹配" : "✘ 偏离"
-    })
-
-    Write-Host "`n📊 [巡检看板] PicView 受控属性基线审计清单:" -ForegroundColor Cyan
+# 只查不改模式 (-CheckOnly) 立即输出看板后安全退出
+if ($CheckOnly) {
+    Write-Host "`n📊 [巡检看板] PicView 受控属性深入基线审计清单:" -ForegroundColor Cyan
     $chkList | Format-Table -AutoSize | Out-String | Write-Host
 
-    $driftCount = ($chkList | Where-Object { $_.判定 -like "✘*" }).Count
-    if ($driftCount -eq 0) {
-        Write-Host "🎉 状态完美！所有受控属性均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
+    if ($diffList.Count -eq 0) {
+        Write-Host "✔ [状态合规] 所有受控属性均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
-        Write-Host "⚠️  共发现 $driftCount 项偏离或缺失。执行本脚本默认模式 (-Sync) 或纯配置重置 (-ConfigOnly) 即可自动对齐自愈。`n" -ForegroundColor Yellow
+        Write-Host "⚠️  共发现 $($diffList.Count) 项基线偏离。执行默认模式 (-Sync) 或纯配置模式 (-ConfigOnly) 即可自动对齐。`n" -ForegroundColor Yellow
         if (-not $isInstalled) {
-            Write-Host "💡 提示: 未检测到客户端安装，请先执行 'scoop install extras/picview' 安装本体。" -ForegroundColor Gray
+            Write-Host "💡 提示: 未检测到客户端安装，可执行 'scoop install extras/picview' 或运行本脚本安装本体。" -ForegroundColor Gray
         }
     }
     return
 }
 
+# 若无偏离且无安装诉求，直接提前安全退出
+if ($diffList.Count -eq 0 -and -not $InstallOnly) {
+    Write-Host "`n📊 [巡检看板] PicView 受控属性深入基线审计清单:" -ForegroundColor Cyan
+    $chkList | Format-Table -AutoSize | Out-String | Write-Host
+    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+    return
+}
+
+# 发现基线偏离，高亮输出差异清单
+Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离黄金基线:" -ForegroundColor Cyan
+$diffList | Format-Table -AutoSize | Out-String | Write-Host
+
 # ==============================================================================
-# 前置门禁断言：验证是否已安装 (除 CheckOnly/Clean 外其余模式强制要求)
+# 阶段 C: 模式审查门禁 (Gate)
 # ==============================================================================
+# 1. 运行态并发防覆写硬门禁
+$runningPv = Get-Process -Name "PicView" -ErrorAction SilentlyContinue
+if ($runningPv) {
+    if (-not $NonInteractive -and -not $Yes) {
+        Write-Warning "检测到 PicView 看图工具当前正在运行！外部修改会被退出时的内存状态覆写。"
+        $confirmProc = Read-Host "是否立即关闭正在运行的 PicView 进程以继续应用基线? [Y/n]"
+        if ($confirmProc.Trim() -match "^(n|no)$") {
+            Write-Host "用户已取消操作，安全退出。`n" -ForegroundColor Yellow
+            return
+        }
+    }
+    $runningPv | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
+}
+
+# 2. 未安装时的安装审查门禁
 if (-not $isInstalled) {
     if ($ConfigOnly) {
         throw "未检测到 PicView 客户端安装。本工具专注于系统注册与偏好加固，请先执行 'scoop install extras/picview' 安装后再执行配置。"
     }
 
-    Write-Host "⚠️  未在 Scoop 路径检测到已安装的 PicView 看图工具。" -ForegroundColor Yellow
-    if ($NonInteractive) {
-        throw "非交互模式下检测到未安装 PicView，拒绝盲目静默安装。请先在交互环境中确认安装。"
+    if (-not $NonInteractive -and -not $Yes) {
+        $shouldInstall = Read-Host "未检测到 PicView 客户端，是否立即调用 'scoop install extras/picview' 进行安装？[Y/n]"
+        if ($shouldInstall.Trim() -match "^(n|no)$") {
+            Write-Host "操作已由用户取消，安全退出。`n" -ForegroundColor Yellow
+            return
+        }
     }
 
-    $shouldInstall = Read-Host "是否立即调用 'scoop install extras/picview' 进行安装？(y/N)"
-    if ($shouldInstall.Trim().ToLower() -eq 'y') {
-        if (-not (Get-Command "scoop" -ErrorAction SilentlyContinue)) {
-            throw "未检测到 scoop 命令，请先就绪 Scoop 包管理器环境。"
-        }
-        Write-Host "🚀 正在通过 Scoop 安装 PicView..." -ForegroundColor Cyan
-        & scoop bucket add extras 2>$null | Out-Null
-        & scoop install extras/picview
+    if (-not (Get-Command "scoop" -ErrorAction SilentlyContinue)) {
+        throw "未检测到 scoop 命令，请先就绪 Scoop 包管理器环境。"
+    }
+    Write-Host "🚀 正在通过 Scoop 安装 PicView..." -ForegroundColor Cyan
+    & scoop bucket add extras 2>$null | Out-Null
+    & scoop install extras/picview
 
-        # 重新探测
-        foreach ($root in $scoopRoots) {
-            $cand = Join-Path $root "apps\picview\current"
-            if (Test-Path (Join-Path $cand "PicView.exe")) {
-                $InstallDir = $cand
-                $pvExe = Join-Path $InstallDir "PicView.exe"
-                $isInstalled = $true
-                break
-            }
+    # 重新探测
+    foreach ($root in $scoopRoots) {
+        $cand = Join-Path $root "apps\picview\current"
+        if (Test-Path (Join-Path $cand "PicView.exe")) {
+            $InstallDir = $cand
+            $pvExe = Join-Path $InstallDir "PicView.exe"
+            $isInstalled = $true
+            break
         }
-        if (-not $isInstalled) {
-            throw "Scoop 安装完成，但未能定位到 $pvExe，请检查 Scoop 安装状态。"
-        }
-    } else {
-        Write-Host "操作已由用户取消，安全退出。`n" -ForegroundColor Yellow
+    }
+    if (-not $isInstalled) {
+        throw "Scoop 安装完成，但未能定位到 $pvExe，请检查 Scoop 安装状态。"
+    }
+}
+
+# 3. 策略审查门禁 (Shift-Left Gate: 改动理由与生效机制)
+if (-not $NonInteractive -and -not $Yes) {
+    Write-Host "💡 [改动说明与生效机制]" -ForegroundColor Cyan
+    Write-Host "   - 核心意图: 注册 PicView.Image 与 Capabilities (支持 13 种图片格式)，点亮 Win11 默认看图应用" -ForegroundColor Gray
+    Write-Host "   - 偏好体验: 注入 UserSettings.json 固化简体中文、单窗口复用 (防连续看图多开霸屏) 与 ESC 直接退出" -ForegroundColor Gray
+    $gateChoice = Read-Host "`n确认应用上述黄金基线配置? [Y] 确认应用 / [Q] 退出 (默认 Y)"
+    if ($gateChoice.Trim() -match '^(q|quit|n|no)$') {
+        Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
     }
 }
 
 # ==============================================================================
-# 阶段 C: 覆盖更新本体 (-InstallOnly)
+# 阶段 D: 覆盖更新本体 (-InstallOnly)
 # ==============================================================================
 if ($InstallOnly) {
     Write-Host "📦 [覆盖升级模式] 正在调用 Scoop 升级 PicView 本体..." -ForegroundColor Cyan
@@ -301,7 +378,7 @@ if ($InstallOnly) {
 }
 
 # ==============================================================================
-# 阶段 D: 增量对齐 (-Sync / 默认) 与 纯配置重置 (-ConfigOnly)
+# 阶段 E: 单向原子落盘 (Apply)
 # ==============================================================================
 Write-Host "⚙️  正在执行系统图像关联注册与 PicView 偏好配置对齐..." -ForegroundColor Cyan
 
@@ -376,7 +453,7 @@ $jsonStr = $settings | ConvertTo-Json -Depth 10
 Write-Host "✅ UserSettings.json 体验基线偏好已原子落盘至: $confFile" -ForegroundColor Green
 
 # ==============================================================================
-# 尾部结报与手动引导清单
+# 阶段 F: 尾部结报与手动引导清单 (Report)
 # ==============================================================================
 Write-Host "`n==================================================" -ForegroundColor Green
 Write-Host "  ✅ PicView 看图工具基线与系统注册管理完成！" -ForegroundColor Green
@@ -385,9 +462,15 @@ Write-Host "   - 图像关联: 已注册 PicView.Image 与 Capabilities，支持
 Write-Host "   - 偏好基线: 固化简体中文、单窗口复用(OpenInSameWindow)、ESC 免确认极速退出" -ForegroundColor Gray
 Write-Host "   - 窗口适应: 固化超大图自动适应窗口与窗口居中呈现" -ForegroundColor Gray
 
-Write-Host "`n--------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "📋 [手动收尾引导清单 (Manual Checklist)]" -ForegroundColor Cyan
-Write-Host " 1. 设为默认: 在 Windows 11【设置 - 应用 - 默认应用】中将 PicView 设为照片查看器默认应用" -ForegroundColor Gray
-Write-Host " 2. 双击测试: 在资源管理器中双击图片文件，确认以单窗口秒级拉起且界面呈现简体中文" -ForegroundColor Gray
-Write-Host " 3. ESC 测试: 查看图片时轻按 'Esc' 键，确认直接关闭窗口且无二次弹窗打扰" -ForegroundColor Gray
-Write-Host "--------------------------------------------------`n" -ForegroundColor DarkGray
+$isDefaultPhoto = $false
+try {
+    $jpgChoice = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.jpg\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
+    if ($jpgChoice -eq $progId) { $isDefaultPhoto = $true }
+} catch { }
+
+if (-not $isDefaultPhoto) {
+    Write-Host "`n--------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "📋 [手动收尾引导清单 (Manual Checklist)]" -ForegroundColor Cyan
+    Write-Host " 1. 设为默认: 在系统【默认应用】中将 PicView 设为照片查看器默认应用" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------`n" -ForegroundColor DarkGray
+}
