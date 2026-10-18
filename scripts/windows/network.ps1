@@ -4,29 +4,32 @@
     网络协议加固与系统更新通道策略基线
 
 .DESCRIPTION
-    Windows 11 网络协议加固、阿里公共原生 DoH 模板下发、LLMNR 阻断与更新通道策略加固模块。
-    1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线。
+    Windows 11 网络协议加固、阿里公共原生 DoH 模板下发、禁用物理网卡 IPv6 并固化 RFC 6724 优先 IPv4 策略、LLMNR 阻断与更新通道加固模块。
+    1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 注册阿里公共 DoH 加密模板 (https://dns.alidns.com/dns-query)，并自动下发到当前活动物理网卡 (223.5.5.5 / 223.6.6.6)。
-    3. 禁用本地多播名称解析 (LLMNR)，阻断局域网毒化与投毒嗅探。
-    4. 禁止 Windows Update 自动覆盖第三方显卡/芯片组驱动，阻断 MRT 恶意软件删除工具推送。
-    5. 禁止系统更新后有用户登录状态下自动重启，关闭 P2P 局域网/公网传递优化以节约带宽。
-    6. 禁用 Microsoft Store 应用在后台静默自动下载与更新。
+    3. 彻底解绑物理网卡 ms_tcpip6，配置内核策略 (DisabledComponents=0x20) 并调整前缀策略 (::ffff:0:0/96 优先级 50)，根除 2001::1 投毒与双栈卡顿。
+    4. 禁用本地多播名称解析 (LLMNR)，阻断局域网毒化与投毒嗅探。
+    5. 禁止 Windows Update 自动覆盖第三方显卡/芯片组驱动，阻断 MRT 恶意软件删除工具推送。
+    6. 禁止系统更新后有用户登录状态下自动重启，关闭 P2P 局域网/公网传递优化以节约带宽。
+    7. 禁用 Microsoft Store 应用在后台静默自动下载与更新。
+    8. Windows Defender 防火墙全域安全基线：锁定 Domain/Private/Public 配置文件全域开启，默认阻断所有未受控入站并允许正常出站。
 
-.PARAMETER Mode
-    操作动词: Sync (执行加固/默认) 或 CheckOnly (只查不改/体检巡检)。
+.PARAMETER Action
+    操作模式:
+    - Sync  : 增量收敛加固 (默认，仅修复实机偏离项，保持合规项不动)
+    - Check : 状态体检巡检 (100% 只读诊断受控属性对比，零写入安全退出)
 
 .PARAMETER Profile
-    配置预设: Full (黄金深度基线/默认) 或 General (通用稳健基线)。
+    加固预设:
+    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
+    - General : 通用稳健基线 (保守兼容)
 
 .PARAMETER Yes
-    非交互自动确认放行。
-
-.PARAMETER NonInteractive
-    非交互模式，遇到确认直接放行执行。
+    免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
 
 .EXAMPLE
     # 只读体检巡检
-    pwsh -File .\scripts\windows\network.ps1 -Mode CheckOnly
+    pwsh -File .\scripts\windows\network.ps1 -Action Check
 
     # 交互式检查与加固
     pwsh -File .\scripts\windows\network.ps1
@@ -37,237 +40,461 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "CheckOnly")]
-    [string]$Mode = "Sync",
+    [ValidateSet("Sync", "Check")]
+    [string]$Action = "Sync",
 
     [ValidateSet("Full", "General")]
     [string]$Profile = "Full",
 
-    [switch]$Yes,
-    [switch]$NonInteractive
+    [switch]$Yes
 )
 
 $ErrorActionPreference = "Stop"
 
 # ==============================================================================
-# 环境校验：强制锁定 PowerShell 7+ 与 管理员权限
+# 1. 运行时环境硬门禁与权限安全防御
 # ==============================================================================
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw "【版本错误】此脚本针对 PowerShell 7 (pwsh) 现代运行时深度定制，严禁在 Windows PowerShell 5.1 下执行！"
 }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(544)
-if (-not $isAdmin) {
+if (-not $isAdmin -and $Action -ne "Check") {
     throw "【权限错误】此脚本必须以管理员身份运行！请右键 pwsh 选择 [以管理员身份运行] 后重新执行。"
 }
 
-# ==============================================================================
-# 内部辅助函数
-# ==============================================================================
-function Ensure-Key([string]$path) {
-    if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+$currentUser = [Environment]::UserName
+$rawConsoleUser = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+$consoleUser = if ($rawConsoleUser) { ($rawConsoleUser -replace '.*\\') } else { $currentUser }
+if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
+    throw "【跨账号提权阻断】当前终端运行身份 [$currentUser] 与桌面登录用户 [$consoleUser] 不一致！为防配置污染，请直接在桌面登录用户会话中以管理员身份运行。"
 }
 
-function Set-RegDword([string]$Path, [string]$Name, [int]$Value) {
-    Ensure-Key $Path
+# ==============================================================================
+# 2. 内置原生轻量辅助函数库 (Self-Contained Mini-Kit)
+# ==============================================================================
+function Ensure-RegKey {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+}
+
+function Set-RegDword {
+    param([string]$Path, [string]$Name, [int]$Value)
+    Ensure-RegKey $Path
     $cur = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
     if ($cur -ne $Value) {
         try {
             Set-ItemProperty -Path $Path -Name $Name -Type DWord -Value $Value -Force -ErrorAction Stop
         } catch {
             $regPath = $Path -replace '^HKLM:\\', 'HKLM\' -replace '^HKCU:\\', 'HKCU\'
-            reg.exe add $regPath /v $Name /t REG_DWORD /d $Value /f *>$null
+            & reg.exe add $regPath /v $Name /t REG_DWORD /d $Value /f *>$null
         }
     }
 }
 
-function Test-RegDword([string]$Path, [string]$Name, [int]$Expected) {
-    if (-not (Test-Path $Path)) { return $false }
+function Get-RegVal {
+    param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
+    if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return ($null -ne $val -and [int]$val -eq $Expected)
+    return if ($null -ne $val) { "$val" } else { $Default }
 }
 
 # ==============================================================================
-# 阶段 1: 全量只读嗅探与状态比对 (Plan & Diff)
+# 3. 声明式规则矩阵清单 (最小细项原子化拆解: 目的与影响明确分离)
 # ==============================================================================
-$items = @(
+$Rules = @(
     [PSCustomObject]@{
-        Name   = "注册阿里公共 DoH 模板并下发活动物理网卡 (223.5.5.5 / 223.6.6.6)"
-        Check  = {
-            $doh5 = [bool](Get-DnsClientDohServerAddress -ServerAddress "223.5.5.5" -ErrorAction SilentlyContinue)
-            $doh6 = [bool](Get-DnsClientDohServerAddress -ServerAddress "223.6.6.6" -ErrorAction SilentlyContinue)
-            $adapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up'
-            $netMatch = $true
-            if ($adapters) {
-                foreach ($nic in $adapters) {
-                    $dns = (Get-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
-                    if (-not ($dns -contains "223.5.5.5" -and $dns -contains "223.6.6.6")) {
-                        $netMatch = $false
-                        break
-                    }
-                }
+        Id      = "doh-template-223-5"
+        Name    = "阿里公共 DoH 加密模板注册 (223.5.5.5)"
+        Profile = "General"
+        Purpose = "向 Windows 11 DNS 客户端注册阿里公共 DNS 的 HTTPS 加密模板，启用原生 DoH 加密通道"
+        Impact  = "若阿里 DNS 服务端发生网络抖动或被网络防火墙拦截，系统会自适应回退到 UDP 53，无单点故障"
+        Check   = {
+            $doh = Get-DnsClientDohServerAddress -ServerAddress "223.5.5.5" -ErrorAction SilentlyContinue
+            $isPass = [bool]$doh
+            return @{
+                Actual      = if ($isPass) { "已注册 ($($doh.DohTemplate))" } else { "未注册" }
+                Expected    = "https://dns.alidns.com/dns-query"
+                IsCompliant = $isPass
             }
-            return ($doh5 -and $doh6 -and $netMatch)
         }
-        Action = {
-            $doh5 = Get-DnsClientDohServerAddress -ServerAddress "223.5.5.5" -ErrorAction SilentlyContinue
-            if (-not $doh5) {
+        Apply   = {
+            $doh = Get-DnsClientDohServerAddress -ServerAddress "223.5.5.5" -ErrorAction SilentlyContinue
+            if (-not $doh) {
                 Add-DnsClientDohServerAddress -ServerAddress "223.5.5.5" -DohTemplate "https://dns.alidns.com/dns-query" -AllowFallbackToUdp $true -AutoUpgrade $true -ErrorAction SilentlyContinue | Out-Null
             }
-            $doh6 = Get-DnsClientDohServerAddress -ServerAddress "223.6.6.6" -ErrorAction SilentlyContinue
-            if (-not $doh6) {
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "doh-template-223-6"
+        Name    = "阿里公共 DoH 加密模板注册 (223.6.6.6)"
+        Profile = "General"
+        Purpose = "向 Windows 11 DNS 客户端注册备用阿里公共 DNS 的 HTTPS 加密模板，提供高可用加密冗余"
+        Impact  = "同主模板，支持自适应回退至标准 UDP 端口"
+        Check   = {
+            $doh = Get-DnsClientDohServerAddress -ServerAddress "223.6.6.6" -ErrorAction SilentlyContinue
+            $isPass = [bool]$doh
+            return @{
+                Actual      = if ($isPass) { "已注册 ($($doh.DohTemplate))" } else { "未注册" }
+                Expected    = "https://dns.alidns.com/dns-query"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $doh = Get-DnsClientDohServerAddress -ServerAddress "223.6.6.6" -ErrorAction SilentlyContinue
+            if (-not $doh) {
                 Add-DnsClientDohServerAddress -ServerAddress "223.6.6.6" -DohTemplate "https://dns.alidns.com/dns-query" -AllowFallbackToUdp $true -AutoUpgrade $true -ErrorAction SilentlyContinue | Out-Null
             }
-
-            $adapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up'
-            if ($adapters) {
-                foreach ($nic in $adapters) {
-                    Set-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -ServerAddresses @("223.5.5.5", "223.6.6.6") -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "nic-dns-server-addresses"
+        Name    = "活动物理网卡 DNS 下发 (223.5.5.5 / 223.6.6.6)"
+        Profile = "General"
+        Purpose = "将活动物理网卡 DNS 指向阿里公共 DNS，配合模板自动激活端到端 DoH 加密，彻底免疫运营商 LocalDNS 劫持"
+        Impact  = "在酒店、机场或校园网 Portal Web 认证页面环境下，由于阻断了局域网私有 DNS 劫持，可能无法自动弹出 Wi-Fi 登录页（需临时恢复 DHCP 获取）"
+        Check   = {
+            $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up')
+            if ($adapters.Count -eq 0) {
+                return @{ Actual = "无活动物理网卡"; Expected = "223.5.5.5 / 223.6.6.6"; IsCompliant = $true }
+            }
+            $allMatch = $true
+            $actualDnsList = @()
+            foreach ($nic in $adapters) {
+                $dns = (Get-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
+                $actualDnsList += "$($nic.Name): $($dns -join ',')"
+                if (-not ($dns -contains "223.5.5.5" -and $dns -contains "223.6.6.6")) {
+                    $allMatch = $false
                 }
             }
-
-            Write-Host "`n  [+] 已为活动物理网卡下发阿里公共 DNS (223.5.5.5 / 223.6.6.6)，系统原生 DoH 加密已就绪。" -ForegroundColor Cyan
-            Write-Host "  👉 [环境提示] 若在酒店、公共 Wi-Fi 或校园网遇到 Web 认证弹窗受阻，可执行以下命令恢复自动获取 (DHCP)：" -ForegroundColor DarkGray
-            Write-Host "     Get-NetAdapter -Physical | Set-DnsClientServerAddress -ResetServerAddresses" -ForegroundColor DarkGray
+            return @{
+                Actual      = if ($allMatch) { "已下发 ($($actualDnsList -join '; '))" } else { "$($actualDnsList -join '; ')" }
+                Expected    = "223.5.5.5, 223.6.6.6"
+                IsCompliant = $allMatch
+            }
+        }
+        Apply   = {
+            $adapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up'
+            foreach ($nic in $adapters) {
+                Set-DnsClientServerAddress -InterfaceIndex $nic.InterfaceIndex -ServerAddresses @("223.5.5.5", "223.6.6.6") -ErrorAction SilentlyContinue
+            }
         }
     },
     [PSCustomObject]@{
-        Name   = "禁用 LLMNR 本地多播名称解析"
-        Check  = {
-            return Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" "EnableMulticast" 0
+        Id      = "disable-nic-ms-tcpip6-binding"
+        Name    = "物理网卡 IPv6 组件解绑 (ms_tcpip6)"
+        Profile = "General"
+        Purpose = "彻底解除物理网络适配器上的 IPv6 协议驱动绑定，消除劣质双栈路由带来的首包延迟与 2001::1 伪递归投毒"
+        Impact  = "若处于教育网纯 IPv6 独占网络或特定仅限 IPv6 下载的 PT 节点，解绑后将无法走原生 v6 链路"
+        Check   = {
+            $adapters = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)
+            if ($adapters.Count -eq 0) { return @{ Actual = "无物理网卡"; Expected = "全部解绑"; IsCompliant = $true } }
+            $enabledNics = @()
+            foreach ($nic in $adapters) {
+                $binding = $nic | Get-NetAdapterBinding -ComponentID "ms_tcpip6" -ErrorAction SilentlyContinue
+                if ($binding -and $binding.Enabled) { $enabledNics += $nic.Name }
+            }
+            $isPass = ($enabledNics.Count -eq 0)
+            return @{
+                Actual      = if ($isPass) { "已全部解绑" } else { "绑定中 ($($enabledNics -join ', '))" }
+                Expected    = "全部解绑 (Disabled)"
+                IsCompliant = $isPass
+            }
         }
-        Action = {
-            Ensure-Key "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" -Name "EnableMulticast" -Type DWord -Value 0 -Force
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "禁止 Windows Update 覆盖第三方驱动"
-        Check  = {
-            return Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" "ExcludeWUDriversInQualityUpdate" 1
-        }
-        Action = {
-            Ensure-Key "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" -Name "ExcludeWUDriversInQualityUpdate" -Type DWord -Value 1 -Force
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "阻断 Windows 恶意软件删除工具 (MRT) 推送"
-        Check  = {
-            return Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\MRT" "DontOfferThroughWUAU" 1
-        }
-        Action = {
-            Ensure-Key "HKLM:\SOFTWARE\Policies\Microsoft\MRT"
-            Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\MRT" -Name "DontOfferThroughWUAU" -Type DWord -Value 1 -Force
+        Apply   = {
+            $adapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue
+            foreach ($nic in $adapters) {
+                $nic | Disable-NetAdapterBinding -ComponentID "ms_tcpip6" -ErrorAction SilentlyContinue
+            }
         }
     },
     [PSCustomObject]@{
-        Name   = "禁止更新后自动重启与关闭 P2P 传递优化"
-        Check  = {
-            $u = Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoRebootWithLoggedOnUsers" 1
-            $d = Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DODownloadMode" 0
-            return ($u -and $d)
+        Id      = "tcpip6-disabled-components-policy"
+        Name    = "内核 IPv6 优先组件策略 (DisabledComponents = 0x20)"
+        Profile = "General"
+        Purpose = "配置 Tcpip6 协议栈偏好 IPv4 超过 IPv6 (DisabledComponents=32)，保持内核双栈兼容同时天生免疫投毒"
+        Impact  = "无负面兼容副作用，符合微软官方企业级双栈网络收敛标准"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" "DisabledComponents"
+            return @{ Actual = $val; Expected = "32 (0x20)"; IsCompliant = ($val -eq "32") }
         }
-        Action = {
+        Apply   = {
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" "DisabledComponents" 32
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "rfc6724-ipv4-prefix-precedence"
+        Name    = "RFC 6724 优先 IPv4 前缀策略 (::ffff:0:0/96 优先级 50)"
+        Profile = "General"
+        Purpose = "依据 RFC 6724 规范调整系统地址选择前缀表，将 IPv4 映射地址优先级置于原生 IPv6 之上"
+        Impact  = "系统将始终优先发起 IPv4 网络通信握手，消除双栈网络下因等待 v6 超时导致的网页打开转圈"
+        Check   = {
+            $policyMatch = $false
+            $currentPrecedence = "<未找到>"
+            $out = netsh interface ipv6 show prefixpolicies 2>$null
+            foreach ($line in $out) {
+                if ($line -match "^\s*(\d+)\s+\d+\s+::ffff:0:0/96") {
+                    $currentPrecedence = $matches[1]
+                    if ([int]$matches[1] -ge 45) { $policyMatch = $true }
+                }
+            }
+            return @{ Actual = "Precedence=$currentPrecedence"; Expected = "Precedence=50"; IsCompliant = $policyMatch }
+        }
+        Apply   = {
+            netsh interface ipv6 set prefixpolicy ::ffff:0:0/96 50 0 persistent | Out-Null
+            netsh interface ipv6 set prefixpolicy ::/0 40 1 persistent | Out-Null
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "disable-llmnr-multicast"
+        Name    = "LLMNR 本地多播名称解析禁用 (EnableMulticast = 0)"
+        Profile = "General"
+        Purpose = "切断局域网未加密链路本地多播名称解析，免疫同局域网下 Responder 恶意哈希窃取与投毒"
+        Impact  = "在没有 DNS 服务器的无头工作组局域网中，无法直接通过单机计算机名互相发现"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" "EnableMulticast"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" "EnableMulticast" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "disable-wu-driver-overwrite"
+        Name    = "Windows Update 排除驱动更新 (ExcludeWUDriversInQualityUpdate = 1)"
+        Profile = "General"
+        Purpose = "阻断系统自动更新静默覆盖显卡公版驱动与主板芯片组驱动，保障驱动完全受控稳定"
+        Impact  = "插入全新即插即用外设时，系统不会自动从 Windows Update 库联网静默安装驱动，需手动安装公版驱动"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" "ExcludeWUDriversInQualityUpdate"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate" "ExcludeWUDriversInQualityUpdate" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "disable-mrt-push"
+        Name    = "恶意软件删除工具 (MRT) 推送阻断 (DontOfferThroughWUAU = 1)"
+        Profile = "General"
+        Purpose = "阻断 Windows 每月累积更新中重复下载并后台慢速扫描的 MRT，节约磁盘与 CPU 周期"
+        Impact  = "系统不再接收每月 MRT 静态特征扫描（第三方专业杀毒或 Windows Defender 实时防护已完全覆盖）"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\MRT" "DontOfferThroughWUAU"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\MRT" "DontOfferThroughWUAU" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "disable-wu-auto-reboot"
+        Name    = "登录状态系统更新强制自动重启阻断 (NoAutoRebootWithLoggedOnUsers = 1)"
+        Profile = "General"
+        Purpose = "有用户登录会话时，系统更新安装完毕后严禁强行触发自动重启，杜绝未保存工作与编译状态丢失"
+        Impact  = "安装重要系统安全累积补丁后，若长期不手动重启，新补丁不会最终生效"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" "NoAutoRebootWithLoggedOnUsers"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
             $au = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-            Ensure-Key $au
-            Set-ItemProperty -Path $au -Name "NoAutoRebootWithLoggedOnUsers" -Type DWord -Value 1 -Force
-            Set-ItemProperty -Path $au -Name "AUOptions" -Type DWord -Value 2 -Force
-
-            $do = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization"
-            Ensure-Key $do
-            Set-ItemProperty -Path $do -Name "DODownloadMode" -Type DWord -Value 0 -Force
+            Set-RegDword $au "NoAutoRebootWithLoggedOnUsers" 1
+            Set-RegDword $au "AUOptions" 2
         }
     },
     [PSCustomObject]@{
-        Name   = "禁用 Microsoft Store 应用后台自动更新与下载"
-        Check  = {
-            return Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore" "AutoDownload" 2
+        Id      = "disable-delivery-optimization-p2p"
+        Name    = "传递优化 P2P 局域网/公网上传切断 (DODownloadMode = 0)"
+        Profile = "General"
+        Purpose = "将更新传递优化模式设为仅从微软服务器下载 (0)，严禁向局域网或公网其他电脑上传更新补丁，节约上行带宽"
+        Impact  = "同一局域网内有多台电脑同时更新 Windows 时，无法互相通过内网 P2P 共享补丁包，各电脑独立外网下载"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DODownloadMode"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
         }
-        Action = {
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DODownloadMode" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "disable-store-autodownload"
+        Name    = "Microsoft Store 自动下载更新切断 (AutoDownload = 2)"
+        Profile = "General"
+        Purpose = "禁止应用商店在后台未经许可静默下载巨型游戏或应用更新，由用户完全自主决定更新时机"
+        Impact  = "应用商店中的应用不会在夜间静默升级，需用户手动打开商店点击检查更新"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore" "AutoDownload"
+            return @{ Actual = $val; Expected = "2 (已禁用)"; IsCompliant = ($val -eq "2") }
+        }
+        Apply   = {
             Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore" "AutoDownload" 2
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "firewall-inbound-block-all"
+        Name    = "Defender 防火墙全域入站阻断基线 (Domain/Private/Public Block Inbound)"
+        Profile = "General"
+        Purpose = "强制开启 Windows Defender 防火墙三大配置文件，锁定默认入站全部阻断，坚守网络安全最小暴露面"
+        Impact  = "本地运行临时网络服务（如临时起 Python HTTP 服务、本地调试端口）时，若未明确放行入站规则，外部设备将无法访问"
+        Check   = {
+            $profiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+            if (-not $profiles -or $profiles.Count -lt 3) {
+                return @{ Actual = "未获取到防火墙配置"; Expected = "3 域全部 Block"; IsCompliant = $false }
+            }
+            $isPass = $true
+            $statusList = @()
+            foreach ($p in $profiles) {
+                $statusList += "$($p.Name): $($p.DefaultInboundAction)"
+                if (-not $p.Enabled -or $p.DefaultInboundAction -ne "Block") { $isPass = $false }
+            }
+            return @{
+                Actual      = if ($isPass) { "3 域全阻断" } else { "$($statusList -join ', ')" }
+                Expected    = "Enabled=True, Inbound=Block"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            Set-NetFirewallProfile -Profile Domain, Private, Public -Enabled True -DefaultInboundAction Block -ErrorAction SilentlyContinue | Out-Null
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "firewall-outbound-allow-all"
+        Name    = "Defender 防火墙全域出站放行基线 (Domain/Private/Public Allow Outbound)"
+        Profile = "General"
+        Purpose = "确保 Windows Defender 防火墙全域默认出站放行，保障本地应用程序正常请求互联网"
+        Impact  = "恶意软件发起的出站流量默认不会被出站规则硬阻断，需依赖 Defender 实时防护查杀"
+        Check   = {
+            $profiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+            if (-not $profiles -or $profiles.Count -lt 3) {
+                return @{ Actual = "未获取到防火墙配置"; Expected = "3 域全部 Allow"; IsCompliant = $false }
+            }
+            $isPass = $true
+            $statusList = @()
+            foreach ($p in $profiles) {
+                $statusList += "$($p.Name): $($p.DefaultOutboundAction)"
+                if ($p.DefaultOutboundAction -ne "Allow") { $isPass = $false }
+            }
+            return @{
+                Actual      = if ($isPass) { "3 域全放行" } else { "$($statusList -join ', ')" }
+                Expected    = "Outbound=Allow"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            Set-NetFirewallProfile -Profile Domain, Private, Public -DefaultOutboundAction Allow -ErrorAction SilentlyContinue | Out-Null
         }
     }
 )
 
-Write-Host "==================================================" -ForegroundColor Cyan
+# ==============================================================================
+# 4. 驱动执行管线 (Five-Stage Declarative Pipeline Engine)
+# ==============================================================================
+
+# 阶段 1: Plan & Diff
+Write-Host "`n====================================================================" -ForegroundColor Cyan
 Write-Host "  网络协议加固与系统更新策略基线巡检 (pwsh 7+)" -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
+Write-Host ("  操作意图: {0} | 加固预设: {1} | 授权放行: {2}" -f $Action, $Profile, ($Yes ? "自动放行 (-Yes)" : "交互审查")) -ForegroundColor DarkGray
+Write-Host "====================================================================" -ForegroundColor Cyan
 
-$chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$pendingItems = [System.Collections.Generic.List[PSCustomObject]]::new()
+$ActiveRules = @($Rules | Where-Object {
+    if ($Profile -eq "General") { $_.Profile -eq "General" } else { $true }
+})
 
-foreach ($item in $items) {
-    $isReady = $false
+$AuditBoard = [System.Collections.Generic.List[PSCustomObject]]::new()
+$PendingItems = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+foreach ($rule in $ActiveRules) {
+    $res = $null
     try {
-        $isReady = [bool](& $item.Check)
+        $res = & $rule.Check
     } catch {
-        $isReady = $false
+        $res = @{
+            Actual      = "<探测异常: $($_.Exception.Message)>"
+            Expected    = "<未知>"
+            IsCompliant = $false
+        }
     }
 
-    $chkList.Add([PSCustomObject]@{
-        受控项目 = $item.Name
-        当前状态 = if ($isReady) { "已就绪" } else { "待加固" }
-        判定     = if ($isReady) { "✔ 合规" } else { "✘ 偏离" }
+    $isPass = [bool]$res.IsCompliant
+    $actualStr = "$($res.Actual)"
+    $expectedStr = "$($res.Expected)"
+
+    $AuditBoard.Add([PSCustomObject]@{
+        受控规则 = $rule.Name
+        预设级别 = $rule.Profile
+        实机状态 = $actualStr
+        期望基线 = $expectedStr
+        状态判定 = if ($isPass) { "✔ 合规" } else { "✘ 偏离" }
     })
 
-    if (-not $isReady) {
-        $pendingItems.Add($item)
+    if (-not $isPass) {
+        $PendingItems.Add([PSCustomObject]@{
+            Rule        = $rule
+            Actual      = $actualStr
+            Expected    = $expectedStr
+        })
     }
 }
 
-$chkList | Format-Table -AutoSize | Out-String | Write-Host
-$driftCount = $pendingItems.Count
+Write-Host "`n📊 [巡检看板] 网络协议与系统更新原子受控属性审计清单:" -ForegroundColor Cyan
+$AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
 
+$driftCount = $PendingItems.Count
 if ($driftCount -eq 0) {
     Write-Host "✨ [状态合规] 网络协议与系统更新通道策略全部合规，无需调整。`n" -ForegroundColor Green
     return
 }
 
-Write-Host "⚠️  共发现 $driftCount 项基线偏离。" -ForegroundColor Yellow
+Write-Host ("⚠️  共检测到 {0} 项原子受控属性偏离工程基线。" -f $driftCount) -ForegroundColor Yellow
 
-if ($Mode -eq "CheckOnly") {
-    Write-Host "💡 当前处于 -Mode CheckOnly 只查不改模式，未执行任何系统改动。`n" -ForegroundColor Gray
+if ($Action -eq "Check") {
+    Write-Host "💡 当前处于 -Action Check 只读巡检模式，未执行任何系统改动。`n" -ForegroundColor DarkGray
     return
 }
 
-# ==============================================================================
-# 阶段 2: 审查门禁 (Gate)
-# ==============================================================================
-if (-not $Yes -and -not $NonInteractive) {
-    Write-Host "💡 [改动说明与生效机制]" -ForegroundColor Cyan
-    Write-Host "   - 核心意图: 启用系统原生 DoH 加密 DNS、切断 LLMNR 多播投毒、锁定 WU 仅推送安全质量更新" -ForegroundColor Gray
-    Write-Host "   - 运维须知: 驱动更新已锁定为手动公版，如在特定校园网/Portal Web 认证受阻可执行恢复 DHCP 指令" -ForegroundColor Gray
-    $choice = Read-Host "`n是否立即对齐上述 $driftCount 项网络与更新基线？[Y/n/q] (回车确认)"
-    if ($choice -match '^[Qq]') {
+# 阶段 2: Gate (Shift-Left: 目的与影响结构化直出)
+if (-not $Yes) {
+    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
+    $idx = 1
+    foreach ($p in $PendingItems) {
+        Write-Host ("`n   [{0}] {1}" -f $idx, $p.Rule.Name) -ForegroundColor Yellow
+        Write-Host ("       - 当前实机值: {0}  ==>  期望基线值: {1}" -f $p.Actual, $p.Expected) -ForegroundColor DarkGray
+        Write-Host ("       - [目的] {0}" -f $p.Rule.Purpose) -ForegroundColor White
+        Write-Host ("       - [影响] {0}" -f $p.Rule.Impact) -ForegroundColor Gray
+        $idx++
+    }
+
+    $gateInput = (Read-Host "`n确认对齐上述 $driftCount 项网络与更新基线？[Y] 确认执行 / [N] 跳过本模块 / [Q] 退出 (默认 Y)").Trim()
+    if ($gateInput -match '^[Qq]') {
         Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
     }
-    if ($choice -match '^[Nn]') {
+    if ($gateInput -match '^[Nn]') {
         Write-Host "[-] 跳过本模块基准对齐。`n" -ForegroundColor DarkGray
         return
     }
 }
 
-# ==============================================================================
-# 阶段 3: 单向原子落盘 (Apply)
-# ==============================================================================
+# 阶段 3: Apply
 Write-Host "`n🚀 正在单向对齐网络加固与更新通道基线..." -ForegroundColor Cyan
-$successCount = 0
+$appliedCount = 0
 
-foreach ($it in $pendingItems) {
-    Write-Host -NoNewline ("   - 正在配置: {0} ... " -f $it.Name)
+foreach ($p in $PendingItems) {
+    Write-Host -NoNewline ("   - 正在配置: {0} ... " -f $p.Rule.Name)
     try {
-        & $it.Action
+        & $p.Rule.Apply
         Write-Host -ForegroundColor Green "[OK]"
-        $successCount++
+        $appliedCount++
     } catch {
         Write-Host -ForegroundColor Red "[FAIL]"
-        Write-Warning "执行 [$($it.Name)] 失败: $($_.Exception.Message)"
+        Write-Warning "执行规则 [$($p.Rule.Name)] 失败: $($_.Exception.Message)"
     }
 }
 
-# ==============================================================================
-# 阶段 4: 尾部简报 (Report)
-# ==============================================================================
-Write-Host "`n✅ [网络加固完成] 成功对齐 $successCount / $driftCount 项基线配置。`n" -ForegroundColor Green
+# 阶段 4: Report
+Write-Host "`n====================================================================" -ForegroundColor Green
+Write-Host ("  ✅ [网络加固完成] 成功对齐 {0} / {1} 项基线配置 (预设: {2})" -f $appliedCount, $driftCount, $Profile) -ForegroundColor Green
+Write-Host "====================================================================`n" -ForegroundColor Green
+return

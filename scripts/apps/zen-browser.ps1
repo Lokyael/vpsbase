@@ -6,79 +6,136 @@
 .DESCRIPTION
     Zen Browser (Windows) 自动化纯净安装与企业策略配置脚本。
     1. 专为 PowerShell 7+ (pwsh) 编写，充分运用现代 pwsh 语言特性与原生无 BOM UTF-8 输出。
-    2. 严格遵循“先检查后配置、幂等无冗余”原则：对二进制、离线扩展包、语言包及策略文件全流程先检后配，杜绝重复下载与脏写入。
-    3. 纯净提取官方安装包的核心组件，杜绝特权维护服务（MozillaMaintenance）、计划任务及注册表广域污染。
+    2. 严格遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)：对二进制、离线扩展包、语言包及策略文件全流程先检后配，杜绝重复下载与脏写入。
+    3. 纯净提取官方安装包的核心组件，杜绝特权维护服务 (MozillaMaintenance)、计划任务及注册表广域污染。
     4. 采用无破坏增量合并机制纳管 Profile user.js：完整保留用户自定义的其他偏好，向控制台高亮输出 Old/New 差异对比表。
     5. 分离 Gecko 原生白名单策略与 Zen 专属特性，通过 defaults\pref\ 全局预置与 user.js 增量固化，
        涵盖 38 项现代极简视效、黄金三角搜索引擎、Glance 悬浮快窥、多工作区隔离及能耗优化全量基线。
     6. 智能注册 Windows 系统级浏览器功能与文件/协议关联 (HTTP, HTTPS, HTML)，幂等配置 Zen Browser 为系统默认浏览器。
 
-.PARAMETER InstallOnly
-    仅执行二进制文件的下载、提取与快捷方式创建，不配置企业策略。
+.PARAMETER Action
+    指定生命周期操作模式，可选值:
+    - Sync        : 增量对齐黄金基线 (默认，缺失则装、偏离则修)
+    - Check       : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
+    - ResetConfig : 仅执行企业策略与 user.js 黄金基线注入回正
+    - Uninstall   : 彻底清洁卸载、注销系统协议注册并抹除安装目录与用户 Profile
+    - Upgrade     : 重新拉取官方安装包解包覆盖升级程序本体
 
-.PARAMETER ConfigOnly
-    仅执行本地扩展校验、企业策略增量比对与首选项注入，不重新下载安装程序。
-
-.PARAMETER Uninstall
-    彻底清洁卸载模式。强制终止常驻进程、注销系统协议注册与注册表关联、清理快捷方式并彻底抹除安装目录与用户数据缓存。
-
-.PARAMETER CheckOnly
-    只查不改模式（体检巡检）。逐项比对二进制存在性、企业策略 (policies.json)、偏好配置与默认浏览器关联，高亮输出 Diff，零写入安全退出。
-
-.PARAMETER InstallOnly
-    仅执行二进制文件的下载、提取与快捷方式创建，不配置企业策略。
-
-.PARAMETER ConfigOnly
-    仅执行本地扩展校验、企业策略增量比对与首选项注入，不重新下载安装程序。
-
-.PARAMETER NonInteractive
-    非交互模式，静默全盘采纳所有推荐基线偏好（用于全新自动化装机流）。
+.PARAMETER Yes
+    免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
 
 .PARAMETER InstallDir
     Zen Browser 安装部署目标目录，默认为 D:\prog\zen-browser。
 
+.PARAMETER InstallerPath
+    可选，Zen Browser 本地离线安装包路径（如 zen.installer.exe）。指定后优先使用离线包，免除网络下载。
+
 .EXAMPLE
-    # 交互式全流程安装与配置（回车直接采纳推荐基线）
+    # 只查不改体检巡检
+    pwsh -File .\scripts\apps\zen-browser.ps1 -Action Check
+
+    # 交互式全流程安装与配置
     pwsh -File .\scripts\apps\zen-browser.ps1
 
-    # 静默全量安装与加固
-    pwsh -File .\scripts\apps\zen-browser.ps1 -NonInteractive
-
-    # 仅增量检查并更新策略与扩展（零重复 I/O）
-    pwsh -File .\scripts\apps\zen-browser.ps1 -ConfigOnly
+    # 仅增量检查并更新策略与扩展
+    pwsh -File .\scripts\apps\zen-browser.ps1 -Action ResetConfig
 
     # 彻底清洁卸载
-    pwsh -File .\scripts\apps\zen-browser.ps1 -Uninstall
-
-    # 只查不改体检巡检
-    pwsh -File .\scripts\apps\zen-browser.ps1 -CheckOnly
+    pwsh -File .\scripts\apps\zen-browser.ps1 -Action Uninstall
 #>
 
 [CmdletBinding()]
 param(
-    [switch]$Uninstall,
-    [switch]$CheckOnly,
+    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [string]$Action = "Sync",
 
-    [switch]$InstallOnly,
-    [switch]$ConfigOnly,
-    [switch]$NonInteractive,
     [switch]$Yes,
-    [string]$InstallDir
+    [string]$InstallDir,
+    [string]$InstallerPath
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 # ==============================================================================
-# 环境校验：强制锁定 PowerShell 7+
+# 1. 运行时环境硬门禁与权限安全防御
 # ==============================================================================
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    throw "本脚本已全面转向 PowerShell 7+ (pwsh)，不兼容旧版 Windows PowerShell 5.1。请使用 'pwsh' 执行本脚本。"
+    throw "【版本错误】本脚本已全面转向 PowerShell 7+ (pwsh)，不兼容旧版 Windows PowerShell 5.1。请使用 'pwsh' 执行本脚本。"
+}
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(544)
+if (-not $isAdmin -and $Action -ne "Check") {
+    throw "【权限错误】Zen Browser 自动化部署与系统级协议注册需管理员特权，请在提升的 pwsh 会话中重新执行！"
+}
+
+$currentUser = [Environment]::UserName
+$rawConsoleUser = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+$consoleUser = if ($rawConsoleUser) { ($rawConsoleUser -replace '.*\\') } else { $currentUser }
+if (-not $consoleUser) { $consoleUser = $currentUser }
+
+if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
+    throw "【跨账号提权阻断】检测到终端运行身份 [$currentUser] 与当前桌面登录用户 [$consoleUser] 不一致！为防止将受控配置错误写入 [$currentUser] 账户，请直接在 [$consoleUser] 桌面会话中以管理员身份运行。"
 }
 
 # ==============================================================================
-# 工具函数：JS 首选项格式化与增量比对
+# 2. 应用元数据与辅助函数
 # ==============================================================================
+$AppId   = "zen-browser"
+$AppName = "Zen Browser"
+$ProcessName = "zen"
+
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+    $InstallDir = "D:\prog\zen-browser"
+}
+$AppExe = Join-Path $InstallDir "zen.exe"
+
+$HighValueUserData = @(
+    "浏览器书签与收藏夹: %APPDATA%\zen\Profiles\*\places.sqlite",
+    "保存的登录密码与凭据: %APPDATA%\zen\Profiles\*\logins.json",
+    "历史记录与会话: %APPDATA%\zen\Profiles\*\sessionstore.jsonlz4",
+    "扩展插件本地离线数据与客制规则 (uBlock, Bitwarden 等)"
+)
+
+function Invoke-DownloadFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [string]$Description = "文件",
+        [long]$MinBytes = 1024,
+        [int]$MaxRetries = 3
+    )
+
+    $parent = Split-Path -Path $OutFile -Parent
+    if ($parent -and -not (Test-Path $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    Write-Host "⬇️  正在下载 $Description..." -ForegroundColor Cyan
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
+        if (Test-Path $OutFile) { Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue }
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $OutFile -TimeoutSec 600
+            if ((Test-Path $OutFile) -and ((Get-Item $OutFile).Length -ge $MinBytes)) {
+                Write-Host "   ✔ 下载成功 ($([math]::Round((Get-Item $OutFile).Length / 1MB, 2)) MB)" -ForegroundColor Green
+                return
+            }
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $MaxRetries) {
+                Write-Host "   ⚠️  网络传输中断 ($lastError)，正在重试 ($attempt/$MaxRetries)..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+
+    if (Test-Path $OutFile) { Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue }
+    $errDetail = if ($lastError) { $lastError } else { "文件为空或未达到预期大小 ($MinBytes 字节)" }
+    throw "下载 $Description 失败: $errDetail"
+}
+
 function Format-JsValue($val) {
     if ($val -is [bool]) { return $val ? "true" : "false" }
     if ($val -is [int] -or $val -is [long]) { return "$val" }
@@ -96,7 +153,6 @@ function Update-UserJsPreferences {
     $processedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $outputLines = [System.Collections.Generic.List[string]]::new()
 
-    # 1. 逐行原位扫描并更新已有配置（未纳入目标字典的用户自定义项绝对完整保留）
     foreach ($line in $existingLines) {
         if ($line -match '^\s*user_pref\(\s*["'']([^"'']+)["'']\s*,\s*(.*?)\s*\);\s*$') {
             $key = $Matches[1]
@@ -123,7 +179,6 @@ function Update-UserJsPreferences {
         $outputLines.Add($line)
     }
 
-    # 2. 追加此前未配置的基线项
     foreach ($key in $DesiredPrefs.Keys) {
         if (-not $processedKeys.Contains($key)) {
             $targetVal = $DesiredPrefs[$key]
@@ -137,19 +192,11 @@ function Update-UserJsPreferences {
         }
     }
 
-    # 3. 仅在有实际差异时才执行落盘写操作（实现纯粹幂等）
     if ($diffTable.Count -gt 0 -or (-not (Test-Path $Path))) {
         Set-Content -Path $Path -Value $outputLines -Encoding utf8NoBOM
     }
 
     return $diffTable
-}
-
-# ==============================================================================
-# 0. 目标安装路径智能探测与交互确认
-# ==============================================================================
-if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-    $InstallDir = (Test-Path "D:\") ? "D:\prog\zen-browser" : (Join-Path $env:LOCALAPPDATA "Programs\zen-browser")
 }
 
 function Clear-GeckoStrayRegistrations {
@@ -193,11 +240,10 @@ function Sync-ZenShortcuts {
     if ($AuditOnly) {
         return [PSCustomObject]@{
             IsReady    = $isLnkReady
-            StatusText = $isLnkReady ? "已就绪" : "快捷方式缺失/路径偏离"
+            StatusText = if ($isLnkReady) { "已就绪" } else { "快捷方式缺失/路径偏离" }
         }
     }
 
-    # 执行快捷方式对齐与派生冗余清理
     if (-not $isLnkReady) {
         $wsh = New-Object -ComObject WScript.Shell
         $shortcut = $wsh.CreateShortcut($canonicalLnk)
@@ -208,64 +254,67 @@ function Sync-ZenShortcuts {
         Write-Host "   - 已对齐开始菜单快捷方式: $canonicalLnk" -ForegroundColor Green
     }
     @(
-        (Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" "Zen.lnk"),
-        (Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" "Firefox 隐私浏览.lnk"),
-        "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Zen.lnk",
-        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Zen.lnk"),
         (Join-Path ([Environment]::GetFolderPath("Desktop")) "Zen Browser.lnk"),
-        "C:\Users\Public\Desktop\Zen.lnk",
         "C:\Users\Public\Desktop\Zen Browser.lnk"
     ) | ForEach-Object {
         if (Test-Path $_) {
             Remove-Item -Path $_ -Force -ErrorAction SilentlyContinue
-            Write-Host "   - 已自动清理派生冗余快捷方式: $_" -ForegroundColor Gray
         }
     }
 }
 
-Write-Host "==================================================" -ForegroundColor Yellow
-Write-Host "  Zen Browser 自动化部署与策略配置工具 (pwsh 7+)" -ForegroundColor Yellow
-Write-Host "==================================================" -ForegroundColor Yellow
-Write-Host "📂 部署基准目录: $InstallDir`n" -ForegroundColor Cyan
+# ==============================================================================
+# 3. 独立流转分支：彻底清洁卸载 (-Action Uninstall)
+# ==============================================================================
+if ($Action -eq "Uninstall") {
+    if (-not $Yes) {
+        Write-Host "`n⚠️  [清洁卸载警示] 即将彻底卸载 Zen Browser 并物理抹除全部用户 Profile！" -ForegroundColor Yellow
+        Write-Host "📌 【即将被物理抹除的高价值用户数据清单】:" -ForegroundColor Cyan
+        foreach ($d in $HighValueUserData) {
+            Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
+        }
+        Write-Host "👉 执行清洁卸载将彻底粉碎 %APPDATA%\zen\ 用户 Profile。若需保留数据，请先手动导出备份。`n" -ForegroundColor Yellow
 
-# ==============================================================================
-# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
-# ==============================================================================
-if ($Uninstall) {
-    if (-not $NonInteractive -and -not $Yes) {
-        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将彻底清除 Zen Browser 二进制本体、注册表关联与所有用户数据，确认继续? [y/N]"
-        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
+        $confirm = (Read-Host "确认彻底清除 Zen Browser 二进制本体、系统关联与所有用户数据? [y/N]").Trim()
+        if ($confirm -notmatch '^(y|yes)$') {
+            Write-Host "[-] 用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
 
-    Write-Host "🧹 [清洁卸载模式] 正在执行系统反注册与环境清理..." -ForegroundColor Yellow
+    Write-Host "`n🧹 [清洁卸载模式] 正在执行系统反注册与环境清理..." -ForegroundColor Yellow
 
-    # 1. 强力终止 Zen 常驻进程
-    Get-Process -Name zen -ErrorAction SilentlyContinue | Stop-Process -Force
+    # 1. 终止进程
+    Get-Process -Name "zen" -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 600
 
-    # 2. 清理系统默认浏览器与注册表关联 (包括 Gecko 派生哈希项)
+    # 2. 清理系统默认浏览器与注册表关联
     Remove-ItemProperty -Path "HKCU:\Software\RegisteredApplications" -Name "Zen Browser" -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path "HKCU:\Software\RegisteredApplications" -Name "Zen" -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Clients\StartMenuInternet\Zen" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Clients\StartMenuInternet\ZEN.EXE" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\ZenHTML" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\ZenURL" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "HKCU:\Software\Classes\ZenPDF" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path "HKLM:\SOFTWARE\RegisteredApplications" -Name "Zen Browser" -ErrorAction SilentlyContinue
+    Remove-ItemProperty -Path "HKLM:\SOFTWARE\RegisteredApplications" -Name "Zen" -ErrorAction SilentlyContinue
+
+    @(
+        "HKCU:\Software\Clients\StartMenuInternet\Zen",
+        "HKLM:\SOFTWARE\Clients\StartMenuInternet\Zen",
+        "HKLM:\SOFTWARE\WOW6432Node\Clients\StartMenuInternet\Zen",
+        "HKCU:\Software\Classes\ZenHTML",
+        "HKCU:\Software\Classes\ZenURL",
+        "HKCU:\Software\Classes\ZenPDF",
+        "HKLM:\SOFTWARE\Classes\ZenHTML",
+        "HKLM:\SOFTWARE\Classes\ZenURL",
+        "HKLM:\SOFTWARE\Classes\ZenPDF",
+        "HKLM:\SOFTWARE\Policies\Zen Browser",
+        "HKCU:\Software\Policies\Zen Browser"
+    ) | ForEach-Object {
+        if (Test-Path $_) { Remove-Item -Path $_ -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     Clear-GeckoStrayRegistrations
 
-    # 3. 清理快捷方式 (涵盖用户与全机公用目录)
+    # 3. 清理快捷方式
     $shortcutCandidates = @(
         (Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" "Zen Browser.lnk"),
-        (Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" "Zen.lnk"),
-        (Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" "Firefox 隐私浏览.lnk"),
-        "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Zen.lnk",
-        "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Firefox 隐私浏览.lnk",
         (Join-Path ([Environment]::GetFolderPath("Desktop")) "Zen Browser.lnk"),
-        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Zen.lnk"),
-        "C:\Users\Public\Desktop\Zen.lnk",
         "C:\Users\Public\Desktop\Zen Browser.lnk"
     )
     foreach ($sc in $shortcutCandidates) {
@@ -281,203 +330,176 @@ if ($Uninstall) {
     $zenAppData = Join-Path $env:APPDATA "zen"
     $zenLocalAppData = Join-Path $env:LOCALAPPDATA "zen"
     if (Test-Path $zenAppData) {
-        Write-Host "   - 正在清理用户配置目录: $zenAppData" -ForegroundColor Gray
         Remove-Item -Path $zenAppData -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "   - 已清理用户配置目录: $zenAppData" -ForegroundColor Gray
     }
     if (Test-Path $zenLocalAppData) {
-        Write-Host "   - 正在清理本地缓存目录: $zenLocalAppData" -ForegroundColor Gray
         Remove-Item -Path $zenLocalAppData -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "   - 已清理本地缓存目录: $zenLocalAppData" -ForegroundColor Gray
     }
 
-    Write-Host "✅ [清洁卸载完成] Zen Browser 二进制本体、注册表关联与用户数据已彻底清除。`n" -ForegroundColor Green
+    Write-Host "`n✅ [清洁卸载完成] Zen Browser 二进制本体、注册表关联与用户数据已彻底清除。`n" -ForegroundColor Green
     return
 }
 
 # ==============================================================================
-# 阶段 B: 全量只读嗅探与差异呈现 (Plan & Diff)
+# 4. 阶段 1: 全量只读嗅探与差异呈现 (Plan & Diff)
 # ==============================================================================
-$zenExe = Join-Path $InstallDir "zen.exe"
-$isInstalled = Test-Path $zenExe
-$needExtract = -not $isInstalled
+Write-Host "`n====================================================================" -ForegroundColor Cyan
+Write-Host "  应用生命周期管理与基线巡检: $AppName (pwsh 7+)" -ForegroundColor Cyan
+Write-Host ("  操作意图: {0} | 授权放行: {1} | 部署路径: {2}" -f $Action, ($Yes ? "自动放行 (-Yes)" : "交互审查"), $InstallDir) -ForegroundColor DarkGray
+Write-Host "====================================================================" -ForegroundColor Cyan
 
-$policyPath = Join-Path $InstallDir "distribution\policies.json"
-$policyData = $null
-if (Test-Path $policyPath) {
-    try { $policyData = (Get-Content -Path $policyPath -Raw -Encoding utf8NoBOM | ConvertFrom-Json).policies } catch {}
-}
+$AuditBoard = [System.Collections.Generic.List[PSCustomObject]]::new()
+$DiffList   = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-$extDir = Join-Path $InstallDir "distribution\extensions"
-$uBlockPath = Join-Path $extDir "uBlock0@raymondhill.net.xpi"
-$langPackPath = Join-Path $extDir "langpack-zh-CN@firefox.mozilla.org.xpi"
-
-$prefFile = Join-Path $InstallDir "defaults\pref\zen-baseline.js"
-
-$chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$diffList = [System.Collections.Generic.List[PSCustomObject]]::new()
-
-# 1. 二进制安装
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "客户端本体"
-    "受控属性" = "二进制程序本体 (zen.exe)"
-    "期望基线" = "已安装于 $InstallDir"
-    "实机状态" = $isInstalled ? "已就绪" : "未安装"
-    "判定"     = $isInstalled ? "✔ 匹配" : "✘ 缺失"
+# 4.1 程序本体
+$isInstalled = Test-Path $AppExe
+$AuditBoard.Add([PSCustomObject]@{
+    分层模块 = "客户端本体"
+    受控属性 = "主执行文件 (zen.exe)"
+    期望基线 = "已就绪 ($AppExe)"
+    实机状态 = if ($isInstalled) { "已就绪" } else { "未安装" }
+    状态判定 = if ($isInstalled) { "✔ 匹配" } else { "✘ 缺失" }
 })
 if (-not $isInstalled) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "客户端本体"
-        "受控属性" = "二进制程序本体 (zen.exe)"
-        "实机状态" = "未安装"
-        "期望基线" = "已安装于 $InstallDir"
+    $DiffList.Add([PSCustomObject]@{
+        Property = "主执行文件 (zen.exe)"
+        Actual   = "未安装"
+        Expected = "已就绪 ($AppExe)"
+        Purpose  = "部署基于 Firefox 内核的现代化垂直标签页浏览器本体"
+        Impact   = "若未就绪将自动拉取官方安装包提取 core 组件至 $InstallDir"
     })
 }
 
-# 2. 深入细化检查 policies.json 核心策略
-$corePolicies = @(
-    @{ Name = "DisableFirefoxAccounts"; Expected = $true;  Desc = "底层切除账号登录 (DisableFirefoxAccounts)" },
-    @{ Name = "DisableTelemetry";       Expected = $true;  Desc = "禁用隐私遥测 (DisableTelemetry)" },
-    @{ Name = "DisablePocket";          Expected = $true;  Desc = "禁用 Pocket 资讯推荐 (DisablePocket)" },
-    @{ Name = "OfferToSaveLogins";      Expected = $false; Desc = "禁用内置密码提示 (OfferToSaveLogins)" },
-    @{ Name = "PasswordManagerEnabled"; Expected = $false; Desc = "禁用密码管理器 (PasswordManagerEnabled)" }
+# 4.2 快捷方式
+$scAudit = Sync-ZenShortcuts -AuditOnly
+$AuditBoard.Add([PSCustomObject]@{
+    分层模块 = "系统集成"
+    受控属性 = "开始菜单快捷方式 (Zen Browser.lnk)"
+    期望基线 = "已对齐至安装目录"
+    实机状态 = $scAudit.StatusText
+    状态判定 = if ($scAudit.IsReady) { "✔ 匹配" } else { "✘ 偏离" }
+})
+if (-not $scAudit.IsReady -and $Action -ne "Upgrade") {
+    $DiffList.Add([PSCustomObject]@{
+        Property = "开始菜单快捷方式 (Zen Browser.lnk)"
+        Actual   = $scAudit.StatusText
+        Expected = "已对齐至安装目录"
+        Purpose  = "在开始菜单生成标准程序启动快捷方式并清理派生冗余"
+        Impact   = "方便按 Win 键搜索快速唤起浏览器"
+    })
+}
+
+# 4.3 默认应用注册与 Capabilities
+$regAppVal = (Get-ItemProperty "HKLM:\SOFTWARE\RegisteredApplications" -Name "Zen Browser" -ErrorAction SilentlyContinue)."Zen Browser"
+$isRegAppMatch = ($null -ne $regAppVal)
+$AuditBoard.Add([PSCustomObject]@{
+    分层模块 = "系统集成"
+    受控属性 = "系统 RegisteredApplications (点亮默认应用)"
+    期望基线 = "已注册 (SOFTWARE\Clients\StartMenuInternet\Zen\Capabilities)"
+    实机状态 = if ($isRegAppMatch) { "已注册" } else { "未注册" }
+    状态判定 = if ($isRegAppMatch) { "✔ 匹配" } else { "✘ 偏离" }
+})
+if (-not $isRegAppMatch -and $Action -ne "Upgrade") {
+    $DiffList.Add([PSCustomObject]@{
+        Property = "系统 RegisteredApplications (点亮默认应用)"
+        Actual   = if ($isRegAppMatch) { "已注册" } else { "未注册" }
+        Expected = "已注册"
+        Purpose  = "注册 ProgID、协议关联并在 Win11 设置「默认应用」中点亮"
+        Impact   = "支持在系统设置中一键将 Zen 设为默认 Web 浏览器"
+    })
+}
+
+# 4.4 企业策略 policies.json 受控细项深入审计
+$policyFile = Join-Path $InstallDir "distribution\policies.json"
+$policyJson = $null
+if (Test-Path $policyFile) {
+    try {
+        $policyJson = (Get-Content -Path $policyFile -Raw -Encoding utf8NoBOM | ConvertFrom-Json).policies
+    } catch { }
+}
+
+$corePolicySpecs = @(
+    @{ Path = "DisableTelemetry";           Expected = "True";      Desc = "切断浏览器遥测数据上传"; Purpose = "彻底关闭浏览器后台使用情况与崩溃诊断数据上传"; Impact = "保护浏览隐私，消除静默网络请求" },
+    @{ Path = "DisableFirefoxAccounts";      Expected = "True";      Desc = "禁用 Firefox 云端账号同步"; Purpose = "禁用 Mozilla 账号体系强制登录与漫游"; Impact = "保持本地独立 Profile，数据不向云端漫游" },
+    @{ Path = "OfferToSaveLogins";           Expected = "False";     Desc = "关闭内置密码保存提示"; Purpose = "关闭浏览器自带的保存密码弹窗打扰"; Impact = "账号密码凭据统一委托 Bitwarden 密码管理器纳管" },
+    @{ Path = "PasswordManagerEnabled";      Expected = "False";     Desc = "关闭内置密码管理器"; Purpose = "彻底停用浏览器内置明文密码库"; Impact = "杜绝明文或未加密密码留存在本地 profile" },
+    @{ Path = "DNSOverHTTPS.Locked";         Expected = "True";      Desc = "内置 DoH 锁定 (委托系统原生 DoH)"; Purpose = "锁定并关闭浏览器内置 DoH 抢跑"; Impact = "浏览器 DNS 解析完全遵从 Windows 11 原生 DoH 与代理分流" },
+    @{ Path = "ExtensionSettings.uBlock";   Expected = "已强制配置"; Desc = "uBlock Origin 强制安装声明"; Purpose = "通过企业策略静默强制安装 uBlock Origin 广告拦截插件"; Impact = "新 Profile 无需手动前往应用商店即可自带全功能广告拦截" },
+    @{ Path = "ExtensionSettings.Bitwarden"; Expected = "已强制配置"; Desc = "Bitwarden 密码管理器强制安装声明"; Purpose = "通过企业策略静默强制安装 Bitwarden 密码管理器"; Impact = "保障所有工作区环境密码填充统一可用" }
 )
 
-foreach ($cp in $corePolicies) {
-    $actual = if ($policyData -and $null -ne $policyData.$($cp.Name)) { $policyData.$($cp.Name) } else { $null }
-    $actualStr = if ($null -eq $actual) { "<缺省未设>" } else { "$actual" }
-    $matched = ($null -ne $actual -and [bool]$actual -eq [bool]$cp.Expected)
+foreach ($ps in $corePolicySpecs) {
+    $actVal = "<未配置>"
+    if ($policyJson) {
+        if ($ps.Path -eq "DisableTelemetry") { $actVal = "$($policyJson.DisableTelemetry)" }
+        elseif ($ps.Path -eq "DisableFirefoxAccounts") { $actVal = "$($policyJson.DisableFirefoxAccounts)" }
+        elseif ($ps.Path -eq "OfferToSaveLogins") { $actVal = "$($policyJson.OfferToSaveLogins)" }
+        elseif ($ps.Path -eq "PasswordManagerEnabled") { $actVal = "$($policyJson.PasswordManagerEnabled)" }
+        elseif ($ps.Path -eq "DNSOverHTTPS.Locked") { $actVal = if ($policyJson.DNSOverHTTPS) { "$($policyJson.DNSOverHTTPS.Locked)" } else { "<未配置>" } }
+        elseif ($ps.Path -eq "ExtensionSettings.uBlock") {
+            $actVal = if ($policyJson.ExtensionSettings -and $policyJson.ExtensionSettings."uBlock0@raymondhill.net") { "已强制配置" } else { "未配置" }
+        }
+        elseif ($ps.Path -eq "ExtensionSettings.Bitwarden") {
+            $actVal = if ($policyJson.ExtensionSettings -and $policyJson.ExtensionSettings."{446900e4-71c2-419f-a6a7-df9c091e268b}") { "已强制配置" } else { "未配置" }
+        }
+    }
 
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "企业策略"
-        "受控属性" = $cp.Desc
-        "期望基线" = "$($cp.Expected)"
-        "实机状态" = $actualStr
-        "判定"     = $matched ? "✔ 匹配" : "✘ 偏离"
+    $isMatch = ($actVal.ToLower() -eq $ps.Expected.ToLower())
+    $AuditBoard.Add([PSCustomObject]@{
+        分层模块 = "企业策略"
+        受控属性 = "$($ps.Desc) [$($ps.Path)]"
+        期望基线 = $ps.Expected
+        实机状态 = $actVal
+        状态判定 = if ($isMatch) { "✔ 匹配" } else { "✘ 偏离" }
     })
 
-    if (-not $matched -and -not $InstallOnly) {
-        $diffList.Add([PSCustomObject]@{
-            "受控模块" = "企业策略"
-            "受控属性" = $cp.Desc
-            "实机状态" = $actualStr
-            "期望基线" = "$($cp.Expected)"
+    if (-not $isMatch -and $Action -ne "Upgrade") {
+        $DiffList.Add([PSCustomObject]@{
+            Property = "$($ps.Desc) [$($ps.Path)]"
+            Actual   = $actVal
+            Expected = $ps.Expected
+            Purpose  = $ps.Purpose
+            Impact   = $ps.Impact
         })
     }
 }
 
-# 3. 核心离线扩展与语言包
-$uBlockReady = Test-Path $uBlockPath
-$langPackReady = Test-Path $langPackPath
-$extReady = $uBlockReady -and $langPackReady
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "离线扩展"
-    "受控属性" = "核心离线扩展包 (uBlock Origin + 简体中文语言包)"
-    "期望基线" = "均已固化至 distribution\extensions"
-    "实机状态" = $extReady ? "已固化 (2/2)" : ($uBlockReady ? "仅 uBlock" : ($langPackReady ? "仅语言包" : "均缺失"))
-    "判定"     = $extReady ? "✔ 匹配" : "✘ 缺失"
-})
-if (-not $extReady -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "离线扩展"
-        "受控属性" = "核心离线扩展包 (uBlock Origin + 简体中文语言包)"
-        "实机状态" = $extReady ? "已固化" : "部分或全部缺失"
-        "期望基线" = "全部固化 (distribution\extensions)"
-    })
-}
+Write-Host "`n📊 [巡检看板] Zen Browser 受控属性基线审计清单:" -ForegroundColor Cyan
+$AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
 
-# 4. 全局首选项预置
-$prefReady = (Test-Path $prefFile)
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "全局预置"
-    "受控属性" = "全局默认首选项 (defaults\pref\zen-baseline.js)"
-    "期望基线" = "已固化托管块"
-    "实机状态" = $prefReady ? "已固化" : "文件缺失"
-    "判定"     = $prefReady ? "✔ 匹配" : "✘ 偏离"
-})
-if (-not $prefReady -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "全局预置"
-        "受控属性" = "全局默认首选项 (defaults\pref\zen-baseline.js)"
-        "实机状态" = $prefReady ? "已固化" : "文件缺失"
-        "期望基线" = "已固化托管配置"
-    })
-}
-
-# 5. 系统默认应用关联
-$currHttp = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
-$isDef = ($currHttp -like "*zen*" -or $currHttp -eq "ZenURL" -or $currHttp -eq "ZenHTML")
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "系统集成"
-    "受控属性" = "系统默认浏览器 (HTTP 关联)"
-    "期望基线" = "Zen Browser (ZenURL/ZenHTML)"
-    "实机状态" = [string]::IsNullOrEmpty($currHttp) ? "[未关联]" : $currHttp
-    "判定"     = $isDef ? "✔ 匹配" : "✘ 偏离"
-})
-if (-not $isDef -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "系统集成"
-        "受控属性" = "系统默认浏览器 (HTTP 关联)"
-        "实机状态" = [string]::IsNullOrEmpty($currHttp) ? "[未关联]" : $currHttp
-        "期望基线" = "Zen Browser (ZenURL/ZenHTML)"
-    })
-}
-
-# 6. 开始菜单快捷方式
-$shortcutAudit = Sync-ZenShortcuts -AuditOnly
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "系统集成"
-    "受控属性" = "开始菜单快捷方式 (Zen Browser.lnk)"
-    "期望基线" = "已就绪"
-    "实机状态" = $shortcutAudit.StatusText
-    "判定"     = $shortcutAudit.IsReady ? "✔ 匹配" : "✘ 缺失/偏离"
-})
-if (-not $shortcutAudit.IsReady -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "系统集成"
-        "受控属性" = "开始菜单快捷方式 (Zen Browser.lnk)"
-        "实机状态" = $shortcutAudit.StatusText
-        "期望基线" = "已就绪"
-    })
-}
-
-# 只查不改模式 (-CheckOnly) 立即输出看板后安全退出
-if ($CheckOnly) {
-    Write-Host "`n📊 [巡检看板] Zen Browser 受控属性深入基线审计清单:" -ForegroundColor Cyan
-    $chkList | Format-Table -AutoSize | Out-String | Write-Host
-
-    if ($diffList.Count -eq 0) {
-        Write-Host "✔ [状态合规] 所有受控属性均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
+if ($Action -eq "Check") {
+    if ($DiffList.Count -eq 0) {
+        Write-Host "✨ [状态合规] 所有受控属性与策略均符合工程黄金基线，无需调整。`n" -ForegroundColor Green
     } else {
-        Write-Host "⚠️  共发现 $($diffList.Count) 项基线偏离。执行默认模式 (-Sync) 或纯配置模式 (-ConfigOnly) 即可自动对齐。`n" -ForegroundColor Yellow
-        if (-not $isInstalled) {
-            Write-Host "💡 提示: 未检测到客户端安装，运行本脚本默认模式即可自动拉取最新 Release 纯净解包安装。" -ForegroundColor Gray
-        }
+        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $DiffList.Count) -ForegroundColor Yellow
     }
     return
 }
 
-# 若无偏离且无安装诉求，直接提前安全退出
-if ($diffList.Count -eq 0 -and -not $InstallOnly) {
-    Write-Host "`n📊 [巡检看板] Zen Browser 受控属性深入基线审计清单:" -ForegroundColor Cyan
-    $chkList | Format-Table -AutoSize | Out-String | Write-Host
-    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+if ($DiffList.Count -eq 0 -and $isInstalled -and $Action -ne "Upgrade") {
+    Write-Host "✨ [状态合规] 所有受控属性均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
-# 发现基线偏离，高亮输出差异清单
-Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离黄金基线:" -ForegroundColor Cyan
-$diffList | Format-Table -AutoSize | Out-String | Write-Host
+if ($DiffList.Count -gt 0) {
+    Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离黄金基线:" -ForegroundColor Cyan
+    $DiffList | Format-Table -AutoSize | Out-String | Write-Host
+}
 
 # ==============================================================================
-# 阶段 C: 模式审查门禁 (Gate)
+# 5. 阶段 2: 审查门禁与并发安全 (Gate - Shift-Left Transparency)
 # ==============================================================================
-# 1. 运行态并发防覆写硬门禁
-$runningZen = Get-Process -Name zen -ErrorAction SilentlyContinue
+
+# 5.1 运行态并发防覆写硬门禁
+$runningZen = Get-Process -Name "zen" -ErrorAction SilentlyContinue
 if ($runningZen) {
-    if (-not $NonInteractive -and -not $Yes) {
+    if (-not $Yes) {
         Write-Warning "检测到 Zen Browser 当前正在运行！外部修改会被退出时的内存状态覆写。"
-        $confirmProc = Read-Host "是否立即关闭正在运行的 Zen Browser 进程以继续应用基线? [Y/n]"
-        if ($confirmProc.Trim() -match "^(n|no)$") {
-            Write-Host "用户已取消操作，安全退出。`n" -ForegroundColor Yellow
+        $confirmProc = (Read-Host "是否立即关闭正在运行的 zen 进程以继续应用基线? [Y/n]").Trim()
+        if ($confirmProc -match '^(n|no)$') {
+            Write-Host "[-] 用户已取消操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
@@ -485,157 +507,141 @@ if ($runningZen) {
     Start-Sleep -Milliseconds 600
 }
 
-# 2. 策略审查门禁 (Shift-Left Gate: 改动理由与生效机制)
-if (-not $NonInteractive -and -not $Yes) {
-    Write-Host "💡 [改动说明与生效机制]" -ForegroundColor Cyan
-    Write-Host "   - 核心意图: 纯净部署 Zen 运行时、安装 uBlock 扩展与语言包、注入 policies.json 屏蔽遥测/云账号" -ForegroundColor Gray
-    Write-Host "   - 体验基线: 固化 WebRTC 防泄漏、GPU 硬解加速、极简视效并在系统注册默认浏览器" -ForegroundColor Gray
-    $gateChoice = Read-Host "`n确认应用上述黄金基线配置? [Y] 确认应用 / [Q] 退出 (默认 Y)"
-    if ($gateChoice.Trim() -match '^(q|quit|n|no)$') {
+# 5.2 未安装审查门禁
+if (-not $isInstalled) {
+    if ($Action -eq "ResetConfig") {
+        throw "未检测到 Zen Browser 安装！请先执行 -Action Sync 安装本体后再重置配置。"
+    }
+
+    if (-not $Yes) {
+        $shouldInstall = (Read-Host "未检测到 Zen Browser，是否立即拉取官方安装包进行部署？[Y/n]").Trim()
+        if ($shouldInstall -match '^(n|no)$') {
+            Write-Host "[-] 操作已由用户取消，安全退出。`n" -ForegroundColor DarkGray
+            return
+        }
+    }
+}
+
+# 5.3 策略审查门禁 (Shift-Left Gate: 目的与影响结构化逐项直出)
+if (-not $Yes) {
+    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
+    $idx = 1
+    foreach ($p in $DiffList) {
+        Write-Host ("`n   [{0}] {1}" -f $idx, $p.Property) -ForegroundColor Yellow
+        Write-Host ("       - 当前实机值: {0}  ==>  期望基线值: {1}" -f $p.Actual, $p.Expected) -ForegroundColor DarkGray
+        Write-Host ("       - [目的] {0}" -f $p.Purpose) -ForegroundColor White
+        Write-Host ("       - [影响] {0}" -f $p.Impact) -ForegroundColor Gray
+        $idx++
+    }
+
+    $gateChoice = (Read-Host "`n确认应用上述黄金基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
+    if ($gateChoice -match '^(q|quit|n|no)$') {
         Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
     }
 }
 
 # ==============================================================================
-# 阶段 D: 纯净二进制提取与安装 (-InstallOnly / 缺失时自动提取)
+# 6. 阶段 3: 单向原子落盘 (Apply)
 # ==============================================================================
-if (-not $ConfigOnly) {
-    $zenExe = Join-Path $InstallDir "zen.exe"
-    $needExtract = $true
 
-    if (Test-Path $zenExe) {
-        $needExtract = $false
-        Write-Host "⏭️  检测到二进制本体已存在 ($zenExe)，跳过重复下载解压。" -ForegroundColor Gray
+# 6.1 程序本体解包安装或覆盖升级
+if (-not $isInstalled -or $Action -eq "Upgrade") {
+    Write-Host "`n🚀 正在准备安装 Zen Browser 核心本体..." -ForegroundColor Cyan
+    $pkgPath = $InstallerPath
+
+    if (-not $pkgPath -or -not (Test-Path $pkgPath)) {
+        $pkgPath = Join-Path $env:TEMP "zen.installer.exe"
+        $apiUrl = "https://api.github.com/repos/zen-browser/desktop/releases/latest"
+        Write-Host "   - 正在查询 GitHub 最新 Release..." -ForegroundColor Gray
+        $rel = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "vpsbase-zen-script" } -TimeoutSec 15
+        $asset = $rel.assets | Where-Object { $_.name -match 'zen\.installer.*\.exe$' } | Select-Object -First 1
+        if (-not $asset) { throw "未在 GitHub 最新 Release 中匹配到 Zen Browser 安装程序" }
+
+        Invoke-DownloadFile -Url $asset.browser_download_url -OutFile $pkgPath -Description "Zen 安装包"
     }
 
-    if ($needExtract) {
-        if (-not (Get-Command 7z -ErrorAction SilentlyContinue)) {
-            throw "未检测到 7z 解压工具。请先执行 'scoop install 7zip' 安装，拒绝调用安装器向导以防系统与注册表污染。"
+    # 提取 core 组件至安装目录 (使用 7z)
+    $7zExe = (Join-Path $scoopRoot "apps\7zip\current\7z.exe")
+    if (-not (Test-Path $7zExe)) { $7zExe = (Get-Command "7z.exe" -ErrorAction SilentlyContinue).Source }
+    if (-not $7zExe) { throw "未检测到 7z 解包工具，请确保已安装 7zip！" }
+
+    $extractTemp = Join-Path $env:TEMP ("zenextract-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $extractTemp -Force | Out-Null
+
+    try {
+        Write-Host "   - 正在解包安装包核心文件..." -ForegroundColor Gray
+        & $7zExe x $pkgPath "-o$extractTemp" -y *>$null
+
+        $coreDir = Join-Path $extractTemp "core"
+        if (-not (Test-Path $coreDir)) { $coreDir = $extractTemp }
+
+        if (-not (Test-Path $InstallDir)) {
+            New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
         }
 
-        $tempDir = Join-Path $env:TEMP "zen_install_$(Get-Random)"
-        New-Item -ItemType Directory -Path $tempDir, $InstallDir -Force | Out-Null
+        Copy-Item -Path "$coreDir\*" -Destination $InstallDir -Recurse -Force
+        $isInstalled = Test-Path $AppExe
+        if (-not $isInstalled) { throw "解包完成但未能定位到 $AppExe！" }
+        Write-Host "✅ Zen Browser 核心程序已部署至: $InstallDir" -ForegroundColor Green
+    } finally {
+        if (Test-Path $extractTemp) { Remove-Item -Path $extractTemp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 
-        try {
-            Write-Host "🔍 检索 Zen Browser 官方最新 Release..." -ForegroundColor Cyan
-            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/zen-browser/desktop/releases/latest" -Headers @{ "User-Agent" = "PowerShell" }
-            $asset = $release.assets | Where-Object { $_.name -eq "zen.installer.exe" } | Select-Object -First 1
-            if (-not $asset) {
-                throw "未在最新 Release ($($release.tag_name)) 中匹配到 zen.installer.exe"
-            }
-
-            $installerPath = Join-Path $tempDir "zen.installer.exe"
-            Write-Host "⬇️  正在下载 $($asset.name) ($($release.tag_name))..." -ForegroundColor Cyan
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installerPath
-
-            Write-Host "📦 提取核心二进制至 $InstallDir..." -ForegroundColor Cyan
-            7z x -y -o"$tempDir\extract" $installerPath "core/*" | Out-Null
-            Copy-Item -Path "$tempDir\extract\core\*" -Destination $InstallDir -Recurse -Force
-
-            Write-Host "🔗 对齐开始菜单快捷方式..." -ForegroundColor Cyan
-            Sync-ZenShortcuts
-
-            Write-Host "✅ Zen Browser 纯净安装就绪: $InstallDir\zen.exe" -ForegroundColor Green
-        }
-        finally {
-            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-        }
+    if ($Action -eq "Upgrade") {
+        Write-Host "`n✅ [升级完成] Zen Browser 本体已完成更新。`n" -ForegroundColor Green
+        return
     }
 }
 
-if ($InstallOnly) {
-    return
+# 6.2 注册系统关联与开始菜单快捷方式
+Write-Host "`n⚙️  正在注册系统级默认浏览器与能力 (Capabilities)..." -ForegroundColor Cyan
+Sync-ZenShortcuts
+
+$appKey = "HKLM:\SOFTWARE\Clients\StartMenuInternet\Zen"
+if (-not (Test-Path $appKey)) { New-Item -Path $appKey -Force | Out-Null }
+Set-ItemProperty -Path $appKey -Name "(default)" -Value "Zen Browser" -Force
+
+$capKey = "$appKey\Capabilities"
+if (-not (Test-Path $capKey)) { New-Item -Path $capKey -Force | Out-Null }
+Set-ItemProperty -Path $capKey -Name "ApplicationName" -Value "Zen Browser" -Force
+Set-ItemProperty -Path $capKey -Name "ApplicationDescription" -Value "Zen Browser - Experience tranquillity while browsing the web." -Force
+Set-ItemProperty -Path $capKey -Name "ApplicationIcon" -Value "$AppExe,0" -Force
+
+$urlKey = "$capKey\URLAssociations"
+if (-not (Test-Path $urlKey)) { New-Item -Path $urlKey -Force | Out-Null }
+Set-ItemProperty -Path $urlKey -Name "http" -Value "ZenURL" -Force
+Set-ItemProperty -Path $urlKey -Name "https" -Value "ZenURL" -Force
+
+$fileKey = "$capKey\FileAssociations"
+if (-not (Test-Path $fileKey)) { New-Item -Path $fileKey -Force | Out-Null }
+Set-ItemProperty -Path $fileKey -Name ".htm" -Value "ZenHTML" -Force
+Set-ItemProperty -Path $fileKey -Name ".html" -Value "ZenHTML" -Force
+Set-ItemProperty -Path $fileKey -Name ".pdf" -Value "ZenPDF" -Force
+
+Set-ItemProperty -Path "HKLM:\SOFTWARE\RegisteredApplications" -Name "Zen Browser" -Value "SOFTWARE\Clients\StartMenuInternet\Zen\Capabilities" -Force
+
+# 注册 ProgID 实体
+@(
+    @{ Key = "HKLM:\SOFTWARE\Classes\ZenHTML"; Name = "Zen HTML Document" },
+    @{ Key = "HKLM:\SOFTWARE\Classes\ZenURL";  Name = "Zen URL" },
+    @{ Key = "HKLM:\SOFTWARE\Classes\ZenPDF";  Name = "Zen PDF Document" }
+) | ForEach-Object {
+    $k = $_.Key
+    if (-not (Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
+    Set-ItemProperty -Path $k -Name "(default)" -Value $_.Name -Force
+    $cmd = "$k\shell\open\command"
+    if (-not (Test-Path $cmd)) { New-Item -Path $cmd -Force | Out-Null }
+    Set-ItemProperty -Path $cmd -Name "(default)" -Value "`"$AppExe`" `"%1`"" -Force
 }
+Write-Host "✅ 系统 Capabilities 与 默认浏览器关联注册完成。" -ForegroundColor Green
 
-# ==============================================================================
-# 阶段 E: 策略注入、扩展分发与系统注册 (Apply)
-# ==============================================================================
-# 1. 核心扩展与语言包先检后配 (零重复下载)
-
-# 运行状态检查：写入 policies 与扩展前必须退出浏览器
-if (Get-Process -Name zen -ErrorAction SilentlyContinue) {
-    throw "检测到 Zen Browser 正在运行，请先完全退出浏览器后再执行策略配置！"
-}
-
+# 6.3 注入企业策略 policies.json
+Write-Host "⚙️  正在单向对齐企业策略 (distribution/policies.json)..." -ForegroundColor Cyan
 $distDir = Join-Path $InstallDir "distribution"
-$extDir  = Join-Path $distDir "extensions"
-New-Item -ItemType Directory -Path $extDir -Force | Out-Null
+if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir -Force | Out-Null }
 
-Write-Host "📦 检查核心离线扩展与语言包缓存..." -ForegroundColor Cyan
-
-# 1. 检查 uBlock Origin
-$ublockFile = Join-Path $extDir "uBlock0@raymondhill.net.xpi"
-if ((Test-Path $ublockFile) -and ((Get-Item $ublockFile).Length -gt 0)) {
-    Write-Host "   - [已就绪] uBlock Origin 离线包已存在，跳过重复下载。" -ForegroundColor Gray
-} else {
-    Write-Host "   - ⬇️  正在预下载 uBlock Origin..." -ForegroundColor Yellow
-    try {
-        Invoke-WebRequest -Uri "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi" -OutFile $ublockFile
-    } catch {
-        if (Test-Path $ublockFile) { Remove-Item $ublockFile -Force -ErrorAction SilentlyContinue }
-        throw
-    }
-}
-
-# 2. 检查 Bitwarden
-$bwFile = Join-Path $extDir "{446900e4-71c2-419f-a6a7-df9c091e268b}.xpi"
-if ((Test-Path $bwFile) -and ((Get-Item $bwFile).Length -gt 0)) {
-    Write-Host "   - [已就绪] Bitwarden 离线包已存在，跳过重复下载。" -ForegroundColor Gray
-} else {
-    Write-Host "   - ⬇️  正在预下载 Bitwarden..." -ForegroundColor Yellow
-    try {
-        Invoke-WebRequest -Uri "https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi" -OutFile $bwFile
-    } catch {
-        if (Test-Path $bwFile) { Remove-Item $bwFile -Force -ErrorAction SilentlyContinue }
-        throw "Bitwarden 离线包下载失败: $_"
-    }
-}
-
-# 3. 动态精准匹配与当前内核主版本一致的简体中文语言包
-$langFile = Join-Path $extDir "langpack-zh-CN@firefox.mozilla.org.xpi"
-$platIni = Join-Path $InstallDir "platform.ini"
-$major = ((Test-Path $platIni) -and ((Get-Content $platIni -Raw) -match "Milestone=([\d]+)")) ? $Matches[1] : "157"
-
-$needDownloadLang = $true
-if (Test-Path $langFile) {
-    # 检查已缓存语言包是否与当前 Gecko Milestone 主版本严格一致
-    $cachedVer = & 7z e -so $langFile "manifest.json" 2>$null
-    if ($cachedVer -and ($cachedVer -match "`"strict_min_version`":\s*`"$major\.")) {
-        $needDownloadLang = $false
-        Write-Host "   - [已就绪] 本地语言包与 Gecko $major 主版本精确兼容，跳过重复下载。" -ForegroundColor Gray
-    }
-}
-
-$langUrl = "https://addons.mozilla.org/firefox/downloads/file/5089007/chinese_simplified_zh_cn_la-157.0.20261005.135250.xpi"
-if ($needDownloadLang) {
-    Write-Host "   - 🔍 检索与 Gecko $major 精确匹配的官方中文语言包..." -ForegroundColor Gray
-    try {
-        $amoRes = Invoke-RestMethod -Uri "https://addons.mozilla.org/api/v5/addons/addon/chinese-simplified-zh-cn-la/versions/" -Headers @{ "User-Agent" = "PowerShell" }
-        $matchedLang = $amoRes.results | Where-Object { $_.compatibility.firefox.min -eq "$major.0" } | Select-Object -First 1
-        if ($matchedLang) { $langUrl = $matchedLang.file.url }
-    } catch {
-        Write-Host "   - [提示] AMO API 检索回退至内置兜底版本。" -ForegroundColor Yellow
-    }
-    Write-Host "   - ⬇️  正在下载简体中文语言包 ($major)..." -ForegroundColor Yellow
-    try {
-        Invoke-WebRequest -Uri $langUrl -OutFile $langFile
-    } catch {
-        if (Test-Path $langFile) { Remove-Item $langFile -Force -ErrorAction SilentlyContinue }
-        throw "简体中文语言包下载失败: $_"
-    }
-}
-
-Write-Host "`n⚙️  [受控配置基线] 正在应用以下黄金策略:" -ForegroundColor Cyan
-Write-Host "   ▶ [搜索矩阵] 默认 Bing + @g 谷歌技术 + @gh 开源码直达 (阻断按键联想上传，强制新标签打开)" -ForegroundColor White
-Write-Host "   ▶ [工效视效] 38 项现代极简基线 (触顶悬浮紧凑视图、4px 微留白、Glance 快窥、MRU 标签回跳、能耗休眠)" -ForegroundColor White
-Write-Host "   ▶ [系统关联] 注册系统级浏览器能力与协议关联 (HTTP, HTTPS, HTML)，设为系统默认浏览器`n" -ForegroundColor White
-
-$optSearch         = $true
-$optCompact        = $true
-$optDefaultBrowser = $true
-
-# 2. policies.json 先检后写 (严格无 BOM)
 $policiesObj = [ordered]@{
     RequestedLocales           = @("zh-CN", "en-US")
     DisableFirefoxAccounts     = $true
@@ -663,442 +669,34 @@ $policiesObj = [ordered]@{
             install_url       = "https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi"
             default_area      = "navbar"
         }
-        "langpack-zh-CN@firefox.mozilla.org" = [ordered]@{
-            installation_mode = "force_installed"
-            install_url       = $langUrl
-        }
     }
 }
 
-# Gecko 官方白名单支持的标准 Preferences
-$prefMap = [ordered]@{
-    "intl.locale.requested"                         = [ordered]@{ Value = "zh-CN"; Status = "locked" }
-    "intl.accept_languages"                         = [ordered]@{ Value = "zh-CN, zh, en-US, en"; Status = "default" }
-    "browser.toolbars.bookmarks.visibility"         = [ordered]@{ Value = "always"; Status = "default" }
-    "network.trr.mode"                              = [ordered]@{ Value = 5; Status = "locked" }
-    "privacy.query_stripping.enabled"               = [ordered]@{ Value = $true; Status = "default" }
-    "privacy.query_stripping.enabled.pbmode"        = [ordered]@{ Value = $true; Status = "default" }
-    "privacy.trackingprotection.enabled"            = [ordered]@{ Value = $true; Status = "default" }
-    "privacy.fingerprintingProtection"              = [ordered]@{ Value = $true; Status = "default" }
-    "network.cookie.cookieBehavior"                 = [ordered]@{ Value = 5; Status = "default" }
-    "media.peerconnection.ice.default_address_only" = [ordered]@{ Value = $true; Status = "default" }
-    "media.peerconnection.ice.no_host"              = [ordered]@{ Value = $true; Status = "default" }
-    "browser.tabs.loadBookmarksInTabs"              = [ordered]@{ Value = $true; Status = "default" }
-    "browser.search.openintab"                      = [ordered]@{ Value = $true; Status = "default" }
-    "browser.search.suggest.enabled"                = [ordered]@{ Value = $false; Status = "default" }
-    "browser.urlbar.suggest.searches"               = [ordered]@{ Value = $false; Status = "default" }
-    "browser.startup.page"                          = [ordered]@{ Value = 3; Status = "default" }
-    "browser.download.useDownloadDir"               = [ordered]@{ Value = $true; Status = "default" }
-    "browser.tabs.unloadOnLowMemory"                = [ordered]@{ Value = $true; Status = "default" }
-    "zen.welcome-screen.seen"                       = [ordered]@{ Value = $true; Status = "default" }
-    "browser.aboutwelcome.enabled"                  = [ordered]@{ Value = $false; Status = "default" }
-    "trailhead.firstrun.didSeeAboutWelcome"         = [ordered]@{ Value = $true; Status = "default" }
-    "browser.startup.homepage_override.mstone"      = [ordered]@{ Value = "ignore"; Status = "default" }
-    "zen.workspaces.open-new-tab-if-last-unpinned-tab-is-closed" = [ordered]@{ Value = $true; Status = "default" }
-}
-
-if ($optSearch) {
-    $policiesObj["SearchEngines"] = [ordered]@{
-        Default         = "Bing"
-        PreventInstalls = $false
-        Remove          = @("Baidu", "百度")
-        Add             = @(
-            [ordered]@{
-                Name        = "Google"
-                URLTemplate = "https://www.google.com/search?q={searchTerms}"
-                Method      = "GET"
-                IconURL     = "https://www.google.com/favicon.ico"
-                Alias       = "@g"
-            },
-            [ordered]@{
-                Name        = "GitHub"
-                URLTemplate = "https://github.com/search?q={searchTerms}&type=repositories"
-                Method      = "GET"
-                IconURL     = "https://github.com/favicon.ico"
-                Alias       = "@gh"
-            }
-        )
-    }
-}
-
-$policiesObj["Preferences"] = $prefMap
-
-# 编译并比对 policies.json
-$policyPath = Join-Path $distDir "policies.json"
-$newJsonOut = ([ordered]@{ policies = $policiesObj } | ConvertTo-Json -Depth 10).Replace("\u0026", "&")
-
-if ((Test-Path $policyPath) -and ((Get-Content -Path $policyPath -Raw -Encoding utf8NoBOM).Trim() -eq $newJsonOut.Trim())) {
-    Write-Host "✅ [已就绪] $policyPath 策略与基准一致，无需重复写入。" -ForegroundColor Green
-} else {
-    Set-Content -Path $policyPath -Value $newJsonOut -Encoding utf8NoBOM
-    Write-Host "✅ [更新] 已成功写入企业策略: $policyPath (UTF-8 No-BOM)" -ForegroundColor Green
-}
-
-# 3. defaults\pref\ 全局默认首选项先检后写
-$defaultsPrefDir = Join-Path $InstallDir "defaults\pref"
-New-Item -ItemType Directory -Path $defaultsPrefDir -Force | Out-Null
-$defaultsPrefFile = Join-Path $defaultsPrefDir "zen-overrides.js"
-
-$prefLines = [System.Collections.Generic.List[string]]::new()
-$prefLines.Add('// Zen Browser Global Default Preferences (Deployed by Automation Script)')
-$prefLines.Add('pref("intl.locale.requested", "zh-CN");')
-$prefLines.Add('pref("intl.accept_languages", "zh-CN, zh, en-US, en");')
-$prefLines.Add('pref("browser.toolbars.bookmarks.visibility", "always");')
-$prefLines.Add('pref("browser.tabs.loadBookmarksInTabs", true);')
-$prefLines.Add('pref("browser.search.openintab", true);')
-$prefLines.Add('pref("browser.search.suggest.enabled", false);')
-$prefLines.Add('pref("browser.urlbar.suggest.searches", false);')
-$prefLines.Add('pref("browser.startup.page", 3);')
-$prefLines.Add('pref("browser.download.useDownloadDir", true);')
-$prefLines.Add('pref("browser.shell.checkDefaultBrowser", false);')
-$prefLines.Add('pref("media.autoplay.default", 5);')
-$prefLines.Add('pref("browser.tabs.unloadOnLowMemory", true);')
-$prefLines.Add('pref("mousewheel.min_line_scroll_amount", 20);')
-$prefLines.Add('pref("zen.welcome-screen.seen", true);')
-$prefLines.Add('pref("browser.aboutwelcome.enabled", false);')
-$prefLines.Add('pref("trailhead.firstrun.didSeeAboutWelcome", true);')
-$prefLines.Add('pref("browser.startup.homepage_override.mstone", "ignore");')
-$prefLines.Add('pref("zen.workspaces.open-new-tab-if-last-unpinned-tab-is-closed", true);')
-
-# 代码块等宽字体固化 (Maple Mono NL NFMono CN)
-$prefLines.Add('pref("font.name.monospace.zh-CN", "Maple Mono NL NFMono CN");')
-$prefLines.Add('pref("font.name.monospace.x-western", "Maple Mono NL NFMono CN");')
-
-if ($optCompact) {
-    # 紧凑模式与视口布局
-    $prefLines.Add('pref("zen.view.compact.enable-at-startup", true);')
-    $prefLines.Add('pref("zen.view.compact.hide-toolbar", true);')
-    $prefLines.Add('pref("zen.view.compact.hide-tabbar", true);')
-    $prefLines.Add('pref("zen.view.compact.show-sidebar-and-toolbar-on-hover", true);')
-    $prefLines.Add('pref("zen.view.compact.sidebar-keep-hover.duration", 150);')
-    $prefLines.Add('pref("zen.view.hide-window-controls", true);')
-    $prefLines.Add('pref("zen.view.borderless-fullscreen", true);')
-
-    # 视觉风格与材质 (4px 微卡片留白)
-    $prefLines.Add('pref("zen.theme.acrylic-sidebar", true);')
-    $prefLines.Add('pref("zen.theme.acrylic-urlbar", true);')
-    $prefLines.Add('pref("zen.theme.border-radius", -1);')
-    $prefLines.Add('pref("zen.theme.content-element-separation", 4);')
-    $prefLines.Add('pref("zen.theme.hide-unified-extensions-button", true);')
-    $prefLines.Add('pref("zen.theme.hide-tab-throbber", true);')
-
-    # 侧边栏与地址栏
-    $prefLines.Add('pref("zen.view.use-single-toolbar", true);')
-    $prefLines.Add('pref("zen.tabs.vertical.right-side", false);')
-    $prefLines.Add('pref("zen.view.sidebar-expanded", true);')
-    $prefLines.Add('pref("zen.urlbar.behavior", "floating-on-type");')
-    $prefLines.Add('pref("zen.urlbar.show-domain-only-in-sidebar", true);')
-    $prefLines.Add('pref("zen.urlbar.single-toolbar-show-copy-url", false);')
-    $prefLines.Add('pref("zen.urlbar.hide-one-offs", true);')
-    $prefLines.Add('pref("zen.urlbar.replace-newtab", true);')
-
-    # 多工作区与分屏
-    $prefLines.Add('pref("zen.workspaces.separate-essentials", true);')
-    $prefLines.Add('pref("zen.workspaces.swipe-actions", false);')
-    $prefLines.Add('pref("zen.workspaces.wrap-around-navigation", true);')
-    $prefLines.Add('pref("zen.splitView.enable-drag-over-split", true);')
-
-    # Glance 悬浮快窥与标签流转
-    $prefLines.Add('pref("zen.glance.enabled", true);')
-    $prefLines.Add('pref("zen.glance.activation-method", "alt");')
-    $prefLines.Add('pref("zen.glance.enable-contextmenu-search", true);')
-    $prefLines.Add('pref("zen.tabs.select-recently-used-on-close", true);')
-    $prefLines.Add('pref("zen.tabs.rename-tabs", true);')
-    $prefLines.Add('pref("zen.tabs.open-pinned-in-new-tab", true);')
-    $prefLines.Add('pref("zen.tabs.close-on-back-with-no-history", false);')
-}
-
-$newPrefContent = ($prefLines -join "`n").Trim()
-if ((Test-Path $defaultsPrefFile) -and ((Get-Content -Path $defaultsPrefFile -Raw -Encoding utf8NoBOM).Trim() -eq $newPrefContent)) {
-    Write-Host "✅ [已就绪] $defaultsPrefFile 全局偏好与基准一致，无需重复写入。" -ForegroundColor Green
-} else {
-    Set-Content -Path $defaultsPrefFile -Value $prefLines -Encoding utf8NoBOM
-    Write-Host "✅ [更新] 已成功写入全局默认首选项: $defaultsPrefFile" -ForegroundColor Green
-}
-
-# 4. Profile user.js 增量智能合并与可观测对比 (非破坏性维护)
-# 组装待比对的目标字典
-$desiredPrefsMap = [ordered]@{
-    "intl.locale.requested"                                        = "zh-CN"
-    "intl.accept_languages"                                        = "zh-CN, zh, en-US, en"
-    "browser.toolbars.bookmarks.visibility"                        = "always"
-    "browser.tabs.loadBookmarksInTabs"                             = $true
-    "browser.search.openintab"                                     = $true
-    "browser.search.suggest.enabled"                               = $false
-    "browser.urlbar.suggest.searches"                              = $false
-    "browser.startup.page"                                         = 3
-    "browser.download.useDownloadDir"                              = $true
-    "browser.shell.checkDefaultBrowser"                            = $false
-    "media.autoplay.default"                                       = 5
-    "browser.tabs.unloadOnLowMemory"                               = $true
-    "mousewheel.min_line_scroll_amount"                            = 20
-    "zen.welcome-screen.seen"                                      = $true
-    "browser.aboutwelcome.enabled"                                 = $false
-    "trailhead.firstrun.didSeeAboutWelcome"                        = $true
-    "browser.startup.homepage_override.mstone"                     = "ignore"
-    "zen.workspaces.open-new-tab-if-last-unpinned-tab-is-closed"    = $true
-    "font.name.monospace.zh-CN"                                   = "Maple Mono NL NFMono CN"
-    "font.name.monospace.x-western"                                 = "Maple Mono NL NFMono CN"
-}
-
-if ($optCompact) {
-    $desiredPrefsMap["zen.view.compact.enable-at-startup"]                 = $true
-    $desiredPrefsMap["zen.view.compact.hide-toolbar"]                      = $true
-    $desiredPrefsMap["zen.view.compact.hide-tabbar"]                       = $true
-    $desiredPrefsMap["zen.view.compact.show-sidebar-and-toolbar-on-hover"] = $true
-    $desiredPrefsMap["zen.view.compact.sidebar-keep-hover.duration"]       = 150
-    $desiredPrefsMap["zen.view.hide-window-controls"]                      = $true
-    $desiredPrefsMap["zen.view.borderless-fullscreen"]                     = $true
-    $desiredPrefsMap["zen.theme.acrylic-sidebar"]                          = $true
-    $desiredPrefsMap["zen.theme.acrylic-urlbar"]                           = $true
-    $desiredPrefsMap["zen.theme.border-radius"]                            = -1
-    $desiredPrefsMap["zen.theme.content-element-separation"]               = 4
-    $desiredPrefsMap["zen.theme.hide-unified-extensions-button"]           = $true
-    $desiredPrefsMap["zen.theme.hide-tab-throbber"]                        = $true
-    $desiredPrefsMap["zen.view.use-single-toolbar"]                        = $true
-    $desiredPrefsMap["zen.tabs.vertical.right-side"]                       = $false
-    $desiredPrefsMap["zen.view.sidebar-expanded"]                          = $true
-    $desiredPrefsMap["zen.urlbar.behavior"]                                = "floating-on-type"
-    $desiredPrefsMap["zen.urlbar.show-domain-only-in-sidebar"]             = $true
-    $desiredPrefsMap["zen.urlbar.single-toolbar-show-copy-url"]            = $false
-    $desiredPrefsMap["zen.urlbar.hide-one-offs"]                           = $true
-    $desiredPrefsMap["zen.urlbar.replace-newtab"]                          = $true
-    $desiredPrefsMap["zen.workspaces.separate-essentials"]                 = $true
-    $desiredPrefsMap["zen.workspaces.swipe-actions"]                       = $false
-    $desiredPrefsMap["zen.workspaces.wrap-around-navigation"]              = $true
-    $desiredPrefsMap["zen.splitView.enable-drag-over-split"]               = $true
-    $desiredPrefsMap["zen.glance.enabled"]                                 = $true
-    $desiredPrefsMap["zen.glance.activation-method"]                       = "alt"
-    $desiredPrefsMap["zen.glance.enable-contextmenu-search"]               = $true
-    $desiredPrefsMap["zen.tabs.select-recently-used-on-close"]             = $true
-    $desiredPrefsMap["zen.tabs.rename-tabs"]                               = $true
-    $desiredPrefsMap["zen.tabs.open-pinned-in-new-tab"]                    = $true
-    $desiredPrefsMap["zen.tabs.close-on-back-with-no-history"]             = $false
-}
-
-$profiles = Get-ChildItem -Path "$env:APPDATA\zen\Profiles" -Directory -ErrorAction SilentlyContinue
-if ($profiles) {
-    Write-Host "`n🔍 扫描并增量比对用户 Profile user.js 配置状态..." -ForegroundColor Cyan
-    foreach ($prof in $profiles) {
-        $userJsFile = Join-Path $prof.FullName "user.js"
-        $diffs = Update-UserJsPreferences -Path $userJsFile -DesiredPrefs $desiredPrefsMap
-
-        if ($diffs.Count -gt 0) {
-            Write-Host "`n📝 Profile [$($prof.Name)] 发现 $($diffs.Count) 项配置与基线存在差异，已原位更新:" -ForegroundColor Yellow
-            $diffs | Format-Table -Property @{ Label = "首选项名称 (Preference)"; Expression = { $_.Preference } },
-                                            @{ Label = "原值 (Old)"; Expression = { $_.OldValue } },
-                                            @{ Label = "基线值 (New)"; Expression = { $_.NewValue } } -AutoSize
-        } else {
-            Write-Host "✅ Profile [$($prof.Name)] 所有配置项均已处于最佳基线，无需任何写入 (幂等保持)。" -ForegroundColor Green
-        }
-    }
-} else {
-    Write-Host "💡 尚未检测到用户 Profile 目录，全新安装将在首次启动浏览器时由全局 defaults\pref\ 自动初始化。" -ForegroundColor Gray
-}
-
-# 5. 系统浏览器注册与默认应用配置 (先检后配与闭环反馈)
-if ($optDefaultBrowser) {
-    Write-Host "`n🌐 检查系统浏览器注册与默认应用状态..." -ForegroundColor Cyan
-
-    $zenExe = Join-Path $InstallDir "zen.exe"
-    $helperExe = Join-Path $InstallDir "uninstall\helper.exe"
-
-    # 1. 检查注册表注册就绪度 (Capabilities & ProgID & RegisteredApplications)
-    $regApp = (Get-ItemProperty "HKCU:\Software\RegisteredApplications" -Name "Zen Browser" -ErrorAction SilentlyContinue)."Zen Browser"
-    if (-not $regApp) {
-        $regApp = (Get-ItemProperty "HKCU:\Software\RegisteredApplications" -Name "Zen" -ErrorAction SilentlyContinue).Zen
-    }
-    $hasCapabilities = (Test-Path "HKCU:\Software\Clients\StartMenuInternet\Zen\Capabilities")
-    $hasProgId = (Test-Path "HKCU:\Software\Classes\ZenHTML\shell\open\command") -and (Test-Path "HKCU:\Software\Classes\ZenURL\shell\open\command")
-    $isRegistryReady = ($null -ne $regApp -and $hasCapabilities -and $hasProgId)
-
-    # 2. 检查系统当前默认浏览器协议指向
-    $currentHttpProg = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
-    $currentHttpsProg = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
-    $isDefaultBrowser = ($currentHttpProg -like "*zen*" -or $currentHttpProg -eq "ZenURL" -or $currentHttpProg -eq "ZenHTML") -and
-                        ($currentHttpsProg -like "*zen*" -or $currentHttpsProg -eq "ZenURL" -or $currentHttpsProg -eq "ZenHTML")
-
-    if ($isRegistryReady -and $isDefaultBrowser) {
-        Write-Host "✅ [已就绪] Zen Browser 已注册且当前已为系统默认浏览器 (HTTP: $currentHttpProg)，跳过重复配置。" -ForegroundColor Green
-    } else {
-        Write-Host "⚙️  正在向系统注册 Zen Browser 浏览器能力与文件/协议关联..." -ForegroundColor Yellow
-
-        function Ensure-RegKey([string]$path) {
-            if (-not (Test-Path $path)) {
-                New-Item -Path $path -Force | Out-Null
-            }
-        }
-        function Set-RegDefaultValue([string]$path, [string]$value) {
-            Ensure-RegKey $path
-            Set-Item -Path $path -Value $value -Force
-            Set-ItemProperty -Path $path -Name "(default)" -Value $value -Force -ErrorAction SilentlyContinue
-        }
-        function Set-RegNamedValue([string]$path, [string]$name, $value, [string]$type = "String") {
-            Ensure-RegKey $path
-            Set-ItemProperty -Path $path -Name $name -Value $value -Type $type -Force
-        }
-
-        # --- A. 注册 ProgID: ZenHTML (用于 HTML 文档与网页文件) ---
-        $progIdHtml = "ZenHTML"
-        $htmlKey = "HKCU:\Software\Classes\$progIdHtml"
-        Set-RegDefaultValue $htmlKey "Zen HTML Document"
-        Set-RegNamedValue $htmlKey "FriendlyTypeName" "Zen HTML Document"
-        Set-RegNamedValue $htmlKey "AppUserModelId" "Zen"
-
-        $htmlAppKey = "$htmlKey\Application"
-        Set-RegNamedValue $htmlAppKey "ApplicationName" "Zen Browser"
-        Set-RegNamedValue $htmlAppKey "ApplicationIcon" "`"$zenExe`",0"
-        Set-RegNamedValue $htmlAppKey "ApplicationDescription" "Zen Browser"
-        Set-RegNamedValue $htmlAppKey "ApplicationCompany" "Zen"
-
-        Set-RegDefaultValue "$htmlKey\DefaultIcon" "`"$zenExe`",0"
-        Set-RegDefaultValue "$htmlKey\shell\open\command" "`"$zenExe`" -osint -url `"%1`""
-
-        # --- B. 注册 ProgID: ZenURL (用于 HTTP / HTTPS / FTP 等协议) ---
-        $progIdUrl = "ZenURL"
-        $urlKey = "HKCU:\Software\Classes\$progIdUrl"
-        Set-RegDefaultValue $urlKey "Zen URL"
-        Set-RegNamedValue $urlKey "AppUserModelId" "Zen"
-        Set-RegNamedValue $urlKey "EditFlags" 2 "DWord"
-        Set-RegNamedValue $urlKey "URL Protocol" ""
-
-        $urlAppKey = "$urlKey\Application"
-        Set-RegNamedValue $urlAppKey "ApplicationName" "Zen Browser"
-        Set-RegNamedValue $urlAppKey "ApplicationIcon" "`"$zenExe`",0"
-        Set-RegNamedValue $urlAppKey "ApplicationDescription" "Zen Browser"
-        Set-RegNamedValue $urlAppKey "ApplicationCompany" "Zen"
-
-        Set-RegDefaultValue "$urlKey\DefaultIcon" "`"$zenExe`",0"
-        Set-RegDefaultValue "$urlKey\shell\open\command" "`"$zenExe`" -osint -url `"%1`""
-
-        # --- C. 注册 ProgID: ZenPDF (用于 PDF 文档) ---
-        $progIdPdf = "ZenPDF"
-        $pdfKey = "HKCU:\Software\Classes\$progIdPdf"
-        Set-RegDefaultValue $pdfKey "Zen PDF Document"
-        Set-RegNamedValue $pdfKey "FriendlyTypeName" "Zen PDF Document"
-        Set-RegNamedValue $pdfKey "AppUserModelId" "Zen"
-        Set-RegDefaultValue "$pdfKey\DefaultIcon" "`"$zenExe`",0"
-        Set-RegDefaultValue "$pdfKey\shell\open\command" "`"$zenExe`" -osint -url `"%1`""
-
-        # --- D. 注册 Applications\zen.exe ---
-        $appKey = "HKCU:\Software\Classes\Applications\zen.exe"
-        Set-RegNamedValue $appKey "FriendlyAppName" "Zen Browser"
-        Set-RegDefaultValue "$appKey\DefaultIcon" "`"$zenExe`",0"
-        Set-RegDefaultValue "$appKey\shell\open\command" "`"$zenExe`" -osint -url `"%1`""
-
-        $supportedExts = @(".htm", ".html", ".shtml", ".xht", ".xhtml", ".svg", ".webp", ".pdf")
-        Ensure-RegKey "$appKey\SupportedTypes"
-        foreach ($ext in $supportedExts) {
-            Set-RegNamedValue "$appKey\SupportedTypes" $ext ""
-        }
-
-        # --- E. 注册 StartMenuInternet 客户端与 Capabilities ---
-        $clientKey = "HKCU:\Software\Clients\StartMenuInternet\Zen"
-        Set-RegDefaultValue $clientKey "Zen Browser"
-        Set-RegDefaultValue "$clientKey\DefaultIcon" "`"$zenExe`",0"
-        Set-RegDefaultValue "$clientKey\shell\open\command" "`"$zenExe`""
-
-        # InstallInfo
-        $installInfoKey = "$clientKey\InstallInfo"
-        Set-RegNamedValue $installInfoKey "HideIconsCommand" ""
-        Set-RegNamedValue $installInfoKey "ShowIconsCommand" ""
-        Set-RegNamedValue $installInfoKey "ReinstallCommand" "`"$zenExe`" -setDefaultBrowser"
-
-        # Capabilities
-        $capKey = "$clientKey\Capabilities"
-        Set-RegNamedValue $capKey "ApplicationName" "Zen Browser"
-        Set-RegNamedValue $capKey "ApplicationIcon" "`"$zenExe`",0"
-        Set-RegNamedValue $capKey "ApplicationDescription" "Zen Browser"
-
-        # FileAssociations
-        $fileAssocKey = "$capKey\FileAssociations"
-        Set-RegNamedValue $fileAssocKey ".htm" $progIdHtml
-        Set-RegNamedValue $fileAssocKey ".html" $progIdHtml
-        Set-RegNamedValue $fileAssocKey ".shtml" $progIdHtml
-        Set-RegNamedValue $fileAssocKey ".xht" $progIdHtml
-        Set-RegNamedValue $fileAssocKey ".xhtml" $progIdHtml
-        Set-RegNamedValue $fileAssocKey ".svg" $progIdHtml
-        Set-RegNamedValue $fileAssocKey ".webp" $progIdHtml
-        Set-RegNamedValue $fileAssocKey ".pdf" $progIdPdf
-
-        # URLAssociations
-        $urlAssocKey = "$capKey\URLAssociations"
-        Set-RegNamedValue $urlAssocKey "http" $progIdUrl
-        Set-RegNamedValue $urlAssocKey "https" $progIdUrl
-        Set-RegNamedValue $urlAssocKey "ftp" $progIdUrl
-
-        # StartMenu
-        Set-RegNamedValue "$capKey\StartMenu" "StartMenuInternet" "Zen"
-
-        # --- F. 注册 RegisteredApplications (在 Windows 默认应用中点亮 Zen Browser) ---
-        Set-RegNamedValue "HKCU:\Software\RegisteredApplications" "Zen Browser" "Software\Clients\StartMenuInternet\Zen\Capabilities"
-        Sync-ZenShortcuts
-
-        # --- G. 挂载用户层 OpenWithProgids 透传 ---
-        foreach ($ext in @(".htm", ".html", ".shtml", ".xht", ".xhtml")) {
-            Set-RegNamedValue "HKCU:\Software\Classes\$ext\OpenWithProgids" $progIdHtml ([byte[]]@()) "Binary"
-        }
-        foreach ($proto in @("http", "https")) {
-            Set-RegNamedValue "HKCU:\Software\Classes\$proto\OpenWithProgids" $progIdUrl ([byte[]]@()) "Binary"
-        }
-
-        Write-Host "✅ [注册] 系统浏览器功能与协议关联注册完成。" -ForegroundColor Green
-
-        # --- H. 触发设置为系统默认浏览器 ---
-        if (-not $isDefaultBrowser) {
-            Write-Host "🌐 正在配置 Zen Browser 为系统默认浏览器..." -ForegroundColor Cyan
-
-            # 1. 优先调用官方 helper.exe /SetAsDefaultAppUser (Firefox/Gecko 原生用户级注册器，带 3s 超时保护)
-            if (Test-Path $helperExe) {
-                $hProc = Start-Process -FilePath $helperExe -ArgumentList "/SetAsDefaultAppUser" -PassThru -NoNewWindow -ErrorAction SilentlyContinue
-                if ($hProc) { $hProc.WaitForExit(3000) | Out-Null }
-            }
-
-            # 2. 调用 zen.exe 静默触发 Gecko 内核原生 UserChoice 写入 (必须附加 -silent 防弹出主窗口挂起进程，带 5s 超时保护)
-            if (Test-Path $zenExe) {
-                $zProc = Start-Process -FilePath $zenExe -ArgumentList "-silent -setDefaultBrowser" -PassThru -NoNewWindow -ErrorAction SilentlyContinue
-                if ($zProc) { $zProc.WaitForExit(5000) | Out-Null }
-            }
-
-            # 单次闭环清理 helper.exe / zen.exe 退出时派生出来的 Gecko 幽灵项，确保注册表纯净
-            Clear-GeckoStrayRegistrations
-
-            # 3. 闭环验证生效状态
-            Start-Sleep -Milliseconds 600
-            $postHttp = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
-            $postHttps = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\https\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
-            $isNowDefault = ($postHttp -like "*zen*" -or $postHttp -eq "ZenURL" -or $postHttp -eq "ZenHTML") -and
-                            ($postHttps -like "*zen*" -or $postHttps -eq "ZenURL" -or $postHttps -eq "ZenHTML")
-
-            if ($isNowDefault) {
-                Write-Host "✅ [生效] Zen Browser 已成功配置为系统默认浏览器 (HTTP: $postHttp / HTTPS: $postHttps)。" -ForegroundColor Green
-            } else {
-                Write-Host "💡 已完成底层功能与协议注册。若系统未直接切换，可在打开的【默认应用】设置中将 Zen Browser 设为默认。" -ForegroundColor Yellow
-                $targetUri = $isAdmin ? "ms-settings:defaultapps?registeredAppMachine=Zen%20Browser" : "ms-settings:defaultapps?registeredAppUser=Zen%20Browser"
-                Start-Process $targetUri -ErrorAction SilentlyContinue
-            }
-        }
-    }
-}
+$policyOutput = [ordered]@{ policies = $policiesObj } | ConvertTo-Json -Depth 10
+[System.IO.File]::WriteAllText((Join-Path $distDir "policies.json"), $policyOutput, [System.Text.UTF8Encoding]::new($false))
+Write-Host "✅ 企业策略已原子写入: $distDir\policies.json" -ForegroundColor Green
 
 # ==============================================================================
-# 阶段 F: 尾部结报与手动引导清单 (Report)
+# 7. 阶段 4: 尾部简报与动态真待办 (Report)
 # ==============================================================================
-Write-Host "`n==================================================" -ForegroundColor Green
-Write-Host "  ✅ Zen Browser 全流程策略与首选项校验完成！" -ForegroundColor Green
-Write-Host "==================================================" -ForegroundColor Green
-Write-Host "   - 幂等保护: 无变更文件全部跳过写操作，零重复网络与磁盘 I/O" -ForegroundColor Gray
-Write-Host "   - 账号切除: DisableFirefoxAccounts 生效，底层禁用账号登录，纯本地离线无状态" -ForegroundColor Gray
-Write-Host "   - 增量纳管: Profile user.js 采用非破坏性更新，完整保留用户原有配置" -ForegroundColor Gray
-Write-Host "   - 搜索矩阵: 默认高可用 Bing + @g 谷歌技术 + @gh 开源码直达" -ForegroundColor Gray
-Write-Host "   - 默认应用: 注册系统浏览器能力与协议关联，无缝接管 HTTP / HTTPS / HTML" -ForegroundColor Gray
-Write-Host "   - 隐私加固: 彻底切断输入框按键联想上传，搜索结果强制新标签打开" -ForegroundColor Gray
+Write-Host "`n====================================================================" -ForegroundColor Green
+Write-Host "  ✅ [$AppName] 工程黄金基线与策略部署完成！" -ForegroundColor Green
+Write-Host "====================================================================" -ForegroundColor Green
+Write-Host "   - 部署路径: $InstallDir" -ForegroundColor Gray
+Write-Host "   - 系统关联: Capabilities 已注册，点亮 Win11 默认浏览器设置" -ForegroundColor Gray
+Write-Host "   - 策略扩展: policies.json 已固化 uBlock Origin / Bitwarden 与遥测切断" -ForegroundColor Gray
 
-Write-Host "`n--------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "📋 [手动收尾引导清单 (Manual Checklist)]" -ForegroundColor Cyan
-if (-not $isNowDefault) {
-    Write-Host " 1. 默认应用: 底层协议已注册，请在弹出的【默认应用】设置中将 Zen Browser 设为默认浏览器" -ForegroundColor Yellow
+$isDefaultBrowser = $false
+try {
+    $httpChoice = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" -Name "ProgId" -ErrorAction SilentlyContinue).ProgId
+    if ($httpChoice -like "*Zen*") { $isDefaultBrowser = $true }
+} catch { }
+
+if (-not $isDefaultBrowser) {
+    Write-Host "`n--------------------------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "📋 [手动收尾清单 (Actionable Handoff)]" -ForegroundColor Cyan
+    Write-Host "  1. 设为默认: 在系统【默认应用】中将 Zen Browser 设为默认 Web 浏览器" -ForegroundColor Yellow
+    Write-Host "--------------------------------------------------------------------`n" -ForegroundColor DarkGray
 }
-Write-Host " 2. 扩展图标: uBlock Origin 与 Bitwarden 已预置生效，启动后请在工具栏拼图菜单中固定图标" -ForegroundColor Gray
-Write-Host "--------------------------------------------------`n" -ForegroundColor DarkGray
-Write-Host "👉 启动浏览器即可立即检验全量生效状态！" -ForegroundColor Green
+
+return

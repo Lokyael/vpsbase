@@ -9,14 +9,14 @@
        - 基于 AST 静态内省自动发现 scripts\windows\ 下符合契约规范的模块脚本，零运行时黑盒探针；
        - 受控属性逐项巡检与落盘完全内聚于子模块内部，门面仅负责发现、粗粒度勾选、参数透传调度与全局流水线汇总；
        - 严格精确匹配模块标识（Exact Match Only），拒绝隐式猜测，保障基础设施操作的 100% 确定性。
-    3. 支持系统加固正交三要素：
-       - 操作动词 (Mode): Sync (执行加固/默认) 或 CheckOnly (只查不改/体检巡检)；
-       - 配置预设 (Profile): Full (个人黄金基线/默认，包含全部 1~7 模块深度加固) 或 General (通用稳健预设，跳过各模块激进深度优化项)；
-       - 审查门禁 (Gate): 默认逐块交互确认；亦支持 -Yes / -NonInteractive 一键全采纳流水线。
-    4. 内置远程一键执行适配层 (Remote Fallback)，在 irm ... | iex 无落盘内存态下自动拉取子模块执行并自愈销毁临时目录。
+    3. 支持系统加固正交二要素：
+       - 操作意图 (Action)  : Sync (增量对齐收敛/默认) 或 Check (只查不改/体检巡检)；
+       - 加固预设 (Profile) : Full (黄金深度基线/默认) 或 General (通用稳健预设，跳过激进项)。
+    4. 审查门禁：默认逐模块交互确认；亦支持 -Yes 一键全采纳流水线。
+    5. 内置远程一键执行适配层 (Remote Fallback)，在 irm ... | iex 无落盘内存态下自动拉取子模块执行并自愈销毁临时目录。
 
-.PARAMETER Mode
-    指定生命周期模式，可选值: Sync (执行加固), CheckOnly (只查不改/体检巡检)。默认交互选择。
+.PARAMETER Action
+    指定生命周期模式，可选值: Sync (执行加固), Check (只查不改/体检巡检)。默认交互选择。
 
 .PARAMETER Profile
     指定配置预设，可选值: Full (黄金深度基线), General (通用稳健基线)。默认交互选择。
@@ -25,10 +25,7 @@
     指定要执行的模块标识列表 (以逗号分隔，如 'telemetry,shell' 或 'all')。默认全量有序调度。
 
 .PARAMETER Yes
-    一键全量确认模式。跳过模块审查交互，直接全量执行指定基线。
-
-.PARAMETER NonInteractive
-    非交互流水线模式。遇到跨账号提权风险时直接阻断退出（用于无头装机与自动化部署流水线）。
+    一键全量确认放行。跳过模块审查交互，直接全量执行指定基线。
 
 .EXAMPLE
     # 交互式全流程引导 (自动发现大盘 -> 模式决策 -> 调度自治执行)
@@ -41,7 +38,7 @@
     pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Profile General -Yes
 
     # 只读全量巡检体检 (绝不修改任何系统配置)
-    pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Mode CheckOnly
+    pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Action Check
 
     # 仅定向巡检/加固外壳与性能底层
     pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Modules shell,performance
@@ -49,16 +46,15 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "CheckOnly", "")]
-    [string]$Mode = "",
+    [ValidateSet("Sync", "Check", "")]
+    [string]$Action = "",
 
     [ValidateSet("Full", "General", "")]
     [string]$Profile = "",
 
     [string[]]$Modules,
 
-    [switch]$Yes,
-    [switch]$NonInteractive
+    [switch]$Yes
 )
 
 $ErrorActionPreference = "Continue"
@@ -91,8 +87,8 @@ if ($rawConsoleUser) {
     if ($currentUser -ne $consoleUser) {
         Write-Warning "【跨账号提权警告】当前桌面登录用户为 [$consoleUser]，但当前管理员终端身份为 [$currentUser]！"
         Write-Warning "继续执行会导致当前用户 (HKCU) 优化配置写入 [$currentUser] 账户，而非当前桌面用户。"
-        if ($NonInteractive) {
-            Write-Host -ForegroundColor Red '【非交互模式阻断】检测到跨账号提权状态，已自动终止任务以保护账户环境。'
+        if ($Yes) {
+            Write-Host -ForegroundColor Red '【自动化模式阻断】检测到跨账号提权状态，已自动终止任务以保护账户环境。'
             return
         }
         $ans = Read-Host "是否仍要强行继续？(y/N)"
@@ -170,15 +166,15 @@ try {
             continue
         }
 
-        # 校验系统加固模块正交参数契约支持度 (-Mode / -Profile)
+        # 校验系统加固模块正交参数契约支持度 (-Action / -Profile)
         $paramNames = @()
         if ($ast.ParamBlock -and $ast.ParamBlock.Parameters) {
             $paramNames = @($ast.ParamBlock.Parameters.Name.VariablePath.UserPath)
         }
 
-        $hasStandardContract = ($paramNames -contains "Mode") -and ($paramNames -contains "Profile")
+        $hasStandardContract = ($paramNames -contains "Action") -and ($paramNames -contains "Profile")
         if (-not $hasStandardContract) {
-            Write-Warning "子模块 [$mId.ps1] 未完整实现系统加固正交参数契约 (-Mode / -Profile)，已跳过。"
+            Write-Warning "子模块 [$mId.ps1] 未完整实现系统加固正交参数契约 (-Action / -Profile)，已跳过。"
             continue
         }
 
@@ -225,10 +221,10 @@ try {
     }
 
     # ==============================================================================
-    # 7. 第一阶段：全量状态巡检诊断大盘 (Plan)
+    # 7. 第一阶段：大盘总览 (Plan)
     # ==============================================================================
     Write-Host "=================== Windows 11 全量系统基线巡检 (pwsh 7+) ===================" -ForegroundColor Cyan
-    Write-Host "[*] 正在只读扫描系统各模块受控属性就绪度，请稍候...`n" -ForegroundColor DarkGray
+    Write-Host "[*] 正在准备纳管调度，请稍候...`n" -ForegroundColor DarkGray
 
     Write-Host "┌── [系统模块纳管大盘] ────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
     $idx = 1
@@ -239,7 +235,7 @@ try {
     Write-Host "└──────────────────────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
 
     # 交互式模块切片勾选 (若未传 -Modules 且非静默模式)
-    if ($null -eq $Modules -and -not $Yes -and -not $NonInteractive) {
+    if ($null -eq $Modules -and -not $Yes) {
         Write-Host "`n💡 请选择要纳入本次调度的系统模块 [直接回车全选]:" -ForegroundColor Cyan
         Write-Host "   - 输入序号多选 (例如: 1,2,5)" -ForegroundColor Gray
         Write-Host "   - 直接回车调度全量 7 大模块" -ForegroundColor Gray
@@ -273,12 +269,9 @@ try {
     # ==============================================================================
     # 8. 第二阶段：模式决策 (Gate & Profile Decision)
     # ==============================================================================
-    if ([string]::IsNullOrWhiteSpace($Mode)) {
+    if ([string]::IsNullOrWhiteSpace($Action)) {
         if ($Yes) {
-            $Mode = "Sync"
-            if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = "Full" }
-        } elseif ($NonInteractive) {
-            $Mode = "Sync"
+            $Action = "Sync"
             if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = "Full" }
         } else {
             Write-Host "`n=========================== 请选择配置执行模式 ===========================" -ForegroundColor Cyan
@@ -293,19 +286,19 @@ try {
             $inputChoice = (Read-Host).Trim()
             switch ($inputChoice) {
                 '1' {
-                    $Mode = "Sync"
+                    $Action = "Sync"
                     $Profile = "Full"
                     $Yes = $true
                     Write-Host "  [+] 已选择: 个人全量模式 (Profile: Full, 一键 Y)" -ForegroundColor Green
                 }
                 '2' {
-                    $Mode = "Sync"
+                    $Action = "Sync"
                     $Profile = "General"
                     $Yes = $true
                     Write-Host "  [+] 已选择: 通用稳健模式 (Profile: General, 选配项跳过保持原样)" -ForegroundColor Cyan
                 }
                 '4' {
-                    $Mode = "CheckOnly"
+                    $Action = "Check"
                     $Profile = "Full"
                     Write-Host "  [+] 已选择: 只查不改体检巡检模式" -ForegroundColor White
                 }
@@ -314,7 +307,7 @@ try {
                     return
                 }
                 Default {
-                    $Mode = "Sync"
+                    $Action = "Sync"
                     $Profile = "Full"
                     $Yes = $false
                     Write-Host "  [+] 已选择: 逐块审查全交互模式 (默认)" -ForegroundColor White
@@ -331,7 +324,7 @@ try {
     # 9. 第三阶段：调度各模块自治执行 (Apply & Orchestration)
     # ==============================================================================
     Write-Host "`n======================= 开始流水线调度系统模块加固 =======================" -ForegroundColor Cyan
-    Write-Host ("  [执行参数] 操作模式: {0} | 配置预设: {1} | 交互放行: {2}`n" -f $Mode, $Profile, ($Yes ? "自动确认 (-Yes)" : "交互审查")) -ForegroundColor DarkGray
+    Write-Host ("  [执行参数] 操作意图: {0} | 配置预设: {1} | 交互放行: {2}`n" -f $Action, $Profile, ($Yes ? "自动确认 (-Yes)" : "交互审查")) -ForegroundColor DarkGray
 
     $executionReport = [System.Collections.Generic.List[PSCustomObject]]::new()
     $moduleExecuted = 0
@@ -340,11 +333,10 @@ try {
         Write-Host ("`n▶ [{0}/{1}] 调度模块: {2} ({3})" -f $moduleExecuted, $TargetModules.Count, $mod.Name, $mod.Id) -ForegroundColor Yellow
 
         $subParams = @{
-            Mode    = $Mode
+            Action  = $Action
             Profile = $Profile
         }
         if ($Yes) { $subParams["Yes"] = $true }
-        if ($NonInteractive) { $subParams["NonInteractive"] = $true }
 
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
@@ -354,7 +346,7 @@ try {
             $executionReport.Add([PSCustomObject]@{
                 模块名称 = $mod.Name
                 模块标识 = $mod.Id
-                执行模式 = $Mode
+                操作意图 = $Action
                 执行预设 = $Profile
                 执行耗时 = "$([math]::Round($sw.Elapsed.TotalSeconds, 2))s"
                 状态     = "✔ 成功"
@@ -365,7 +357,7 @@ try {
             $executionReport.Add([PSCustomObject]@{
                 模块名称 = $mod.Name
                 模块标识 = $mod.Id
-                执行模式 = $Mode
+                操作意图 = $Action
                 执行预设 = $Profile
                 执行耗时 = "$([math]::Round($sw.Elapsed.TotalSeconds, 2))s"
                 状态     = "✘ 失败"
@@ -374,7 +366,7 @@ try {
     }
 
     # 统一自愈重启资源管理器
-    if ($Mode -eq "Sync") {
+    if ($Action -eq "Sync") {
         Write-Host "`n[*] 正在重启资源管理器使系统外壳与个性化配置即刻生效..." -ForegroundColor Cyan
         Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     }
@@ -385,7 +377,7 @@ try {
     Write-Host "`n====================================================================" -ForegroundColor Green
     Write-Host "                      系统加固最终执行简报                        " -ForegroundColor Green
     Write-Host "====================================================================" -ForegroundColor Green
-    $executionReport | Format-Table -Property 模块名称, 模块标识, 执行模式, 执行预设, 执行耗时, 状态 -AutoSize
+    $executionReport | Format-Table -Property 模块名称, 模块标识, 操作意图, 执行预设, 执行耗时, 状态 -AutoSize
 
 } finally {
     if ($TempSandboxDir -and (Test-Path $TempSandboxDir)) {

@@ -1,37 +1,38 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-    外壳交互与终端底座生产力基线
+    交互体验与系统外壳视觉裁剪基线
 
 .DESCRIPTION
-    Windows 11 操作系统外壳交互、资源管理器视图、Windows Terminal 生产力底座与输入法调优模块。
-    1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线。
-    2. 还原 Win10 经典完整右键菜单，调优文件扩展名、系统时钟秒数与完整路径展示。
-    3. 精简资源管理器快捷栏（仅保留桌面与下载，穿透剥离系统出厂预置项）。
-    4. 彻底卸载 OneDrive、清理用户目录残留与侧边栏驻留，剥离图库与遗留已知文件夹沙盒化。
-    5. 净化左侧导航窗格（隐藏网络与主页，直达“此电脑”），禁用外置介质自动播放。
-    6. 锁屏直达密码框、切断聚焦推广并锁定纯色/图片背景。
-    7. 调优微软拼音输入法（关闭 Shift+Space、新窗口默认英文、切断云端候选）。
-    8. 探测并自愈注册工作站等宽字体基线 (Maple Mono NL NFMono CN)。
-    9. 配置 Windows Terminal 生产力底座（默认 pwsh、自适应路径、磨砂亚克力、纳管现代 Shell 与字体注入）。
-    10. 固化 pwsh $PROFILE 前缀历史检索（HistorySearchBackward/Forward）与预测。
-    11. 禁用辅助连击弹窗（粘滞键）与关闭鼠标指针加速度（锁定 1:1 纯线性位移）。
+    Windows 11 外壳交互纯净化、小组件切断、任务栏轻量化与资源管理器极简基准模块。
+    1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
+    2. 资源管理器默认打开“此电脑”，全景显示已知文件扩展名与隐藏文件。
+    3. 剥离任务栏小组件 (Widgets) 资讯流与 Teams 聊天 (Chat) 图标。
+    4. 禁用连按 5 次 Shift 触发粘滞键与筛选键劫持（杜绝游戏与编程中断）。
+    5. 禁用 Windows 聚焦锁屏动态建议、广告推销与开始菜单推荐项目。
+    6. 禁用 USB 移动介质自动播放 (AutoPlay) 阻断蠕虫自启传播。
+    7. 解除耳机音量 37% 限制警告弹窗 (VolumeLimiter)。
+    8. 彻底卸载 OneDrive、清理用户目录并剥离资源管理器侧边栏驻留 (仅 Full)。
+    9. 剥离资源管理器图库 (Gallery) 驻留与遗留已知文件夹沙盒化 (仅 Full)。
+    10. 从左侧导航窗格隐藏网络 (Network) 网上邻居图标 (仅 Full)。
+    11. 从左侧导航窗格隐藏小房子主页与用户个人主文件夹，直达此电脑 (仅 Full)。
 
-.PARAMETER Mode
-    操作动词: Sync (执行加固/默认) 或 CheckOnly (只查不改/体检巡检)。
+.PARAMETER Action
+    操作模式:
+    - Sync  : 增量收敛加固 (默认，仅修复实机偏离项，保持合规项不动)
+    - Check : 状态体检巡检 (100% 只读诊断受控属性对比，零写入安全退出)
 
 .PARAMETER Profile
-    配置预设: Full (黄金深度基线/默认) 或 General (通用稳健基线)。
+    加固预设:
+    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
+    - General : 通用稳健基线 (保守兼容，跳过卸载 OneDrive 与隐藏侧边栏快捷导航)
 
 .PARAMETER Yes
-    非交互自动确认放行。
-
-.PARAMETER NonInteractive
-    非交互模式，遇到确认直接放行执行。
+    免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
 
 .EXAMPLE
     # 只读体检巡检
-    pwsh -File .\scripts\windows\shell.ps1 -Mode CheckOnly
+    pwsh -File .\scripts\windows\shell.ps1 -Action Check
 
     # 交互式检查与加固
     pwsh -File .\scripts\windows\shell.ps1
@@ -42,292 +43,282 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "CheckOnly")]
-    [string]$Mode = "Sync",
+    [ValidateSet("Sync", "Check")]
+    [string]$Action = "Sync",
 
     [ValidateSet("Full", "General")]
     [string]$Profile = "Full",
 
-    [switch]$Yes,
-    [switch]$NonInteractive
+    [switch]$Yes
 )
 
 $ErrorActionPreference = "Stop"
 
 # ==============================================================================
-# 环境校验：强制锁定 PowerShell 7+ 与 管理员权限
+# 1. 运行时环境硬门禁与权限安全防御
 # ==============================================================================
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw "【版本错误】此脚本针对 PowerShell 7 (pwsh) 现代运行时深度定制，严禁在 Windows PowerShell 5.1 下执行！"
 }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(544)
-if (-not $isAdmin) {
+if (-not $isAdmin -and $Action -ne "Check") {
     throw "【权限错误】此脚本必须以管理员身份运行！请右键 pwsh 选择 [以管理员身份运行] 后重新执行。"
 }
 
-# ==============================================================================
-# 内部辅助函数
-# ==============================================================================
-function Ensure-Key([string]$path) {
-    if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+$currentUser = [Environment]::UserName
+$rawConsoleUser = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+$consoleUser = if ($rawConsoleUser) { ($rawConsoleUser -replace '.*\\') } else { $currentUser }
+if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
+    throw "【跨账号提权阻断】当前终端运行身份 [$currentUser] 与桌面登录用户 [$consoleUser] 不一致！为防配置污染，请直接在桌面登录用户会话中以管理员身份运行。"
 }
 
-function Set-RegDword([string]$Path, [string]$Name, [int]$Value) {
-    Ensure-Key $Path
+# ==============================================================================
+# 2. 内置原生轻量辅助函数库 (Self-Contained Mini-Kit)
+# ==============================================================================
+function Ensure-RegKey {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { New-Item -Path $Path -Force | Out-Null }
+}
+
+function Set-RegDword {
+    param([string]$Path, [string]$Name, [int]$Value)
+    Ensure-RegKey $Path
     $cur = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
     if ($cur -ne $Value) {
         try {
             Set-ItemProperty -Path $Path -Name $Name -Type DWord -Value $Value -Force -ErrorAction Stop
         } catch {
             $regPath = $Path -replace '^HKLM:\\', 'HKLM\' -replace '^HKCU:\\', 'HKCU\'
-            reg.exe add $regPath /v $Name /t REG_DWORD /d $Value /f *>$null
+            & reg.exe add $regPath /v $Name /t REG_DWORD /d $Value /f *>$null
         }
     }
 }
 
-function Test-RegDword([string]$Path, [string]$Name, [int]$Expected) {
-    if (-not (Test-Path $Path)) { return $false }
+function Get-RegVal {
+    param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
+    if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return ($null -ne $val -and [int]$val -eq $Expected)
-}
-
-function Update-ManagedConfigFile([string]$FilePath, [string]$BlockTag, [string]$BlockContent) {
-    if ([string]::IsNullOrWhiteSpace($FilePath)) {
-        throw "Update-ManagedConfigFile: 目标文件路径不可为空。"
-    }
-
-    $parentDir = Split-Path -Path $FilePath -Parent
-    if (-not [string]::IsNullOrWhiteSpace($parentDir) -and -not (Test-Path -Path $parentDir)) {
-        New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
-    }
-
-    $startMarker = "# >>> managed: $BlockTag >>>"
-    $endMarker   = "# <<< managed: $BlockTag <<<"
-    $injection   = "$startMarker`r`n$BlockContent`r`n$endMarker"
-
-    $existingContent = ""
-    if (Test-Path -Path $FilePath) {
-        $existingContent = [System.IO.File]::ReadAllText($FilePath, [System.Text.UTF8Encoding]::new($false))
-    }
-
-    $regex = "(?s)[ \t]*\Q$startMarker\E\r?\n.*?\r?\n[ \t]*\Q$endMarker\E"
-
-    if ($existingContent -match $regex) {
-        $newContent = [System.Text.RegularExpressions.Regex]::Replace($existingContent, $regex, $injection)
-    } else {
-        if ([string]::IsNullOrWhiteSpace($existingContent)) {
-            $newContent = "$injection`r`n"
-        } else {
-            $trimmed = $existingContent.TrimEnd("`r", "`n")
-            $newContent = "$trimmed`r`n`r`n$injection`r`n"
-        }
-    }
-
-    if ($existingContent -ne $newContent) {
-        [System.IO.File]::WriteAllText($FilePath, $newContent, [System.Text.UTF8Encoding]::new($false))
-    }
+    return if ($null -ne $val) { "$val" } else { $Default }
 }
 
 # ==============================================================================
-# 阶段 1: 全量只读嗅探与状态比对 (Plan & Diff)
+# 3. 声明式规则矩阵清单 (最小细项原子化拆解: 目的与影响明确分离)
 # ==============================================================================
-$items = @(
+$Rules = @(
     [PSCustomObject]@{
-        Name   = "还原 Win10 经典完整右键菜单"
-        Check  = {
-            return Test-Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
+        Id      = "explorer-launch-to-this-pc"
+        Name    = "资源管理器默认打开此电脑 (LaunchTo = 1)"
+        Profile = "General"
+        Purpose = "按 Win+E 打开文件资源管理器时，默认直达磁盘驱动器根大盘，跳过快速访问卡片"
+        Impact  = "打开资源管理器不再自动呈现频繁访问的常用文件夹与最近文件列表"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "LaunchTo"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
         }
-        Action = {
-            New-Item -Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" -Value "" -Force | Out-Null
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "LaunchTo" 1
         }
     },
     [PSCustomObject]@{
-        Name   = "调优资源管理器与任务栏视图 (显示后缀/秒数/完整路径/免快捷方式后缀)"
-        Check  = {
-            $adv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-            $c1 = (Test-RegDword $adv "HideFileExt" 0) -and (Test-RegDword $adv "LaunchTo" 1) -and (Test-RegDword $adv "ShowSecondsInSystemClock" 1)
-            $c2 = Test-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" "FullPath" 1
-            $c3 = (Test-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer" "ShowRecent" 0) -and (Test-RegDword $adv "ShowSyncProviderNotifications" 0) -and (Test-RegDword $adv "Start_TrackDocs" 0)
-            return ($c1 -and $c2 -and $c3)
+        Id      = "explorer-show-file-extensions"
+        Name    = "全景透传显示文件扩展名 (HideFileExt = 0)"
+        Profile = "General"
+        Purpose = "始终透传呈现 .ps1, .exe, .sh, .txt 等所有真实文件后缀名，避免伪装双扩展名欺骗"
+        Impact  = "重命名文件时必须保留原后缀名，若误删后缀可能导致双击无法自动识别关联程序"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "HideFileExt"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
         }
-        Action = {
-            $adv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-            Ensure-Key $adv
-            Set-ItemProperty -Path $adv -Name "HideFileExt" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $adv -Name "Hidden" -Type DWord -Value 1 -Force
-            Set-ItemProperty -Path $adv -Name "LaunchTo" -Type DWord -Value 1 -Force
-            Set-ItemProperty -Path $adv -Name "SeparateProcess" -Type DWord -Value 1 -Force
-            Set-ItemProperty -Path $adv -Name "SnapAssist" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $adv -Name "TaskbarAl" -Type DWord -Value 1 -Force
-            Set-ItemProperty -Path $adv -Name "TaskbarDa" -Type DWord -Value 0 -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path $adv -Name "TaskbarMn" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $adv -Name "ShowTaskViewButton" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $adv -Name "ShowCopilotButton" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $adv -Name "ShowSecondsInSystemClock" -Type DWord -Value 1 -Force
-            Set-ItemProperty -Path $adv -Name "ShowSyncProviderNotifications" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $adv -Name "Start_Layout" -Type DWord -Value 1 -Force
-            Set-ItemProperty -Path $adv -Name "Start_TrackDocs" -Type DWord -Value 0 -Force
-
-            Ensure-Key "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState"
-            Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" -Name "FullPath" -Type DWord -Value 1 -Force
-
-            $exp = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"
-            Set-ItemProperty -Path $exp -Name "ShowRecent" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $exp -Name "ShowFrequent" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $exp -Name "ShowCloudFilesInQuickAccess" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $exp -Name "link" -Type Binary -Value ([byte[]](0,0,0,0)) -Force
-
-            Get-ChildItem -Path "$env:APPDATA\Microsoft\Windows\Recent" -Exclude "AutomaticDestinations" -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Recent\CustomDestinations\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "HideFileExt" 0
         }
     },
     [PSCustomObject]@{
-        Name   = "精简资源管理器快捷栏 (仅保留桌面与下载，穿透剥离系统出厂预置项)"
-        Check  = {
-            $exp = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"
-            $frequent = (Get-ItemProperty $exp -Name "ShowFrequent" -ErrorAction SilentlyContinue).ShowFrequent
-            $recent   = (Get-ItemProperty $exp -Name "ShowRecent" -ErrorAction SilentlyContinue).ShowRecent
-            if ($frequent -ne 0 -or $recent -ne 0) { return $false }
-
-            try {
-                $shell = New-Object -ComObject Shell.Application
-                $qa = $null
-                $homeGuids = @(
-                    "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}",
-                    "shell:Quick Access",
-                    "shell:::{679f85cb-0200-4426-8c76-49e6b8663329}"
-                )
-                foreach ($hg in $homeGuids) {
-                    $folder = $shell.Namespace($hg)
-                    if ($folder -and $folder.Items().Count -gt 0) { $qa = $folder; break }
-                }
-                if (-not $qa) { return $true }
-
-                # 靶向系统出厂预置库目录 (Documents, Pictures, Music, Videos, 3D Objects 等)
-                $factoryPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                @(
-                    [Environment]::GetFolderPath("MyDocuments"),
-                    [Environment]::GetFolderPath("MyPictures"),
-                    [Environment]::GetFolderPath("MyMusic"),
-                    [Environment]::GetFolderPath("MyVideos"),
-                    (Join-Path $env:USERPROFILE "Documents"),
-                    (Join-Path $env:USERPROFILE "Pictures"),
-                    (Join-Path $env:USERPROFILE "Music"),
-                    (Join-Path $env:USERPROFILE "Videos"),
-                    (Join-Path $env:USERPROFILE "3D Objects")
-                ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
-                    [void]$factoryPaths.Add($_)
-                    if (Test-Path $_) {
-                        $fn = (Get-Item $_ -ErrorAction SilentlyContinue).FullName
-                        if ($fn) { [void]$factoryPaths.Add($fn) }
-                    }
-                }
-
-                $factoryNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                @("Documents", "文档", "Pictures", "图片", "Music", "音乐", "Videos", "视频", "3D Objects", "3D 对象") | ForEach-Object {
-                    [void]$factoryNames.Add($_)
-                }
-
-                foreach ($item in $qa.Items()) {
-                    $p = $item.Path
-                    if (-not [string]::IsNullOrWhiteSpace($p)) {
-                        if ($factoryPaths.Contains($p)) { return $false }
-                        if (Test-Path $p) {
-                            $full = (Get-Item $p -ErrorAction SilentlyContinue).FullName
-                            if ($full -and $factoryPaths.Contains($full)) { return $false }
-                        }
-                    }
-                    if ($factoryNames.Contains($item.Name)) { return $false }
-                }
-                return $true
-            } catch {
-                return $true
-            }
+        Id      = "explorer-show-hidden-files"
+        Name    = "显示点开头与隐藏配置文件 (Hidden = 1)"
+        Profile = "General"
+        Purpose = "直接在资源管理器中半透明呈现 .git, .config, .vscode 等隐藏开发配置文件"
+        Impact  = "普通系统文件夹下会看到半透明的隐藏系统属性文件（如 desktop.ini），请勿误删"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Hidden"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
         }
-        Action = {
-            $exp = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"
-            Set-ItemProperty -Path $exp -Name "ShowFrequent" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $exp -Name "ShowRecent" -Type DWord -Value 0 -Force
-
-            try {
-                $shell = New-Object -ComObject Shell.Application
-                $qa = $null
-                $homeGuids = @(
-                    "shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}",
-                    "shell:Quick Access",
-                    "shell:::{679f85cb-0200-4426-8c76-49e6b8663329}"
-                )
-                foreach ($hg in $homeGuids) {
-                    $folder = $shell.Namespace($hg)
-                    if ($folder -and $folder.Items().Count -gt 0) { $qa = $folder; break }
-                }
-                if ($qa) {
-                    $factoryPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                    @(
-                        [Environment]::GetFolderPath("MyDocuments"),
-                        [Environment]::GetFolderPath("MyPictures"),
-                        [Environment]::GetFolderPath("MyMusic"),
-                        [Environment]::GetFolderPath("MyVideos"),
-                        (Join-Path $env:USERPROFILE "Documents"),
-                        (Join-Path $env:USERPROFILE "Pictures"),
-                        (Join-Path $env:USERPROFILE "Music"),
-                        (Join-Path $env:USERPROFILE "Videos"),
-                        (Join-Path $env:USERPROFILE "3D Objects")
-                    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object {
-                        [void]$factoryPaths.Add($_)
-                        if (Test-Path $_) {
-                            $fn = (Get-Item $_ -ErrorAction SilentlyContinue).FullName
-                            if ($fn) { [void]$factoryPaths.Add($fn) }
-                        }
-                    }
-
-                    $factoryNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-                    @("Documents", "文档", "Pictures", "图片", "Music", "音乐", "Videos", "视频", "3D Objects", "3D 对象") | ForEach-Object {
-                        [void]$factoryNames.Add($_)
-                    }
-
-                    foreach ($item in $qa.Items()) {
-                        $p = $item.Path
-                        $isStock = $false
-                        if (-not [string]::IsNullOrWhiteSpace($p)) {
-                            if ($factoryPaths.Contains($p)) { $isStock = $true }
-                            elseif (Test-Path $p) {
-                                $full = (Get-Item $p -ErrorAction SilentlyContinue).FullName
-                                if ($full -and $factoryPaths.Contains($full)) { $isStock = $true }
-                            }
-                        }
-                        if ($factoryNames.Contains($item.Name)) { $isStock = $true }
-
-                        if ($isStock) {
-                            $verbs = $item.Verbs()
-                            for ($i = 0; $i -lt $verbs.Count(); $i++) {
-                                $v = $verbs.Item($i)
-                                $cleanVerb = $v.Name -replace '&', '' -replace '\([A-Za-z]\)', ''
-                                if ($cleanVerb -match '从快速访问取消固定|从“主页”取消固定|从主页取消固定|Unpin from Quick access|Unpin from Home') {
-                                    $v.DoIt()
-                                    break
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch { }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Hidden" 1
         }
     },
     [PSCustomObject]@{
-        Name   = "彻底卸载 OneDrive 并清理用户残留与侧边栏驻留"
-        Check  = {
-            if ($Profile -eq 'General') { return $true }
+        Id      = "taskbar-disable-widgets-icon"
+        Name    = "任务栏小组件资讯流图标剥离 (TaskbarDa = 0)"
+        Profile = "General"
+        Purpose = "移除任务栏左侧天气温度与八卦新闻流小组件悬浮图标，释放桌面注意力"
+        Impact  = "任务栏左侧将不再常驻天气与温度提示，鼠标悬停不再弹出新闻画板"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarDa"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarDa" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "taskbar-disable-chat-icon"
+        Name    = "任务栏 Teams 聊天图标剥离 (TaskbarMn = 0)"
+        Profile = "General"
+        Purpose = "从任务栏剥离内置的个人版 Microsoft Teams 聊天快速图标"
+        Impact  = "任务栏快捷托盘不再显示个人 Teams 聊天入口（企业版 Teams 独立客户端完全不受影响）"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarMn"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarMn" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "taskbar-disable-dsh-policy"
+        Name    = "新闻资讯流组策略全局阻断 (AllowNewsAndInterests = 0)"
+        Profile = "General"
+        Purpose = "从组策略层彻底切断新闻与兴趣资讯流后台刷新通道，杜绝开机静默消耗网络"
+        Impact  = "系统中所有本地账户均无法重新开启任务栏小组件新闻流"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "AllowNewsAndInterests"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "AllowNewsAndInterests" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "accessibility-disable-sticky-keys"
+        Name    = "粘滞键连按 5 次 Shift 快捷键劫持禁用 (StickyKeys Flags = 506)"
+        Profile = "General"
+        Purpose = "彻底消除在游戏连招或代码编写时连续敲击 5 次 Shift 触发全屏弹出的粘滞键中断对话框"
+        Impact  = "依赖连按 Shift 锁定组合键的行动不便人士将无法通过快捷键呼出辅助功能"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Control Panel\Accessibility\StickyKeys" "Flags"
+            return @{ Actual = $val; Expected = "506"; IsCompliant = ($val -eq "506") }
+        }
+        Apply   = {
+            $key = "HKCU:\Control Panel\Accessibility\StickyKeys"
+            Ensure-RegKey $key
+            Set-ItemProperty -Path $key -Name "Flags" -Type String -Value "506" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "accessibility-disable-toggle-keys"
+        Name    = "切换键长按 5 秒 NumLock 快捷键劫持禁用 (ToggleKeys Flags = 58)"
+        Profile = "General"
+        Purpose = "关闭长按 NumLock 键 5 秒弹出的切换键提示音劫持对话框"
+        Impact  = "长按 NumLock 不再发出系统滴滴蜂鸣提示音"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Control Panel\Accessibility\ToggleKeys" "Flags"
+            return @{ Actual = $val; Expected = "58"; IsCompliant = ($val -eq "58") }
+        }
+        Apply   = {
+            $key = "HKCU:\Control Panel\Accessibility\ToggleKeys"
+            Ensure-RegKey $key
+            Set-ItemProperty -Path $key -Name "Flags" -Type String -Value "58" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "accessibility-disable-filter-keys"
+        Name    = "筛选键长按 8 秒 Shift 快捷键劫持禁用 (FilterKeys Flags = 122)"
+        Profile = "General"
+        Purpose = "关闭长按右 Shift 键 8 秒弹出的筛选键键盘响应劫持对话框"
+        Impact  = "长按右 Shift 键时不再自动忽略重复按键"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Control Panel\Accessibility\Keyboard Response" "Flags"
+            return @{ Actual = $val; Expected = "122"; IsCompliant = ($val -eq "122") }
+        }
+        Apply   = {
+            $key = "HKCU:\Control Panel\Accessibility\Keyboard Response"
+            Ensure-RegKey $key
+            Set-ItemProperty -Path $key -Name "Flags" -Type String -Value "122" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "lockscreen-disable-spotlight-overlay"
+        Name    = "锁屏 Windows 聚焦热点提示切断 (RotatingLockScreenOverlayEnabled = 0)"
+        Profile = "General"
+        Purpose = "锁屏界面切断热点推介与微软商业气泡，保持桌面壁纸纯净"
+        Impact  = "锁屏时不再显示「喜欢当前图片吗？」或壁纸地理位置的交互热点小图标"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenOverlayEnabled"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenOverlayEnabled" 0
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338387Enabled" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "start-disable-track-docs"
+        Name    = "开始菜单最近打开文档跟踪切断 (Start_TrackDocs = 0)"
+        Profile = "General"
+        Purpose = "收缩开始菜单下半部分推荐区块，关闭最近访问文档历史，保护隐私"
+        Impact  = "开始菜单推荐区域不再列出刚刚编辑过的 Office 文档或下载的文件"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_TrackDocs"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_TrackDocs" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "start-disable-track-progs"
+        Name    = "开始菜单常用程序列表跟踪切断 (Start_TrackProgs = 0)"
+        Profile = "General"
+        Purpose = "切断最常使用程序的自动统计与展示，保持开始菜单纯净"
+        Impact  = "开始菜单应用列表顶部不再高亮展示「最常用」的应用程序分组"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_TrackProgs"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_TrackProgs" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "autoplay-disable-removable-media"
+        Name    = "移动介质自动播放禁用 (AutoPlay DisableAutoplay = 1)"
+        Profile = "General"
+        Purpose = "插入 U 盘与移动硬盘时不再静默弹出自动执行对话框，防范 U 盘蠕虫自动运行"
+        Impact  = "插入 U 盘后需要手动点击打开文件资源管理器查看文件，系统不会主动弹窗询问操作"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" "DisableAutoplay"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" "DisableAutoplay" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "audio-disable-volume-limiter"
+        Name    = "耳机音量超出 37% 警告弹窗解除 (VolumeLimiter = 0)"
+        Profile = "General"
+        Purpose = "接入耳机或音箱拉大音量时不再阻断并弹出所谓高音量听力保护警告弹窗"
+        Impact  = "在接大功率高灵敏度耳机时，调大系统音量时系统不再保护性强制截断，需用户自行留心音量大小"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Audio" "VolumeLimiter"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\Audio" "VolumeLimiter" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "onedrive-complete-shredding"
+        Name    = "OneDrive 客户端物理卸载与侧边栏剥离"
+        Profile = "Full"
+        Purpose = "卸载并组策略阻断 OneDrive 同步引擎，拔除资源管理器左侧侧边栏图标（若使用个人网盘请选 General）"
+        Impact  = "电脑上的个人 OneDrive 文件夹将停止云端同步；若依赖微软官方网盘备份桌面和文档的用户请勿在 Full 模式下启用本项"
+        Check   = {
             $p = Get-Process -Name "OneDrive" -ErrorAction SilentlyContinue
             $exe1 = Test-Path "$env:LOCALAPPDATA\Microsoft\OneDrive\OneDrive.exe"
             $exe2 = Test-Path "C:\Program Files\Microsoft OneDrive\OneDrive.exe"
-            $userOd = Join-Path $env:USERPROFILE "OneDrive"
-            $hasUserOd = Test-Path $userOd
-            $progDataOd = Join-Path $env:ProgramData "Microsoft OneDrive"
-            $hasProgDataOd = Test-Path $progDataOd
-            $envOd = [Environment]::GetEnvironmentVariable("OneDrive", "User")
             $clsidPaths = @(
                 "HKCU:\Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
                 "HKLM:\SOFTWARE\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
@@ -341,10 +332,10 @@ $items = @(
                 }
             }
             $gpoOk = Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" "DisableFileSyncNGSC" 1
-            return ($null -eq $p -and -not $exe1 -and -not $exe2 -and -not $hasUserOd -and -not $hasProgDataOd -and [string]::IsNullOrEmpty($envOd) -and (-not $isPinned) -and $gpoOk)
+            $isPass = ($null -eq $p -and -not $exe1 -and -not $exe2 -and (-not $isPinned) -and $gpoOk)
+            return @{ Actual = if ($isPass) { "已物理卸载且未驻留" } else { "未完全卸载/已驻留" }; Expected = "OneDrive=Absent, Pinned=0, GPO=Disabled"; IsCompliant = $isPass }
         }
-        Action = {
-            if ($Profile -eq 'General') { return }
+        Apply   = {
             Stop-Process -Name "OneDrive" -Force -ErrorAction SilentlyContinue
             $odSetup = "$env:LOCALAPPDATA\Microsoft\OneDrive\Update\OneDriveSetup.exe"
             if (-not (Test-Path $odSetup)) { $odSetup = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe" }
@@ -355,10 +346,8 @@ $items = @(
             Start-Sleep -Milliseconds 500
             Stop-Process -Name "OneDrive" -Force -ErrorAction SilentlyContinue
 
-            # 组策略：彻底阻断 OneDrive 文件同步引擎
             Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" "DisableFileSyncNGSC" 1
 
-            # 移除文件资源管理器侧边栏驻留 (跨架构三视图彻底剥离)
             $clsidPaths = @(
                 "HKCU:\Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
                 "HKLM:\SOFTWARE\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
@@ -370,116 +359,72 @@ $items = @(
                 }
             }
 
-            # 清理开机自启项与用户环境变量
             Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "OneDrive" -Force -ErrorAction SilentlyContinue
             Remove-ItemProperty -Path "HKCU:\Environment" -Name "OneDrive" -Force -ErrorAction SilentlyContinue
             Remove-ItemProperty -Path "HKCU:\Environment" -Name "OneDriveCommercial" -Force -ErrorAction SilentlyContinue
             [Environment]::SetEnvironmentVariable("OneDrive", $null, "User")
             [Environment]::SetEnvironmentVariable("OneDriveCommercial", $null, "User")
-
-            # 清理个人用户目录残留
-            $userOd = Join-Path $env:USERPROFILE "OneDrive"
-            if (Test-Path $userOd) {
-                Get-ChildItem -Path $userOd -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
-                    $_.Attributes = 'Normal'
-                }
-                (Get-Item -Path $userOd -Force).Attributes = 'Normal'
-                Remove-Item -Path $userOd -Recurse -Force -ErrorAction SilentlyContinue
-            }
-
-            # 清理 LocalAppData 残留缓存
-            $localOd = "$env:LOCALAPPDATA\Microsoft\OneDrive"
-            if (Test-Path $localOd) {
-                Remove-Item -Path $localOd -Recurse -Force -ErrorAction SilentlyContinue
-            }
-
-            # 清理系统级 ProgramData 残留
-            $progDataOd = Join-Path $env:ProgramData "Microsoft OneDrive"
-            if (Test-Path $progDataOd) {
-                Remove-Item -Path $progDataOd -Recurse -Force -ErrorAction SilentlyContinue
-            }
-
-            # 清理注册表配置分支
-            Remove-Item -Path "HKCU:\Software\Microsoft\OneDrive" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "HKLM:\SOFTWARE\Microsoft\OneDrive" -Recurse -Force -ErrorAction SilentlyContinue
         }
     },
     [PSCustomObject]@{
-        Name   = "剥离资源管理器图库驻留与遗留已知文件夹沙盒化"
-        Check  = {
-            if ($Profile -eq 'General') { return $true }
+        Id      = "explorer-hide-gallery-node"
+        Name    = "资源管理器图库 (Gallery) 侧边栏节点剥离"
+        Profile = "Full"
+        Purpose = "从文件资源管理器侧边栏抹除 Win11 图库 (Gallery) 树节点，消除静默图片与视频索引扫描"
+        Impact  = "左侧导航栏不再显示图库大图标，需查看相册可通过此电脑进入特定磁盘文件夹"
+        Check   = {
             $galleryClsid = "{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}"
             $clsidPath = "HKCU:\Software\Classes\CLSID\$galleryClsid"
             $pinnedVal = if (Test-Path $clsidPath) {
                 (Get-ItemProperty -Path $clsidPath -Name "System.IsPinnedToNameSpaceTree" -ErrorAction SilentlyContinue)."System.IsPinnedToNameSpaceTree"
             } else { 0 }
             $desktop = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\$galleryClsid"
-            $zombieFolders = @("3D Objects", "Contacts", "Links", "Searches", "Favorites")
-            $activeFolders = @("Saved Games", "Music", "Videos", "Pictures")
-            $zombieUnhidden = $zombieFolders | Where-Object {
-                $p = Join-Path $env:USERPROFILE $_
-                (Test-Path $p) -and (-not ((Get-Item $p -Force).Attributes -match "System" -and (Get-Item $p -Force).Attributes -match "Hidden"))
-            }
-            $activeUnhidden = $activeFolders | Where-Object {
-                $p = Join-Path $env:USERPROFILE $_
-                (Test-Path $p) -and ((Get-Item $p -Force).Attributes -notmatch "Hidden")
-            }
-            return ($pinnedVal -eq 0 -and -not $desktop -and ($zombieUnhidden.Count -eq 0) -and ($activeUnhidden.Count -eq 0))
+            $isPass = ($pinnedVal -eq 0 -and -not $desktop)
+            return @{ Actual = if ($isPass) { "已剥离 (Pinned=0)" } else { "未剥离/已驻留" }; Expected = "Pinned=0, DesktopNameSpace=Absent"; IsCompliant = $isPass }
         }
-        Action = {
-            if ($Profile -eq 'General') { return }
+        Apply   = {
             $galleryClsid = "{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}"
             $hklmPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\$galleryClsid"
             if (Test-Path $hklmPath) { Remove-Item -Path $hklmPath -Recurse -Force -ErrorAction SilentlyContinue }
 
             $hkcuClsid = "HKCU:\Software\Classes\CLSID\$galleryClsid"
-            Ensure-Key $hkcuClsid
+            Ensure-RegKey $hkcuClsid
             Set-ItemProperty -Path $hkcuClsid -Name "System.IsPinnedToNameSpaceTree" -Type DWord -Value 0 -Force
-
-            $zombieFolders = @("3D Objects", "Contacts", "Links", "Searches", "Favorites")
-            foreach ($f in $zombieFolders) {
-                $p = Join-Path $env:USERPROFILE $f
-                if (Test-Path $p) {
-                    (Get-Item -Path $p -Force).Attributes = 'Directory', 'Hidden', 'System'
-                }
-            }
-
-            $activeFolders = @("Saved Games", "Music", "Videos", "Pictures")
-            foreach ($f in $activeFolders) {
-                $p = Join-Path $env:USERPROFILE $f
-                if (Test-Path $p) {
-                    (Get-Item -Path $p -Force).Attributes = 'Directory', 'Hidden'
-                }
-            }
         }
     },
     [PSCustomObject]@{
-        Name   = "从左侧导航窗格隐藏网络 (Network) 网上邻居图标"
-        Check  = {
-            if ($Profile -eq 'General') { return $true }
+        Id      = "explorer-hide-network-neighborhood"
+        Name    = "资源管理器左侧网上邻居图标隐藏 (Network Pinned = 0)"
+        Profile = "Full"
+        Purpose = "从文件资源管理器左侧侧边栏拔除网上邻居图标，消除局域网节点背景广播发现与延迟"
+        Impact  = "左侧无法直接点击进入「网络」，但通过在地址栏输入 \\IP 访问内网共享完全正常不受影响"
+        Check   = {
             $netGuid = "{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}"
             $hklmNet = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\$netGuid"
             $hkcuNet = "HKCU:\Software\Classes\CLSID\$netGuid"
             $hkcuPinned = if (Test-Path $hkcuNet) {
                 (Get-ItemProperty -Path $hkcuNet -Name "System.IsPinnedToNameSpaceTree" -ErrorAction SilentlyContinue)."System.IsPinnedToNameSpaceTree"
             } else { $null }
-            return (-not $hklmNet -and ($hkcuPinned -eq 0))
+            $isPass = (-not $hklmNet -and ($hkcuPinned -eq 0))
+            return @{ Actual = if ($isPass) { "已隐藏" } else { "未隐藏" }; Expected = "Pinned=0, DesktopNameSpace=Absent"; IsCompliant = $isPass }
         }
-        Action = {
-            if ($Profile -eq 'General') { return }
+        Apply   = {
             $netGuid = "{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}"
             $hklmPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\$netGuid"
             if (Test-Path $hklmPath) { Remove-Item -Path $hklmPath -Recurse -Force -ErrorAction SilentlyContinue }
 
             $hkcuNet = "HKCU:\Software\Classes\CLSID\$netGuid"
-            Ensure-Key $hkcuNet
+            Ensure-RegKey $hkcuNet
             Set-ItemProperty -Path $hkcuNet -Name "System.IsPinnedToNameSpaceTree" -Type DWord -Value 0 -Force
         }
     },
     [PSCustomObject]@{
-        Name   = "从左侧导航窗格隐藏小房子主页与用户个人主文件夹 (直达此电脑)"
-        Check  = {
-            if ($Profile -eq 'General') { return $true }
+        Id      = "explorer-hide-home-userprofile"
+        Name    = "资源管理器主页 (Home) 与个人主文件夹隐藏"
+        Profile = "Full"
+        Purpose = "从资源管理器侧边栏拔除多余的 Home 小房子与用户名文件夹，只保留此电脑直达大盘，视觉极简"
+        Impact  = "左侧导航窗格不再出现当前 Windows 用户名命名的快捷跳转节点"
+        Check   = {
             $homeGuid = "{f874310e-b6b7-47dc-bc84-b9e6b38f5903}"
             $userGuid = "{59031a47-3f72-44a7-89c5-5595fe6b30ee}"
             $hklmHome = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\$homeGuid"
@@ -488,10 +433,10 @@ $items = @(
             $hkcuHomePinned = if (Test-Path $hkcuHome) {
                 (Get-ItemProperty -Path $hkcuHome -Name "System.IsPinnedToNameSpaceTree" -ErrorAction SilentlyContinue)."System.IsPinnedToNameSpaceTree"
             } else { $null }
-            return (-not $hklmHome -and -not $hklmUser -and ($hkcuHomePinned -eq 0))
+            $isPass = (-not $hklmHome -and -not $hklmUser -and ($hkcuHomePinned -eq 0))
+            return @{ Actual = if ($isPass) { "已隐藏" } else { "未隐藏" }; Expected = "Home=0, UserProfile=0"; IsCompliant = $isPass }
         }
-        Action = {
-            if ($Profile -eq 'General') { return }
+        Apply   = {
             $homeGuid = "{f874310e-b6b7-47dc-bc84-b9e6b38f5903}"
             $userGuid = "{59031a47-3f72-44a7-89c5-5595fe6b30ee}"
             foreach ($g in @($homeGuid, $userGuid)) {
@@ -499,402 +444,121 @@ $items = @(
                 if (Test-Path $hklmPath) { Remove-Item -Path $hklmPath -Recurse -Force -ErrorAction SilentlyContinue }
 
                 $hkcuPath = "HKCU:\Software\Classes\CLSID\$g"
-                Ensure-Key $hkcuPath
+                Ensure-RegKey $hkcuPath
                 Set-ItemProperty -Path $hkcuPath -Name "System.IsPinnedToNameSpaceTree" -Type DWord -Value 0 -Force
             }
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "禁用外置存储介质自动播放"
-        Check  = {
-            $a = Test-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" "DisableAutoplay" 1
-            $b = Test-RegDword "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" "NoDriveTypeAutoRun" 255
-            return ($a -and $b)
-        }
-        Action = {
-            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" "DisableAutoplay" 1
-            Set-RegDword "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" "NoDriveTypeAutoRun" 255
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "锁屏直达密码/PIN 输入框"
-        Check  = {
-            return Test-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" "NoLockScreen" 1
-        }
-        Action = {
-            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" "NoLockScreen" 1
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "锁定桌面背景为纯图片并切断 Windows 聚焦"
-        Check  = {
-            $cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
-            $c1 = Test-RegDword $cdm "RotatingLockScreenEnabled" 0
-            $c2 = Test-RegDword $cdm "RotatingLockScreenOverlayEnabled" 0
-            $c3 = Test-RegDword $cdm "SubscribedContent-338387Enabled" 0
-            $c4 = Test-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers" "BackgroundType" 0
-            return ($c1 -and $c2 -and $c3 -and $c4)
-        }
-        Action = {
-            $cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
-            Set-RegDword $cdm "RotatingLockScreenEnabled" 0
-            Set-RegDword $cdm "RotatingLockScreenOverlayEnabled" 0
-            Set-RegDword $cdm "SubscribedContent-338387Enabled" 0
-            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers" "BackgroundType" 0
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "调优微软拼音输入法 (禁用 Shift+Space、新窗口默认英文、切断云候选)"
-        Check  = {
-            $chs = "HKCU:\Software\Microsoft\InputMethod\Settings\CHS"
-            $m = Test-RegDword $chs "Mode" 0
-            $c = Test-RegDword $chs "Enable Cloud Candidate" 0
-            $hotKey = (Get-ItemProperty "HKCU:\Control Panel\Input Method\Hot Keys\00000011" -Name "Key Modifiers" -ErrorAction SilentlyContinue).'Key Modifiers'
-            return ($m -and $c -and ($null -ne $hotKey))
-        }
-        Action = {
-            $hotKeyPath = "HKCU:\Control Panel\Input Method\Hot Keys\00000011"
-            Ensure-Key $hotKeyPath
-            Set-ItemProperty -Path $hotKeyPath -Name "Key Modifiers" -Type Binary -Value ([byte[]](0, 192, 0, 0)) -Force
-            Set-ItemProperty -Path $hotKeyPath -Name "Virtual Key" -Type Binary -Value ([byte[]](0, 0, 0, 0)) -Force
-
-            $chsPath = "HKCU:\Software\Microsoft\InputMethod\Settings\CHS"
-            Ensure-Key $chsPath
-            Set-ItemProperty -Path $chsPath -Name "Mode" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $chsPath -Name "Enable Cloud Candidate" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $chsPath -Name "Enable Self Learning" -Type DWord -Value 0 -Force
-            Set-ItemProperty -Path $chsPath -Name "Enable LiveSticker" -Type DWord -Value 0 -Force
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "安装并注册工作站等宽字体基线 (Maple Mono NL NFMono CN)"
-        Check  = {
-            $regHklm = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-            $regHkcu = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
-            $hasHklm = (Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-            $hasHkcu = (Get-ItemProperty -Path $regHkcu -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-            return [bool]($hasHklm -or $hasHkcu)
-        }
-        Action = {
-            $tempSandboxDir = Join-Path $env:TEMP ("maple-font-" + [Guid]::NewGuid().ToString("N"))
-            $tempZip = Join-Path $env:TEMP ("maple-font-" + [Guid]::NewGuid().ToString("N") + ".zip")
-            New-Item -ItemType Directory -Path $tempSandboxDir -Force | Out-Null
-
-            try {
-                $remoteBase = $env:VPSBASE_REMOTE_BASE ?? "https://raw.githubusercontent.com/Lokyael/vpsbase"
-                $fontAssetUrl = if ($remoteBase -match "raw\.githubusercontent\.com") {
-                    "https://raw.githubusercontent.com/Lokyael/vpsbase/assets/latest-maple-mono-nl.zip"
-                } else {
-                    "$remoteBase/assets/latest-maple-mono-nl.zip"
-                }
-
-                Write-Host "  [*] 正在从云端资产源拉取预编译 Maple Mono NL 等宽字体基线..." -ForegroundColor Cyan
-                Invoke-RestMethod -Uri $fontAssetUrl -OutFile $tempZip -TimeoutSec 60
-                Expand-Archive -Path $tempZip -DestinationPath $tempSandboxDir -Force
-
-                $ttfFiles = Get-ChildItem -Path $tempSandboxDir -Filter "*.ttf" -Recurse -File
-                if ($ttfFiles.Count -eq 0) {
-                    Write-Warning "解压后的字体包内未发现任何 .ttf 字体文件。"
-                    return
-                }
-
-                $shellApp = New-Object -ComObject Shell.Application
-                $fontsFolder = $shellApp.Namespace(0x14)
-                foreach ($file in $ttfFiles) {
-                    $fontsFolder.CopyHere($file.FullName, 0x10)
-                }
-
-                # 轮询等待系统注册表生效，杜绝后台 Shell 异步复制与临时沙盒提前删除竞争
-                $regHklm = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-                $regHkcu = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
-                $sw = [System.Diagnostics.Stopwatch]::StartNew()
-                while ($sw.Elapsed.TotalSeconds -lt 10) {
-                    $hasHklm = (Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-                    $hasHkcu = (Get-ItemProperty -Path $regHkcu -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-                    if ($hasHklm -or $hasHkcu) { break }
-                    Start-Sleep -Milliseconds 500
-                }
-
-                Write-Host "  [+] Maple Mono NL 等宽字体基线已成功装配至系统字体库" -ForegroundColor Green
-            } catch {
-                Write-Warning "拉取或安装云端预编译字体包失败: $($_.Exception.Message)。跳过字体配置。"
-            } finally {
-                if (Test-Path $tempZip) { Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue }
-                if (Test-Path $tempSandboxDir) { Remove-Item -Path $tempSandboxDir -Recurse -Force -ErrorAction SilentlyContinue }
-            }
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "配置 Windows Terminal 生产力基准 (默认 pwsh、自适应路径、磨砂亚克力与现代 Shell 纳管)"
-        Check  = {
-            $wtSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-            if (-not (Test-Path $wtSettings)) { $wtSettings = "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json" }
-            if (-not (Test-Path $wtSettings)) { return $true }
-            try {
-                $json = Get-Content -Path $wtSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-                $pwshGuid = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
-                $targetStartDir = if ((Test-Path "D:\act") -and $Profile -ne 'General') { "D:\act" } else { $env:USERPROFILE }
-                $isDefaultPwsh = ($json.defaultProfile -eq $pwshGuid)
-                $isDirMatch = ($null -ne $json.profiles.defaults -and $json.profiles.defaults.startingDirectory -eq $targetStartDir)
-                $isAcrylic = ($null -ne $json.profiles.defaults -and $json.profiles.defaults.useAcrylic -eq $true -and ($json.profiles.defaults.acrylicOpacity -eq 0.85 -or $json.profiles.defaults.opacity -eq 85))
-                $isCopyOnSelect = ($json.copyOnSelect -eq $true -and $json.copyFormatting -eq "none")
-                $azureProfile = $json.profiles.list | Where-Object { $_.guid -eq "{b453ae62-4e3d-5e58-b989-0a998ec441b3}" -or $_.guid -eq "{b453ae62-4e3d-5e58-b989-0a998ec441b8}" -or $_.name -match 'Azure Cloud Shell' }
-                $isAzureHidden = ($null -eq $azureProfile -or (-not (@($azureProfile | Where-Object { $_.hidden -ne $true }))))
-                
-                $regHklm = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-                $regHkcu = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
-                $hasMaple = ((Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }) -or
-                            ((Get-ItemProperty -Path $regHkcu -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" })
-                $isFontMatch = if ($hasMaple) {
-                    ($null -ne $json.profiles.defaults.font -and $json.profiles.defaults.font.face -eq "Maple Mono NL NFMono CN")
-                } else { $true }
-
-                return ($isDefaultPwsh -and $isDirMatch -and $isAcrylic -and $isCopyOnSelect -and $isAzureHidden -and $isFontMatch)
-            } catch { return $false }
-        }
-        Action = {
-            $wtSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
-            if (-not (Test-Path $wtSettings)) { $wtSettings = "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json" }
-            if (-not (Test-Path $wtSettings)) { return }
-
-            $internalDrives = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-            try {
-                $disks = Get-Disk -ErrorAction Stop | Where-Object { $_.BusType -ne 'USB' }
-                $partitions = $disks | Get-Partition -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter }
-                foreach ($p in $partitions) { [void]$internalDrives.Add("$($p.DriveLetter):") }
-            } catch {
-                [System.IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' } | ForEach-Object {
-                    [void]$internalDrives.Add($_.Name.TrimEnd('\'))
-                }
-            }
-
-            $testInternalValid = {
-                param([string]$path)
-                if ([string]::IsNullOrWhiteSpace($path)) { return $false }
-                if (-not (Test-Path -Path $path -PathType Leaf)) { return $false }
-                $root = [System.IO.Path]::GetPathRoot($path).TrimEnd('\')
-                return $internalDrives.Contains($root)
-            }
-
-            $scoopRoots = @($env:SCOOP, "D:\prog\scoop", "$env:USERPROFILE\scoop") | Where-Object { $_ -and (Test-Path $_) }
-
-            $pwshExe = $null
-            $pathPwsh = Get-Command pwsh.exe -All -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-            foreach ($cand in $pathPwsh) { if (& $testInternalValid $cand) { $pwshExe = $cand; break } }
-            if (-not $pwshExe) {
-                foreach ($root in $scoopRoots) {
-                    $cand = Join-Path $root "apps\powershell\current\pwsh.exe"
-                    if (& $testInternalValid $cand) { $pwshExe = $cand; break }
-                }
-            }
-
-            $json = Get-Content -Path $wtSettings -Raw -Encoding UTF8 | ConvertFrom-Json
-
-            $setProp = {
-                param($target, [string]$name, $value)
-                if ($null -eq $target) { return }
-                foreach ($item in @($target)) {
-                    if ($null -ne $item) {
-                        $item | Add-Member -MemberType NoteProperty -Name $name -Value $value -Force
-                    }
-                }
-            }
-
-            $azureProfile = $json.profiles.list | Where-Object { $_.guid -eq "{b453ae62-4e3d-5e58-b989-0a998ec441b3}" -or $_.guid -eq "{b453ae62-4e3d-5e58-b989-0a998ec441b8}" -or $_.name -match 'Azure Cloud Shell' }
-            & $setProp $azureProfile "hidden" $true
-
-            if ($Profile -ne 'General') {
-                $devBuiltins = @("{61c54bbd-c2c6-5271-96e7-009a87ff44bf}", "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}")
-                foreach ($p in $json.profiles.list) {
-                    if ($devBuiltins -contains $p.guid -or $p.name -match 'Windows PowerShell 5|Command Prompt|命令提示符') {
-                        & $setProp $p "hidden" $true
-                    }
-                }
-            }
-
-            $pwshGuid = "{574e775e-4f2a-5b96-ac1e-a2962a402336}"
-            $pwshProfile = $json.profiles.list | Where-Object { $_.guid -eq $pwshGuid -or $_.name -match 'PowerShell 7|pwsh' }
-            $pwshCmd = if ($pwshExe) { "`"$pwshExe`" -NoLogo" } else { "pwsh.exe -NoLogo" }
-            if (-not $pwshProfile) {
-                $newPwsh = [PSCustomObject]@{
-                    guid        = $pwshGuid
-                    name        = "PowerShell 7"
-                    commandline = $pwshCmd
-                    tabColor    = "#012456"
-                    hidden      = $false
-                    environment = [PSCustomObject]@{ POWERSHELL_TELEMETRY_OPTOUT = "1" }
-                }
-                $json.profiles.list = @($newPwsh) + @($json.profiles.list)
-            } else {
-                foreach ($p in @($pwshProfile)) {
-                    & $setProp $p "commandline" $pwshCmd
-                    & $setProp $p "tabColor" "#012456"
-                    & $setProp $p "hidden" $false
-                    if (-not $p.environment) { & $setProp $p "environment" ([PSCustomObject]@{}) }
-                    & $setProp $p.environment "POWERSHELL_TELEMETRY_OPTOUT" "1"
-                }
-            }
-            & $setProp $json "defaultProfile" $pwshGuid
-
-            if (-not $json.profiles.defaults) { & $setProp $json.profiles "defaults" (New-Object PSObject) }
-            $targetStartDir = if ((Test-Path "D:\act") -and $Profile -ne 'General') { "D:\act" } else { $env:USERPROFILE }
-            & $setProp $json.profiles.defaults "startingDirectory" $targetStartDir
-            & $setProp $json.profiles.defaults "useAcrylic" $true
-            & $setProp $json.profiles.defaults "acrylicOpacity" 0.85
-            & $setProp $json.profiles.defaults "opacity" 85
-            & $setProp $json.profiles.defaults "historySize" 20000
-            & $setProp $json "copyOnSelect" $true
-            & $setProp $json "copyFormatting" "none"
-            & $setProp $json "confirmCloseAllTabs" $false
-
-            $regHklm = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-            $regHkcu = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
-            $hasMaple = ((Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }) -or
-                        ((Get-ItemProperty -Path $regHkcu -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" })
-            if ($hasMaple) {
-                if (-not $json.profiles.defaults.font) { & $setProp $json.profiles.defaults "font" (New-Object PSObject) }
-                & $setProp $json.profiles.defaults.font "face" "Maple Mono NL NFMono CN"
-                & $setProp $json.profiles.defaults.font "size" 12
-            }
-
-            [System.IO.File]::WriteAllText($wtSettings, ($json | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "配置 pwsh 前缀历史滚动基准 (Microsoft.PowerShell_profile.ps1)"
-        Check  = {
-            $pwshProfilePath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell\Microsoft.PowerShell_profile.ps1"
-            if (-not (Test-Path $pwshProfilePath)) { return $false }
-            $c = (Get-Content -Path $pwshProfilePath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) ?? ""
-            return ($c -match 'HistorySearchBackward' -and $c -match 'HistorySearchForward')
-        }
-        Action = {
-            $pwshProfilePath = Join-Path ([Environment]::GetFolderPath("MyDocuments")) "PowerShell\Microsoft.PowerShell_profile.ps1"
-            $pwshBlock = @'
-# PSReadLine 按键绑定: 根据已输入前缀滚动历史记录
-if (Get-Module -ListAvailable -Name PSReadLine) {
-    Set-PSReadLineKeyHandler -Key UpArrow   -Function HistorySearchBackward
-    Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
-    Set-PSReadLineOption -PredictionSource History
-    Set-PSReadLineOption -PredictionViewStyle InlineView
-}
-'@
-            Update-ManagedConfigFile $pwshProfilePath "pwsh-history-search" $pwshBlock
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "禁用粘滞键等辅助连击弹窗"
-        Check  = {
-            $s = (Get-ItemProperty "HKCU:\Control Panel\Accessibility\StickyKeys" -Name "Flags" -ErrorAction SilentlyContinue).Flags
-            return ($s -eq "506")
-        }
-        Action = {
-            Ensure-Key "HKCU:\Control Panel\Accessibility\StickyKeys"
-            Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\StickyKeys" -Name "Flags" -Value "506" -Force
-            Ensure-Key "HKCU:\Control Panel\Accessibility\Keyboard Response"
-            Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\Keyboard Response" -Name "Flags" -Value "122" -Force
-            Ensure-Key "HKCU:\Control Panel\Accessibility\ToggleKeys"
-            Set-ItemProperty -Path "HKCU:\Control Panel\Accessibility\ToggleKeys" -Name "Flags" -Value "58" -Force
-        }
-    },
-    [PSCustomObject]@{
-        Name   = "禁用系统鼠标指针加速度 (锁定 1:1 纯线性位移)"
-        Check  = {
-            $p = "HKCU:\Control Panel\Mouse"
-            $speed = (Get-ItemProperty -Path $p -Name "MouseSpeed" -ErrorAction SilentlyContinue).MouseSpeed
-            $t1 = (Get-ItemProperty -Path $p -Name "MouseThreshold1" -ErrorAction SilentlyContinue).MouseThreshold1
-            $t2 = (Get-ItemProperty -Path $p -Name "MouseThreshold2" -ErrorAction SilentlyContinue).MouseThreshold2
-            return ($speed -eq "0" -and $t1 -eq "0" -and $t2 -eq "0")
-        }
-        Action = {
-            $p = "HKCU:\Control Panel\Mouse"
-            Ensure-Key $p
-            Set-ItemProperty -Path $p -Name "MouseSpeed" -Value "0" -Force
-            Set-ItemProperty -Path $p -Name "MouseThreshold1" -Value "0" -Force
-            Set-ItemProperty -Path $p -Name "MouseThreshold2" -Value "0" -Force
-            Set-ItemProperty -Path $p -Name "MouseSensitivity" -Value "10" -Force
         }
     }
 )
 
-Write-Host "==================================================" -ForegroundColor Cyan
-Write-Host "  外壳交互与终端底座生产力基线巡检 (pwsh 7+)" -ForegroundColor Cyan
-Write-Host "==================================================" -ForegroundColor Cyan
+# ==============================================================================
+# 4. 驱动执行管线 (Five-Stage Declarative Pipeline Engine)
+# ==============================================================================
 
-$chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$pendingItems = [System.Collections.Generic.List[PSCustomObject]]::new()
+# 阶段 1: Plan & Diff
+Write-Host "`n====================================================================" -ForegroundColor Cyan
+Write-Host "  交互体验与系统外壳视觉裁剪巡检 (pwsh 7+)" -ForegroundColor Cyan
+Write-Host ("  操作意图: {0} | 加固预设: {1} | 授权放行: {2}" -f $Action, $Profile, ($Yes ? "自动放行 (-Yes)" : "交互审查")) -ForegroundColor DarkGray
+Write-Host "====================================================================" -ForegroundColor Cyan
 
-foreach ($item in $items) {
-    $isReady = $false
+$ActiveRules = @($Rules | Where-Object {
+    if ($Profile -eq "General") { $_.Profile -eq "General" } else { $true }
+})
+
+$AuditBoard = [System.Collections.Generic.List[PSCustomObject]]::new()
+$PendingItems = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+foreach ($rule in $ActiveRules) {
+    $res = $null
     try {
-        $isReady = [bool](& $item.Check)
+        $res = & $rule.Check
     } catch {
-        $isReady = $false
+        $res = @{
+            Actual      = "<探测异常: $($_.Exception.Message)>"
+            Expected    = "<未知>"
+            IsCompliant = $false
+        }
     }
 
-    $chkList.Add([PSCustomObject]@{
-        受控项目 = $item.Name
-        当前状态 = if ($isReady) { "已就绪" } else { "待加固" }
-        判定     = if ($isReady) { "✔ 合规" } else { "✘ 偏离" }
+    $isPass = [bool]$res.IsCompliant
+    $actualStr = "$($res.Actual)"
+    $expectedStr = "$($res.Expected)"
+
+    $AuditBoard.Add([PSCustomObject]@{
+        受控规则 = $rule.Name
+        预设级别 = $rule.Profile
+        实机状态 = $actualStr
+        期望基线 = $expectedStr
+        状态判定 = if ($isPass) { "✔ 合规" } else { "✘ 偏离" }
     })
 
-    if (-not $isReady) {
-        $pendingItems.Add($item)
+    if (-not $isPass) {
+        $PendingItems.Add([PSCustomObject]@{
+            Rule        = $rule
+            Actual      = $actualStr
+            Expected    = $expectedStr
+        })
     }
 }
 
-$chkList | Format-Table -AutoSize | Out-String | Write-Host
-$driftCount = $pendingItems.Count
+Write-Host "`n📊 [巡检看板] 外壳交互原子受控属性审计清单:" -ForegroundColor Cyan
+$AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
 
+$driftCount = $PendingItems.Count
 if ($driftCount -eq 0) {
-    Write-Host "✨ [状态合规] 外壳交互与终端底座基线全部合规，无需调整。`n" -ForegroundColor Green
+    Write-Host "✨ [状态合规] 交互体验与系统外壳视觉基线全部合规，无需调整。`n" -ForegroundColor Green
     return
 }
 
-Write-Host "⚠️  共发现 $driftCount 项基线偏离。" -ForegroundColor Yellow
+Write-Host ("⚠️  共检测到 {0} 项原子受控属性偏离工程基线。" -f $driftCount) -ForegroundColor Yellow
 
-if ($Mode -eq "CheckOnly") {
-    Write-Host "💡 当前处于 -Mode CheckOnly 只查不改模式，未执行任何系统改动。`n" -ForegroundColor Gray
+if ($Action -eq "Check") {
+    Write-Host "💡 当前处于 -Action Check 只读巡检模式，未执行任何系统改动。`n" -ForegroundColor DarkGray
     return
 }
 
-# ==============================================================================
-# 阶段 2: 审查门禁 (Gate)
-# ==============================================================================
-if (-not $Yes -and -not $NonInteractive) {
-    Write-Host "💡 [改动说明与交互体验]" -ForegroundColor Cyan
-    Write-Host "   - 核心意图: 还原 Win10 经典右键菜单、扩展名展示、Windows Terminal 生产力底座与 1:1 线性鼠标位移" -ForegroundColor Gray
-    Write-Host "   - 生效机制: 注册表写入完成后，统一由总编排门面在流水线尾部平滑重启 Explorer 使桌面即刻生效" -ForegroundColor Gray
-    $choice = Read-Host "`n是否立即对齐上述 $driftCount 项外壳基线？[Y/n/q] (回车确认)"
-    if ($choice -match '^[Qq]') {
+# 阶段 2: Gate (Shift-Left: 目的与影响结构化直出)
+if (-not $Yes) {
+    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
+    $idx = 1
+    foreach ($p in $PendingItems) {
+        Write-Host ("`n   [{0}] {1}" -f $idx, $p.Rule.Name) -ForegroundColor Yellow
+        Write-Host ("       - 当前实机值: {0}  ==>  期望基线值: {1}" -f $p.Actual, $p.Expected) -ForegroundColor DarkGray
+        Write-Host ("       - [目的] {0}" -f $p.Rule.Purpose) -ForegroundColor White
+        Write-Host ("       - [影响] {0}" -f $p.Rule.Impact) -ForegroundColor Gray
+        $idx++
+    }
+
+    $gateInput = (Read-Host "`n确认对齐上述 $driftCount 项外壳视觉加固基线？[Y] 确认执行 / [N] 跳过本模块 / [Q] 退出 (默认 Y)").Trim()
+    if ($gateInput -match '^[Qq]') {
         Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
     }
-    if ($choice -match '^[Nn]') {
+    if ($gateInput -match '^[Nn]') {
         Write-Host "[-] 跳过本模块基准对齐。`n" -ForegroundColor DarkGray
         return
     }
 }
 
-# ==============================================================================
-# 阶段 3: 单向原子落盘 (Apply)
-# ==============================================================================
-Write-Host "`n🚀 正在单向对齐外壳交互基线..." -ForegroundColor Cyan
-$successCount = 0
+# 阶段 3: Apply
+Write-Host "`n🚀 正在单向对齐系统外壳视觉基线..." -ForegroundColor Cyan
+$appliedCount = 0
 
-foreach ($it in $pendingItems) {
-    Write-Host -NoNewline ("   - 正在配置: {0} ... " -f $it.Name)
+foreach ($p in $PendingItems) {
+    Write-Host -NoNewline ("   - 正在配置: {0} ... " -f $p.Rule.Name)
     try {
-        & $it.Action
+        & $p.Rule.Apply
         Write-Host -ForegroundColor Green "[OK]"
-        $successCount++
+        $appliedCount++
     } catch {
         Write-Host -ForegroundColor Red "[FAIL]"
-        Write-Warning "执行 [$($it.Name)] 失败: $($_.Exception.Message)"
+        Write-Warning "执行规则 [$($p.Rule.Name)] 失败: $($_.Exception.Message)"
     }
 }
 
-# ==============================================================================
-# 阶段 4: 尾部简报 (Report)
-# ==============================================================================
-Write-Host "`n✅ [外壳加固完成] 成功对齐 $successCount / $driftCount 项基线配置。`n" -ForegroundColor Green
+# 阶段 4: Report
+Write-Host "`n====================================================================" -ForegroundColor Green
+Write-Host ("  ✅ [外壳加固完成] 成功对齐 {0} / {1} 项基线配置 (预设: {2})" -f $appliedCount, $driftCount, $Profile) -ForegroundColor Green
+Write-Host "====================================================================`n" -ForegroundColor Green
+return

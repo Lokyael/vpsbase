@@ -4,9 +4,9 @@
     Steam 平台
 
 .DESCRIPTION
-    Steam 平台 (Windows) 自动化纯净安装、系统开机项管控、全局性能基线与无浏览器模式 (No-Browser) 配置工具。
+    Steam 平台 (Windows) 自动化纯净安装、系统开机项管控与全局性能基线配置工具。
     1. 专为 PowerShell 7+ (pwsh) 编写，运用现代 pwsh 语法与原生无 BOM UTF-8 输出。
-    2. 严格遵循“先检查后配置、幂等无冗余”原则：对系统注册表自启动项、全局 config.vdf 性能策略及用户偏好进行逐项比对，拒绝盲目覆盖。
+    2. 严格遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)：对系统注册表自启动项、全局 config.vdf 性能策略及用户偏好进行逐项比对，拒绝盲目覆盖。
     3. 并发安全防护硬门禁：在读取或修改 Steam 本地 VDF 配置文件前，严密检测 Steam 运行状态，杜绝内存回写冲刷。
     4. 系统自启动项精准管控：精准读写 HKCU Run 注册表，彻底阻断开机常驻自启以释放冷启动负载。
     5. 全局性能与网络基线对齐：
@@ -14,441 +14,245 @@
        - 禁用后台无休止着色器预编译 (bShaderCacheBGProcessingEnabled=0)，根治电脑闲置时无故吃满 CPU 与发热；
        - 禁止游戏运行时后台下载 (AllowDownloadsDuringGameplay=0)，保障竞技网络低延迟与磁盘 IO 稳定。
     6. 用户偏好规范化：修正各登录账号下载速率单位为直观的标准字节/秒 (MB/s)。
-    7. 交付 No-Browser 快捷方式：生成无嵌入式浏览器模式快捷方式 (-no-browser)，内存占用从 1GB+ 降至约 50MB，秒级极速拉起。
+    7. 防火墙安全基线主动纳管：静默预置专用网络入站放行规则 (Profile=Private)，封死公用网络 (Public) 暴露面，杜绝启动时弹出“Windows Defender 防火墙已阻止”安全警报。
 
-.PARAMETER Uninstall
-    彻底清洁卸载模式。终止运行进程、清理开机自启注册表与快捷方式、彻底抹除安装目录核心程序（保护 steamapps 游戏本体以防丢失）。
+.PARAMETER Action
+    指定生命周期操作模式，可选值:
+    - Sync        : 增量对齐黄金基线 (默认，缺失则装、偏离则修)
+    - Check       : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
+    - ResetConfig : 仅执行开机自启动抑制、全局基线配置与账号偏好修复
+    - Uninstall   : 彻底清洁卸载 Steam 核心运行时与服务 (保护 steamapps 游戏库)
+    - Upgrade     : 重新拉取官方安装包覆盖升级 Steam 客户端本体
 
-.PARAMETER CheckOnly
-    只查不改模式（体检巡检）。逐项比对 Steam 安装状态、开机自启项、全局网络/CPU 策略与账号偏好，高亮输出 Diff，零写入安全退出。
-
-.PARAMETER ConfigOnly
-    仅执行开机自启动抑制、全局基线配置、账号偏好修复与 No-Browser 快捷方式生成，不重新下载安装 Steam 客户端本体。
-
-.PARAMETER InstallOnly
-    仅执行 Steam 官方安装程序的下载与静默提取安装，不修改任何配置项。
-
-.PARAMETER NonInteractive
-    非交互模式，静默全盘采纳所有推荐基线（用于自动化装机流）。
-
-.PARAMETER InstallDir
-    Steam 安装目标目录，默认优先检测已有安装或落地至 D:\prog\Steam。
+.PARAMETER Yes
+    免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
 
 .EXAMPLE
-    # 交互式全流程检查与配置
+    # 只查不改体检巡检
+    pwsh -File .\scripts\apps\steam.ps1 -Action Check
+
+    # 交互式检查并应用黄金基线
     pwsh -File .\scripts\apps\steam.ps1
 
-    # 只查不改体检巡检
-    pwsh -File .\scripts\apps\steam.ps1 -CheckOnly
-
-    # 仅修复配置、禁用自启与生成 No-Browser 快捷方式
-    pwsh -File .\scripts\apps\steam.ps1 -ConfigOnly
+    # 仅修复配置与禁用自启
+    pwsh -File .\scripts\apps\steam.ps1 -Action ResetConfig
 
     # 彻底清洁卸载
-    pwsh -File .\scripts\apps\steam.ps1 -Uninstall
+    pwsh -File .\scripts\apps\steam.ps1 -Action Uninstall
 #>
 
 [CmdletBinding()]
 param(
-    [switch]$Uninstall,
-    [switch]$CheckOnly,
+    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [string]$Action = "Sync",
 
-    [switch]$ConfigOnly,
-    [switch]$InstallOnly,
-    [switch]$NonInteractive,
-    [switch]$Yes,
-    [string]$InstallDir
+    [switch]$Yes
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 # ==============================================================================
-# 环境校验：强制锁定 PowerShell 7+
+# 1. 运行时环境硬门禁与权限安全防御
 # ==============================================================================
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    throw "本脚本已全面转向 PowerShell 7+ (pwsh)，不兼容旧版 Windows PowerShell 5.1。请使用 'pwsh' 执行本脚本。"
+    throw "【版本错误】本脚本已全面转向 PowerShell 7+ (pwsh)，不兼容旧版 Windows PowerShell 5.1。请使用 'pwsh' 执行本脚本。"
+}
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(544)
+if (-not $isAdmin -and $Action -ne "Check") {
+    throw "【权限错误】Steam 自动化部署与系统开机项管控需管理员特权，请在提升的 pwsh 会话中重新执行！"
+}
+
+$currentUser = [Environment]::UserName
+$rawConsoleUser = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+$consoleUser = if ($rawConsoleUser) { ($rawConsoleUser -replace '.*\\') } else { $currentUser }
+if (-not $consoleUser) { $consoleUser = $currentUser }
+
+if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
+    throw "【跨账号提权阻断】检测到终端运行身份 [$currentUser] 与当前桌面登录用户 [$consoleUser] 不一致！为防止将受控配置与注册表错误写入 [$currentUser] 账户，请直接在 [$consoleUser] 桌面会话中以管理员身份运行。"
 }
 
 # ==============================================================================
-# 0. 路径探测与初始化
+# 2. 应用元数据与部署基准路径锁定 (Golden Baseline Paths)
 # ==============================================================================
-$steamReg = Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -ErrorAction SilentlyContinue
+$AppId        = "steam"
+$AppName      = "Steam 游戏平台"
+$ProcessName  = "steam"
 
-if ([string]::IsNullOrWhiteSpace($InstallDir)) {
-    if ($steamReg.SteamPath) {
-        $InstallDir = $steamReg.SteamPath -replace '/', '\'
-    } else {
-        $InstallDir = (Test-Path "D:\") ? "D:\prog\Steam" : (Join-Path $env:ProgramFiles "(x86)\Steam")
+$steamReg     = Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -ErrorAction SilentlyContinue
+$InstallDir   = if ($steamReg.SteamPath) { $steamReg.SteamPath -replace '/', '\' } else { "D:\prog\Steam" }
+$AppExe       = Join-Path $InstallDir "steam.exe"
+$ConfigFile   = Join-Path $InstallDir "config\config.vdf"
+$UserDirBase  = Join-Path $InstallDir "userdata"
+
+$HighValueUserData = @(
+    "游戏本地库目录 (steamapps): $InstallDir\steamapps",
+    "各账号本地存档与截图: $UserDirBase"
+)
+
+function Ensure-Dir {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
+}
+
+# 受控属性全景声明清单 (含 Purpose 目的 与 Impact 影响)
+$ManagedSpecs = @(
+    @{
+        Module   = "客户端本体"
+        Property = "主执行文件 (steam.exe)"
+        Expected = "已就绪 ($AppExe)"
+        Purpose  = "部署 Steam 官方游戏客户端核心本体"
+        Impact   = "若未就绪将自动拉取官方安装包部署至 $InstallDir"
+        Type     = "Binary"
+    },
+    @{
+        Module   = "系统集成"
+        Property = "开机自启动 (HKCU Run Steam)"
+        Expected = "已清除 (禁用自启)"
+        Purpose  = "彻底从注册表 Run 项中剥离 Steam 开机自启"
+        Impact   = "开机冷启动阶段不再常驻 Steam 及其多个 WebHelper 进程，释放 500MB+ 内存"
+        Type     = "RunKey"
+    },
+    @{
+        Module   = "性能基线"
+        Key      = "PeerContentServerMode"
+        Property = "局域网对等传输 (PeerContentServerMode = 0)"
+        Expected = "0"
+        Purpose  = "彻底禁用 Steam 局域网 P2P 补丁上传与后台监听"
+        Impact   = "杜绝局域网组播泛洪、端口未授权监听以及偷跑宽带上行"
+        Type     = "Vdf"
+    },
+    @{
+        Module   = "性能基线"
+        Key      = "bShaderCacheBGProcessingEnabled"
+        Property = "后台着色器预编译 (bShaderCacheBGProcessingEnabled = 0)"
+        Expected = "0"
+        Purpose  = "禁用电脑闲置时无休止的后台 GPU 着色器预编译"
+        Impact   = "根除电脑静置挂机时突然 CPU 吃满 100% 发热风扇狂转"
+        Type     = "Vdf"
+    },
+    @{
+        Module   = "性能基线"
+        Key      = "AllowDownloadsDuringGameplay"
+        Property = "游戏期间后台下载 (AllowDownloadsDuringGameplay = 0)"
+        Expected = "0"
+        Purpose  = "启动游戏后自动挂起所有后台游戏更新下载"
+        Impact   = "保障竞技游戏网络低延迟与物理磁盘 IO 零冲突"
+        Type     = "Vdf"
+    },
+    @{
+        Module   = "网络安全"
+        Property = "防火墙静默纳管 (仅限专用网络 Private 放行)"
+        Expected = "已配置 (仅限 Private)"
+        Purpose  = "静默预置入站放行规则并严格封死公用网络 (Public) 暴露面"
+        Impact   = "消灭首次启动弹出的「Windows 防火墙已阻止」弹窗，杜绝公用 Wi-Fi 下端口暴露"
+        Type     = "Firewall"
     }
-}
-
-$steamExe = Join-Path $InstallDir "steam.exe"
-$globalConfigFile = Join-Path $InstallDir "config\config.vdf"
-$desktopNoBrowserLnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Steam (No-Browser).lnk"
-
-Write-Host "==================================================" -ForegroundColor Yellow
-Write-Host "  Steam 平台系统管控与性能基线工具 (pwsh 7+)" -ForegroundColor Yellow
-Write-Host "==================================================" -ForegroundColor Yellow
-Write-Host "📂 部署基准目录: 安装目录 [$InstallDir]`n" -ForegroundColor Cyan
+)
 
 # ==============================================================================
-# 阶段 A: 彻底清洁卸载与环境重置 (-Uninstall)
+# 3. 独立流转分支：彻底清洁卸载 (-Action Uninstall)
 # ==============================================================================
-if ($Uninstall) {
-    if (-not $NonInteractive -and -not $Yes) {
-        $confirmUninstall = Read-Host "⚠️ [卸载警示] 将清理 Steam 客户端核心与注册表自启 (保留游戏库 steamapps 与用户存档)，确认继续? [y/N]"
-        if ($confirmUninstall.Trim() -notmatch '^(y|yes)$') {
-            Write-Host "用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
+if ($Action -eq "Uninstall") {
+    if (-not $Yes) {
+        Write-Host "`n⚠️  [清洁卸载警示] 即将清理 Steam 客户端核心、系统服务与自启动项！" -ForegroundColor Yellow
+        Write-Host "📌 【本地游戏资产与数据保护提示】:" -ForegroundColor Cyan
+        foreach ($d in $HighValueUserData) {
+            Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
+        }
+        Write-Host "👉 默认严格保护 steamapps 与 userdata 目录，不会删除本地游戏本体。`n" -ForegroundColor Yellow
+
+        $confirm = (Read-Host "确认清理 Steam 客户端核心、服务与注册表启动项? [y/N]").Trim()
+        if ($confirm -notmatch '^(y|yes)$') {
+            Write-Host "[-] 用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
         }
     }
 
-    Write-Host "🧹 [清洁卸载模式] 正在终止常驻进程并清理 Steam 环境..." -ForegroundColor Yellow
+    Write-Host "`n🧹 [清洁卸载模式] 正在终止常驻进程并清理 Steam 环境..." -ForegroundColor Yellow
 
-    # 1. 强力终止 Steam 进程
-    Get-Process -Name "steam", "steamwebhelper", "gameoverlayui" -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process -Name "steam", "steamwebhelper", "steamservice", "gameoverlayui" -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 800
 
-    # 2. 清理自启动项
-    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Steam" -ErrorAction SilentlyContinue
+    if (Get-Service -Name "Steam Client Service" -ErrorAction SilentlyContinue) {
+        Stop-Service -Name "Steam Client Service" -Force -ErrorAction SilentlyContinue
+        & sc.exe delete "Steam Client Service" 2>&1 | Out-Null
+        Write-Host "   - 已停止并注销 Steam Client Service 系统服务。" -ForegroundColor Gray
+    }
 
-    # 3. 清理快捷方式 (涵盖用户与公用目录)
+    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Steam" -ErrorAction SilentlyContinue
+    @(
+        "HKCU:\Software\Valve",
+        "HKLM:\SOFTWARE\Valve",
+        "HKLM:\SOFTWARE\WOW6432Node\Valve",
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Steam",
+        "HKCU:\Software\Classes\steam",
+        "HKLM:\SOFTWARE\Classes\steam"
+    ) | ForEach-Object {
+        if (Test-Path $_) { Remove-Item -Path $_ -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    Get-NetFirewallRule -DisplayName "*Steam*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    @(
+        "Steam-Client-In-TCP",
+        "Steam-Client-In-UDP",
+        "Steam-WebHelper-In-TCP",
+        "Steam-WebHelper-In-UDP"
+    ) | ForEach-Object {
+        Get-NetFirewallRule -Name $_ -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    }
+    Write-Host "   - 已彻底拔除 Valve 注册表项、协议、防火墙规则与开机自启项。" -ForegroundColor Gray
+
     $shortcuts = @(
         (Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" "Steam.lnk"),
-        (Join-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" "Steam (No-Browser).lnk"),
         "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Steam\Steam.lnk",
         "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Steam",
         (Join-Path ([Environment]::GetFolderPath("Desktop")) "Steam.lnk"),
-        (Join-Path ([Environment]::GetFolderPath("Desktop")) "Steam (No-Browser).lnk"),
-        "C:\Users\Public\Desktop\Steam.lnk",
-        "C:\Users\Public\Desktop\Steam (No-Browser).lnk"
+        "C:\Users\Public\Desktop\Steam.lnk"
     )
     foreach ($sc in $shortcuts) {
         if (Test-Path $sc) { Remove-Item -Path $sc -Force -Recurse -ErrorAction SilentlyContinue }
     }
 
-    # 4. 清除安装目录（保护 steamapps 游戏下载本体与用户存档数据）
+    $steamLocalApp = Join-Path $env:LOCALAPPDATA "Steam"
+    if (Test-Path $steamLocalApp) {
+        Remove-Item -Path $steamLocalApp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $steamCommon = "${env:ProgramFiles(x86)}\Common Files\Steam"
+    if (Test-Path $steamCommon) {
+        Remove-Item -Path $steamCommon -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     if (Test-Path $InstallDir) {
         Write-Host "   - 正在清理安装目录核心组件 (保护 steamapps 游戏资产以防丢失)..." -ForegroundColor Gray
-        Get-ChildItem -Path $InstallDir -Exclude "steamapps", "userdata" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path $InstallDir -Exclude "steamapps", "userdata" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        $remaining = Get-ChildItem -Path $InstallDir -Force -ErrorAction SilentlyContinue
+        if ($remaining.Count -eq 0) {
+            Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
-    Write-Host "✅ [清洁卸载完成] Steam 核心运行时与注册表自启已清理 (steamapps 游戏资产完整保留)。`n" -ForegroundColor Green
+    Write-Host "`n✅ [清洁卸载完成] Steam 核心运行时与注册表自启已清理 (steamapps 游戏资产完整保留)。`n" -ForegroundColor Green
     return
 }
 
 # ==============================================================================
-# 阶段 B: 全量只读嗅探与差异呈现 (Plan & Diff)
+# 4. 阶段 1: 全量只读嗅探与差异呈现 (Plan & Diff)
 # ==============================================================================
-$chkList = [System.Collections.Generic.List[PSCustomObject]]::new()
-$diffList = [System.Collections.Generic.List[PSCustomObject]]::new()
+Write-Host "`n====================================================================" -ForegroundColor Cyan
+Write-Host "  应用生命周期管理与基线巡检: $AppName (pwsh 7+)" -ForegroundColor Cyan
+Write-Host ("  操作意图: {0} | 授权放行: {1} | 部署路径: {2}" -f $Action, ($Yes ? "自动放行 (-Yes)" : "交互审查"), $InstallDir) -ForegroundColor DarkGray
+Write-Host "====================================================================" -ForegroundColor Cyan
 
-# 1. 二进制安装
-$isInstalled = Test-Path $steamExe
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "客户端本体"
-    "受控属性" = "二进制程序 (steam.exe)"
-    "期望基线" = "已安装于 $InstallDir"
-    "实机状态" = $isInstalled ? "已就绪" : "未安装"
-    "判定"     = $isInstalled ? "✔ 匹配" : "✘ 缺失"
-})
-if (-not $isInstalled) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "客户端本体"
-        "受控属性" = "二进制程序 (steam.exe)"
-        "实机状态" = "未安装"
-        "期望基线" = "已安装于 $InstallDir"
-    })
-}
+$AuditBoard = [System.Collections.Generic.List[PSCustomObject]]::new()
+$PendingItems = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-# 2. 开机自启动
+$isInstalled = Test-Path $AppExe
 $runVal = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue).Steam
 $hasRunKey = -not [string]::IsNullOrEmpty($runVal)
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "系统集成"
-    "受控属性" = "开机自启动 (Run Key)"
-    "期望基线" = "禁用 (释放冷启负载)"
-    "实机状态" = $hasRunKey ? "已开启 (常驻自启)" : "已禁用"
-    "判定"     = $hasRunKey ? "✘ 偏离 (需禁用)" : "✔ 匹配"
-})
-if ($hasRunKey -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "系统集成"
-        "受控属性" = "开机自启动 (Run Key)"
-        "实机状态" = "已开启 (常驻自启)"
-        "期望基线" = "禁用"
-    })
-}
-
-# 3. 全局基线配置 (config\config.vdf)
-$hasGlobalCfg = Test-Path $globalConfigFile
-$globalContent = $hasGlobalCfg ? (Get-Content -Path $globalConfigFile -Raw -Encoding utf8NoBOM) : ""
-
-# 3.1 局域网对等传输
-$peerMode = ($globalContent -match '"PeerContentServerMode"\s+"(?<v>[^"]+)"') ? $Matches.v : $null
-$peerMatched = ($peerMode -eq "0")
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "全局网络"
-    "受控属性" = "局域网对等传输 (PeerContentServerMode)"
-    "期望基线" = "0 (彻底禁用/防偷跑/闭端口)"
-    "实机状态" = ($peerMode -eq "0") ? "0 (已禁用)" : ($null -eq $peerMode ? "未显式配置 (默认常驻)" : "$peerMode (已开启)")
-    "判定"     = $peerMatched ? "✔ 匹配" : "✘ 偏离 (需禁用)"
-})
-if (-not $peerMatched -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "全局网络"
-        "受控属性" = "局域网对等传输 (PeerContentServerMode)"
-        "实机状态" = if ($null -eq $peerMode) { "<缺省未设>" } else { "$peerMode" }
-        "期望基线" = "0"
-    })
-}
-
-# 3.2 后台着色器预编译
-$shaderBg = ($globalContent -match '"bShaderCacheBGProcessingEnabled"\s+"(?<v>[^"]+)"') ? $Matches.v : $null
-$shaderMatched = ($shaderBg -eq "0")
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "全局性能"
-    "受控属性" = "后台着色器编译 (bShaderCacheBGProcessingEnabled)"
-    "期望基线" = "0 (禁用后台编译/杜绝闲置吃满CPU)"
-    "实机状态" = ($shaderBg -eq "0") ? "0 (已禁用)" : ($null -eq $shaderBg ? "未显式配置 (默认后台处理)" : "$shaderBg (已开启)")
-    "判定"     = $shaderMatched ? "✔ 匹配" : "✘ 偏离 (需禁用)"
-})
-if (-not $shaderMatched -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "全局性能"
-        "受控属性" = "后台着色器编译 (bShaderCacheBGProcessingEnabled)"
-        "实机状态" = if ($null -eq $shaderBg) { "<缺省未设>" } else { "$shaderBg" }
-        "期望基线" = "0"
-    })
-}
-
-# 3.3 游戏运行时禁止下载更新
-$gameDl = ($globalContent -match '"AllowDownloadsDuringGameplay"\s+"(?<v>[^"]+)"') ? $Matches.v : $null
-$gameDlMatched = ($gameDl -eq "0" -or $null -eq $gameDl)
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "全局网络"
-    "受控属性" = "游戏时后台下载 (AllowDownloadsDuringGameplay)"
-    "期望基线" = "0 (禁止游戏中下载/保障低延迟与IO)"
-    "实机状态" = ($gameDl -eq "0") ? "0 (游戏中暂停)" : ($null -eq $gameDl ? "未显式配置 (默认暂停)" : "$gameDl (允许下载)")
-    "判定"     = $gameDlMatched ? "✔ 匹配" : "✘ 偏离 (需禁用)"
-})
-if (-not $gameDlMatched -and -not $InstallOnly) {
-    $diffList.Add([PSCustomObject]@{
-        "受控模块" = "全局网络"
-        "受控属性" = "游戏时后台下载 (AllowDownloadsDuringGameplay)"
-        "实机状态" = "$gameDl"
-        "期望基线" = "0"
-    })
-}
-
-# 4. No-Browser 模式快捷方式
-$hasNoBrowser = Test-Path $desktopNoBrowserLnk
-$chkList.Add([PSCustomObject]@{
-    "配置模块" = "桌面交付"
-    "受控属性" = "无浏览器模式快捷方式 (Steam (No-Browser).lnk)"
-    "期望基线" = "存在 (-no-browser 轻量模式)"
-    "实机状态" = $hasNoBrowser ? "已就绪" : "未生成"
-    "判定"     = $hasNoBrowser ? "✔ 匹配" : "💡 可选生成"
-})
-
-# 5. 账号级偏好巡检
-$userDirs = (Test-Path "$InstallDir\userdata") ? (Get-ChildItem -Path "$InstallDir\userdata" -Directory -ErrorAction SilentlyContinue) : @()
-if ($userDirs.Count -eq 0) {
-    $chkList.Add([PSCustomObject]@{
-        "配置模块" = "用户数据"
-        "受控属性" = "登录账号资料库"
-        "期望基线" = "至少一个已登录账号"
-        "实机状态" = "未检测到本地账号资料"
-        "判定"     = "💡 待首次登录"
-    })
-} else {
-    foreach ($u in $userDirs) {
-        $userVdf = Join-Path $u.FullName "config\localconfig.vdf"
-        if (-not (Test-Path $userVdf)) { continue }
-        $content = Get-Content -Path $userVdf -Raw -Encoding utf8NoBOM
-
-        # 下载速率单位
-        $rateBit = ($content -match '"displayratesasbits"\s+"(?<v>[01])"') ? $Matches.v : "0"
-        $rateMatched = ($rateBit -eq "0")
-        $chkList.Add([PSCustomObject]@{
-            "配置模块" = "账号: $($u.Name)"
-            "受控属性" = "下载速率单位 (displayratesasbits)"
-            "期望基线" = "0 (字节/秒: MB/s)"
-            "实机状态" = ($rateBit -eq "1") ? "1 (比特/秒: Mbps)" : "0 (字节/秒: MB/s)"
-            "判定"     = $rateMatched ? "✔ 匹配" : "✘ 偏离"
-        })
-        if (-not $rateMatched -and -not $InstallOnly) {
-            $diffList.Add([PSCustomObject]@{
-                "受控模块" = "账号: $($u.Name)"
-                "受控属性" = "下载速率单位 (displayratesasbits)"
-                "实机状态" = "$rateBit"
-                "期望基线" = "0"
-            })
-        }
-    }
-}
-
-# 只查不改模式 (-CheckOnly) 立即输出看板后安全退出
-if ($CheckOnly) {
-    Write-Host "`n📊 [巡检看板] Steam 受控属性深入基线审计清单:" -ForegroundColor Cyan
-    $chkList | Format-Table -AutoSize | Out-String | Write-Host
-
-    if ($diffList.Count -eq 0) {
-        Write-Host "✔ [状态合规] 所有受控属性均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
-    } else {
-        Write-Host "⚠️  共发现 $($diffList.Count) 项基线偏离。执行默认模式 (-Sync) 或纯配置模式 (-ConfigOnly) 即可自动对齐。`n" -ForegroundColor Yellow
-        if (-not $isInstalled) {
-            Write-Host "💡 提示: 未检测到客户端安装，运行本脚本默认模式即可自动拉取官方安装器静默安装。" -ForegroundColor Gray
-        }
-    }
-    return
-}
-
-# 若无偏离且无安装诉求，直接提前安全退出
-if ($diffList.Count -eq 0 -and $isInstalled -and -not $InstallOnly) {
-    Write-Host "`n📊 [巡检看板] Steam 受控属性深入基线审计清单:" -ForegroundColor Cyan
-    $chkList | Format-Table -AutoSize | Out-String | Write-Host
-    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
-    return
-}
-
-# 发现基线偏离，高亮输出差异清单
-Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离黄金基线:" -ForegroundColor Cyan
-$diffList | Format-Table -AutoSize | Out-String | Write-Host
-
-# ==============================================================================
-# 阶段 C: 模式审查门禁 (Gate)
-# ==============================================================================
-# 1. 运行态并发防覆写硬门禁
-$runningProc = Get-Process -Name "steam" -ErrorAction SilentlyContinue
-if ($runningProc) {
-    if (-not $NonInteractive -and -not $Yes) {
-        Write-Warning "检测到 Steam 当前正在运行！外部修改会被 Steam 退出时的内存状态覆写。"
-        $kill = Read-Host "是否由脚本安全终止 Steam 进程以继续配置? [Y/n]"
-        if ($kill.Trim() -match "^(n|no)$") {
-            Write-Host "用户取消操作，安全退出。`n" -ForegroundColor Yellow
-            return
-        }
-    }
-    $runningProc | Stop-Process -Force
-    Start-Sleep -Milliseconds 800
-    Write-Host "   - 已安全终止 Steam 进程。" -ForegroundColor Gray
-}
-
-# 2. 未安装本体时的安装审查门禁
-if (-not $isInstalled) {
-    if ($ConfigOnly) {
-        throw "未检测到 Steam 客户端安装。请先安装本体后再执行配置。"
-    }
-
-    if (-not $NonInteractive -and -not $Yes) {
-        $shouldInstall = Read-Host "未检测到 Steam 客户端本体，是否立即拉取官方安装器进行部署？[Y/n]"
-        if ($shouldInstall.Trim() -match "^(n|no)$") {
-            Write-Host "操作已由用户取消，安全退出。`n" -ForegroundColor Yellow
-            return
-        }
-    }
-}
-
-# 3. 策略审查门禁 (Shift-Left Gate: 改动理由与生效机制)
-if (-not $NonInteractive -and -not $Yes) {
-    Write-Host "💡 [改动说明与生效机制]" -ForegroundColor Cyan
-    Write-Host "   - 核心意图: 禁用开机自启、关闭后台着色器预编译 (释放 CPU)、禁用游戏期间后台下载与 P2P 局域网传输" -ForegroundColor Gray
-    Write-Host "   - 规范体验: 规范下载速率单位为直观的标准字节/秒 (MB/s)，可选生成轻量 No-Browser 桌面快捷方式" -ForegroundColor Gray
-    $gateChoice = Read-Host "`n确认应用上述黄金基线配置? [Y] 确认应用 / [Q] 退出 (默认 Y)"
-    if ($gateChoice.Trim() -match '^(q|quit|n|no)$') {
-        Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
-        return
-    }
-}
-
-# ==============================================================================
-# 阶段 D: 二进制安装与提取 (-InstallOnly / 缺失时自动安装)
-# ==============================================================================
-if (-not $ConfigOnly) {
-    $needInstall = -not (Test-Path $steamExe)
-
-    if ($needInstall -or $InstallOnly) {
-        Write-Host "⬇️  正在准备安装 Steam 客户端至: $InstallDir..." -ForegroundColor Cyan
-
-        # 前置抹除注册表中历史安装路径残留，杜绝 NSIS 安装器内核逻辑强制回退覆盖命令行目标目录
-        Remove-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name "SteamPath", "SteamExe" -ErrorAction SilentlyContinue
-        Remove-ItemProperty -Path "HKLM:\SOFTWARE\Valve\Steam" -Name "InstallPath" -ErrorAction SilentlyContinue
-        Remove-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam" -Name "InstallPath" -ErrorAction SilentlyContinue
-
-        $tempInstaller = Join-Path $env:TEMP "SteamSetup_$(Get-Random).exe"
-        try {
-            $steamUrl = "https://cdn.cloudflare.steamstatic.com/client/installer/SteamSetup.exe"
-            Write-Host "   - 正在拉取官方安装器: $steamUrl..." -ForegroundColor Gray
-            Invoke-WebRequest -Uri $steamUrl -OutFile $tempInstaller
-
-            Write-Host "   - 正在执行静默安装至 $InstallDir..." -ForegroundColor Cyan
-            # Steam 官方安装器基于 NSIS: /S 静默模式, /D 指定安装目录 (严格恪守 /D 必须置于最后且绝对无引号传递契约)
-            $installProc = Start-Process -FilePath $tempInstaller -ArgumentList "/S /D=$InstallDir" -PassThru -Wait
-            if ($installProc.ExitCode -ne 0) {
-                Write-Warning "Steam 安装器返回退出码: $($installProc.ExitCode)，正在校验最终文件..."
-            }
-        }
-        finally {
-            if (Test-Path $tempInstaller) { Remove-Item $tempInstaller -Force -ErrorAction SilentlyContinue }
-        }
-
-        # 闭环验证物理落地状态并自适应自愈
-        $postReg = Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -ErrorAction SilentlyContinue
-        if ($postReg -and $postReg.SteamPath) {
-            $actualInstalled = $postReg.SteamPath -replace '/', '\'
-            if ($actualInstalled.TrimEnd('\') -ne $InstallDir.TrimEnd('\')) {
-                Write-Warning "⚠️ 检测到安装器根据系统组策略重定向至: $actualInstalled (期望: $InstallDir)"
-                $InstallDir = $actualInstalled
-                $steamExe = Join-Path $InstallDir "steam.exe"
-                $globalConfigFile = Join-Path $InstallDir "config\config.vdf"
-            }
-        }
-
-        if (-not (Test-Path $steamExe)) {
-            throw "Steam 安装失败，未能找到可执行文件: $steamExe"
-        }
-        Write-Host "✅ Steam 客户端本体安装就绪: $steamExe" -ForegroundColor Green
-    } else {
-        Write-Host "⏭️  [已就绪] 检测到 Steam 二进制本体 ($steamExe)，跳过重复安装。" -ForegroundColor Gray
-    }
-}
-
-if ($InstallOnly) {
-    return
-}
-
-# ==============================================================================
-# 阶段 E: 单向原子落盘与基线管控 (Apply)
-# ==============================================================================
-Write-Host "`n⚙️  正在执行 Steam 系统级基线与偏好配置..." -ForegroundColor Cyan
-
-# 运行状态兜底确认：确保 Steam 进程未常驻
-Get-Process -Name "steam" -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 400
-
-Write-Host "`n⚙️  [受控配置基线] 正在应用以下黄金策略:" -ForegroundColor Cyan
-Write-Host "   ▶ [开机启动] 彻底禁用开机自启 (释放工作站冷启动负载)" -ForegroundColor White
-Write-Host "   ▶ [网络优化] 禁用局域网对等传输 (PeerContentServerMode=0，防偷跑与组播污染)" -ForegroundColor White
-Write-Host "   ▶ [性能减负] 禁用后台着色器预编译 (bShaderCacheBGProcessingEnabled=0，杜绝闲置吃满CPU)" -ForegroundColor White
-Write-Host "   ▶ [网络保障] 游戏时禁止后台下载更新 (AllowDownloadsDuringGameplay=0，防高延迟丢包)" -ForegroundColor White
-Write-Host "   ▶ [下载偏好] 规范下载速率单位为直观的标准字节/秒 (MB/s)" -ForegroundColor White
-Write-Host "   ▶ [启动加速] 生成无浏览器模式快捷方式 (-no-browser，约 50MB 内存轻量拉起)`n" -ForegroundColor White
-
-# 1. 开机自启动项管控 (默认彻底阻断)
-$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-$currentRun = (Get-ItemProperty -Path $runKey -ErrorAction SilentlyContinue).Steam
-if ($currentRun) {
-    Remove-ItemProperty -Path $runKey -Name "Steam" -Force -ErrorAction SilentlyContinue
-    Write-Host "✅ [自启动] 已禁用 Steam 开机自启动注册表项 (释放冷启动系统资源)。" -ForegroundColor Green
-} else {
-    Write-Host "✅ [自启动] 状态合规：开机自启动此前已处于禁用状态。" -ForegroundColor Gray
-}
-
-# 2. 全局性能与网络配置对齐 (config\config.vdf)
-$configDir = Join-Path $InstallDir "config"
-if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
 
 $initialConfigTemplate = @"
 "InstallConfigStore"
@@ -459,96 +263,310 @@ $initialConfigTemplate = @"
 		{
 			"Steam"
 			{
-				"PeerContentServerMode"		"0"
-				"AllowDownloadsDuringGameplay"		"0"
-				"ShaderCache"
-				{
-					"bShaderCacheBGProcessingEnabled"		"0"
-				}
 			}
 		}
 	}
 }
 "@
+$globalRaw = if (Test-Path $ConfigFile) { Get-Content -Path $ConfigFile -Raw -Encoding utf8NoBOM } else { $initialConfigTemplate }
 
-$globalRaw = (Test-Path $globalConfigFile) ? (Get-Content -Path $globalConfigFile -Raw -Encoding utf8NoBOM) : $initialConfigTemplate
-$modifiedGlobal = $globalRaw
-
-# 2.1 PeerContentServerMode -> 0
-if ($modifiedGlobal -match '"PeerContentServerMode"\s+"([^"]+)"') {
-    $modifiedGlobal = $modifiedGlobal -replace '"PeerContentServerMode"\s+"[^"]+"', '"PeerContentServerMode"		"0"'
-} elseif ($modifiedGlobal -match '("Steam"\s*\{)') {
-    $modifiedGlobal = $modifiedGlobal -replace '("Steam"\s*\{)', "`$1`r`n				`"PeerContentServerMode`"		`"0`""
+function Get-VdfKeyVal([string]$text, [string]$key) {
+    if ($text -match "`"$key`"\s+`"(?<val>[^`"]+)`"") {
+        return $Matches.val
+    }
+    return "<缺省未设>"
 }
 
-# 2.2 AllowDownloadsDuringGameplay -> 0
-if ($modifiedGlobal -match '"AllowDownloadsDuringGameplay"\s+"([^"]+)"') {
-    $modifiedGlobal = $modifiedGlobal -replace '"AllowDownloadsDuringGameplay"\s+"[^"]+"', '"AllowDownloadsDuringGameplay"		"0"'
-} elseif ($modifiedGlobal -match '("Steam"\s*\{)') {
-    $modifiedGlobal = $modifiedGlobal -replace '("Steam"\s*\{)', "`$1`r`n				`"AllowDownloadsDuringGameplay`"		`"0`""
+$fwTcp = Get-NetFirewallRule -Name "Steam-Client-In-TCP" -ErrorAction SilentlyContinue
+$fwUdp = Get-NetFirewallRule -Name "Steam-Client-In-UDP" -ErrorAction SilentlyContinue
+$fwOk = ($null -ne $fwTcp -and $fwTcp.Profile -eq "Private" -and $null -ne $fwUdp -and $fwUdp.Profile -eq "Private")
+
+foreach ($spec in $ManagedSpecs) {
+    $actualStr = ""
+    $isMatch = $false
+
+    if ($spec.Type -eq "Binary") {
+        $actualStr = if ($isInstalled) { "已就绪" } else { "未安装" }
+        $isMatch = $isInstalled
+    } elseif ($spec.Type -eq "RunKey") {
+        $actualStr = if ($hasRunKey) { "已开启 (自启参数: $runVal)" } else { "已禁用" }
+        $isMatch = (-not $hasRunKey)
+    } elseif ($spec.Type -eq "Vdf") {
+        $actualStr = Get-VdfKeyVal $globalRaw $spec.Key
+        $isMatch = ($actualStr -eq $spec.Expected)
+    } elseif ($spec.Type -eq "Firewall") {
+        $actualStr = if ($fwOk) { "已配置 (仅限 Private)" } else { "未配置/暴露公网" }
+        $isMatch = $fwOk
+    }
+
+    $AuditBoard.Add([PSCustomObject]@{
+        分层模块 = $spec.Module
+        受控属性 = $spec.Property
+        期望基线 = $spec.Expected
+        实机状态 = $actualStr
+        状态判定 = if ($isMatch) { "✔ 匹配" } else { "✘ 偏离" }
+    })
+
+    if (-not $isMatch -and $Action -ne "Upgrade") {
+        $PendingItems.Add([PSCustomObject]@{
+            Property = $spec.Property
+            Actual   = $actualStr
+            Expected = $spec.Expected
+            Purpose  = $spec.Purpose
+            Impact   = $spec.Impact
+        })
+    }
 }
 
-# 2.3 ShaderCache.bShaderCacheBGProcessingEnabled -> 0
-if ($modifiedGlobal -match '"bShaderCacheBGProcessingEnabled"\s+"([^"]+)"') {
-    $modifiedGlobal = $modifiedGlobal -replace '"bShaderCacheBGProcessingEnabled"\s+"[^"]+"', '"bShaderCacheBGProcessingEnabled"		"0"'
-} elseif ($modifiedGlobal -match '("ShaderCache"\s*\{)') {
-    $modifiedGlobal = $modifiedGlobal -replace '("ShaderCache"\s*\{)', "`$1`r`n					`"bShaderCacheBGProcessingEnabled`"		`"0`""
-} elseif ($modifiedGlobal -match '("Steam"\s*\{)') {
-    $scBlock = "`r`n				`"ShaderCache`"`r`n				{`r`n					`"bShaderCacheBGProcessingEnabled`"		`"0`"`r`n				}"
-    $modifiedGlobal = $modifiedGlobal -replace '("Steam"\s*\{)', "`$1$scBlock"
-}
-
-if ($modifiedGlobal -ne $globalRaw -or (-not (Test-Path $globalConfigFile))) {
-    Set-Content -Path $globalConfigFile -Value $modifiedGlobal -Encoding utf8NoBOM
-    Write-Host "✅ [全局配置] 已回正 config.vdf 性能与网络策略 (局域网对传/着色器后台预编译已彻底禁用)。" -ForegroundColor Green
-} else {
-    Write-Host "✅ [全局配置] 全局性能策略与网络配置此前已处于黄金基线状态。" -ForegroundColor Gray
-}
-
-# 3. 用户偏好修复 (规范下载单位为 MB/s 字节显示)
-$userDataDir = Join-Path $InstallDir "userdata"
-if (Test-Path $userDataDir) {
-    $userDirs = Get-ChildItem -Path $userDataDir -Directory -ErrorAction SilentlyContinue
+# 账号偏好巡检 (各登录账号下载速率单位)
+if (Test-Path $UserDirBase) {
+    $userDirs = Get-ChildItem -Path $UserDirBase -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+$' }
     foreach ($u in $userDirs) {
-        $vdfPath = Join-Path $u.FullName "config\localconfig.vdf"
-        if (-not (Test-Path $vdfPath)) { continue }
+        $userVdf = Join-Path $u.FullName "config\localconfig.vdf"
+        if (-not (Test-Path $userVdf)) { continue }
+        $content = Get-Content -Path $userVdf -Raw -Encoding utf8NoBOM
+        $rateBit = ($content -match '"displayratesasbits"\s+"(?<v>[01])"') ? $Matches.v : "0"
+        $rateMatched = ($rateBit -eq "0")
 
-        $rawText = Get-Content -Path $vdfPath -Raw -Encoding utf8NoBOM
-        if ($rawText -match '"displayratesasbits"\s+"1"') {
-            $updated = $rawText -replace '"displayratesasbits"\s+"1"', '"displayratesasbits"		"0"'
-            Set-Content -Path $vdfPath -Value $updated -Encoding utf8NoBOM
-            Write-Host "✅ [账号 $($u.Name)] 下载单位已修正为标准字节/秒 (MB/s)。" -ForegroundColor Green
+        $AuditBoard.Add([PSCustomObject]@{
+            分层模块 = "账号偏好"
+            受控属性 = "下载速率单位 (账号 $($u.Name))"
+            期望基线 = "0 (字节/秒: MB/s)"
+            实机状态 = if ($rateBit -eq "1") { "1 (比特/秒: Mbps)" } else { "0 (字节/秒: MB/s)" }
+            状态判定 = if ($rateMatched) { "✔ 匹配" } else { "✘ 偏离" }
+        })
+
+        if (-not $rateMatched -and $Action -ne "Upgrade") {
+            $PendingItems.Add([PSCustomObject]@{
+                Property = "下载速率单位 (账号 $($u.Name))"
+                Actual   = "$rateBit (Mbps)"
+                Expected = "0 (MB/s)"
+                Purpose  = "规范下载速率采用直观的标准字节/秒单位"
+                Impact   = "在下载页面与悬浮窗以 MB/s 显示真实下载带宽"
+            })
         }
     }
 }
 
-# 4. 交付无浏览器模式快捷方式 (-no-browser)
-try {
-    $wsh = New-Object -ComObject WScript.Shell
-    $sc = $wsh.CreateShortcut($desktopNoBrowserLnk)
-    $sc.TargetPath = $steamExe
-    $sc.Arguments = "-no-browser +open steam://open/minigameslist"
-    $sc.IconLocation = "$steamExe,0"
-    $sc.Description = "Steam (No-Browser Mode)"
-    $sc.Save()
-    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh) | Out-Null
-    Write-Host "✅ [桌面交付] 已在桌面生成 Steam (No-Browser) 快捷方式。" -ForegroundColor Green
-} catch {
-    Write-Warning "创建 No-Browser 快捷方式时出现警告: $_"
+Write-Host "`n📊 [巡检看板] Steam 原子受控属性审计清单:" -ForegroundColor Cyan
+$AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
+
+$driftCount = $PendingItems.Count
+if ($Action -eq "Check") {
+    if ($driftCount -eq 0) {
+        Write-Host "✨ [状态合规] 所有受控属性与黄金基线完全一致，无需调整。`n" -ForegroundColor Green
+    } else {
+        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $driftCount) -ForegroundColor Yellow
+    }
+    return
+}
+
+if ($driftCount -eq 0 -and $isInstalled -and $Action -ne "Upgrade") {
+    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+    return
 }
 
 # ==============================================================================
-# 阶段 F: 尾部结报与手动引导清单 (Report)
+# 5. 阶段 2: 审查门禁与并发安全 (Gate - Shift-Left: 目的与影响结构化直出)
 # ==============================================================================
-Write-Host "`n==================================================" -ForegroundColor Green
-Write-Host "  ✅ Steam 客户端基线加固与无浏览器模式配置完成！" -ForegroundColor Green
-Write-Host "==================================================" -ForegroundColor Green
-Write-Host "   - 自启动项: 开机自启已被禁用，释放工作站冷启动负载" -ForegroundColor Gray
-Write-Host "   - 全局网络: 禁用局域网对传与游戏中下载，杜绝偷跑与抢占带宽" -ForegroundColor Gray
-Write-Host "   - 性能负载: 彻底关闭着色器后台预编译，杜绝闲置吃满 CPU 发热" -ForegroundColor Gray
-Write-Host "   - 桌面集成: 桌面快捷方式 [-no-browser]，提供约 50MB 内存的轻量启动入口" -ForegroundColor Gray
 
-Write-Host "`n--------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "📋 [手动收尾引导清单 (Manual Checklist)]" -ForegroundColor Cyan
-Write-Host " 1. 启动分流: 运行已装游戏建议双击桌面【Steam (No-Browser)】(无 CEF 进程低内存)；逛商店/社区启动常规【Steam】" -ForegroundColor Gray
-Write-Host "--------------------------------------------------`n" -ForegroundColor DarkGray
+# 5.1 运行态并发防覆写硬门禁
+$runningProc = Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
+if ($runningProc) {
+    if (-not $Yes) {
+        Write-Warning "检测到 Steam 当前正在运行！外部修改会被退出时的内存状态覆写。"
+        $kill = (Read-Host "是否由脚本安全终止 Steam 进程以继续配置? [Y/n]").Trim()
+        if ($kill -match "^(n|no)$") {
+            Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
+            return
+        }
+    }
+    $runningProc | Stop-Process -Force
+    Start-Sleep -Milliseconds 800
+}
+
+# 5.2 未安装审查门禁
+if (-not $isInstalled) {
+    if ($Action -eq "ResetConfig") {
+        throw "未检测到 Steam 客户端安装！请先执行 -Action Sync 安装本体后再重置配置。"
+    }
+
+    if (-not $Yes) {
+        $shouldInstall = (Read-Host "未检测到 Steam 客户端本体，是否立即拉取官方安装器进行部署？[Y/n]").Trim()
+        if ($shouldInstall -match "^(n|no)$") {
+            Write-Host "[-] 操作已由用户取消，安全退出。`n" -ForegroundColor DarkGray
+            return
+        }
+    }
+}
+
+# 5.3 策略审查门禁 (Shift-Left Gate: 目的与影响结构化逐项直出)
+if (-not $Yes) {
+    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
+    $idx = 1
+    foreach ($p in $PendingItems) {
+        Write-Host ("`n   [{0}] {1}" -f $idx, $p.Property) -ForegroundColor Yellow
+        Write-Host ("       - 当前实机值: {0}  ==>  期望基线值: {1}" -f $p.Actual, $p.Expected) -ForegroundColor DarkGray
+        Write-Host ("       - [目的] {0}" -f $p.Purpose) -ForegroundColor White
+        Write-Host ("       - [影响] {0}" -f $p.Impact) -ForegroundColor Gray
+        $idx++
+    }
+
+    $gateChoice = (Read-Host "`n确认应用上述黄金基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
+    if ($gateChoice -match '^(q|quit|n|no)$') {
+        Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
+        return
+    }
+}
+
+# ==============================================================================
+# 6. 阶段 3: 单向原子落盘 (Apply)
+# ==============================================================================
+
+# 6.1 程序本体安装或覆盖升级
+if (-not $isInstalled -or $Action -eq "Upgrade") {
+    Write-Host "`n⬇️  正在准备通过官方安装器部署 Steam 至: $InstallDir..." -ForegroundColor Cyan
+
+    @(
+        "HKCU:\Software\Valve\Steam",
+        "HKLM:\SOFTWARE\Valve\Steam",
+        "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam"
+    ) | ForEach-Object {
+        if (Test-Path $_) {
+            Remove-ItemProperty -Path $_ -Name "InstallPath" -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $_ -Name "SteamPath" -ErrorAction SilentlyContinue
+        }
+    }
+
+    Ensure-Dir $InstallDir
+    $installerPath = Join-Path $env:TEMP "SteamSetup.exe"
+    $steamUrl = "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe"
+
+    Write-Host "   - 正在下载 Steam 官方安装程序..." -ForegroundColor Gray
+    Invoke-WebRequest -Uri $steamUrl -OutFile $installerPath -UseBasicParsing
+
+    Write-Host "   - 正在静默释放 Steam 客户端核心..." -ForegroundColor Gray
+    $cleanDir = $InstallDir.TrimEnd('\')
+    $process = Start-Process -FilePath $installerPath -ArgumentList "/S /D=$cleanDir" -Wait -PassThru
+
+    Start-Sleep -Seconds 3
+    if (Test-Path $installerPath) { Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue }
+
+    $actualExe = Join-Path $InstallDir "steam.exe"
+    if (Test-Path $actualExe) {
+        $AppExe = $actualExe
+        $isInstalled = $true
+        Write-Host "✅ Steam 客户端已成功部署至基准目录: $InstallDir" -ForegroundColor Green
+    } else {
+        $fallback = "${env:ProgramFiles(x86)}\Steam\steam.exe"
+        if (Test-Path $fallback) {
+            $InstallDir = "${env:ProgramFiles(x86)}\Steam"
+            $AppExe = $fallback
+            $isInstalled = $true
+            Write-Host "⚠️  Steam 安装器重定向至: $InstallDir" -ForegroundColor Yellow
+        } else {
+            throw "Steam 静默安装失败，未能定位到 steam.exe。"
+        }
+    }
+
+    if ($Action -eq "Upgrade") {
+        Write-Host "`n✅ [升级完成] Steam 客户端本体已完成更新。`n" -ForegroundColor Green
+        return
+    }
+}
+
+# 6.2 禁用开机自启
+Write-Host "`n⚙️  正在执行开机自启动抑制..." -ForegroundColor Cyan
+$runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+if ((Get-ItemProperty -Path $runKey -ErrorAction SilentlyContinue).Steam) {
+    Remove-ItemProperty -Path $runKey -Name "Steam" -Force -ErrorAction SilentlyContinue
+    Write-Host "✅ 已从 HKCU Run 注册表中移除 Steam 自启项。" -ForegroundColor Green
+}
+
+# 6.3 注入全局 config.vdf 性能策略
+Write-Host "⚙️  正在单向对齐全局 config.vdf 性能配置..." -ForegroundColor Cyan
+Ensure-Dir (Split-Path $ConfigFile -Parent)
+
+function Set-VdfBlockKey([string]$text, [string]$key, [string]$val) {
+    if ($text -match "`"$key`"\s+`"[^`"]*`"") {
+        return ($text -replace "`"$key`"\s+`"[^`"]*`"", "`"$key`"`t`t`"$val`"")
+    } else {
+        if ($text -match '(?ms)(^\s*"Steam"\s*\{)(.*?)(\n\s*\})') {
+            $inner = $Matches[2].TrimEnd()
+            $newInner = if ($inner) { "$inner`r`n`t`t`t`"$key`"`t`t`"$val`"" } else { "`r`n`t`t`t`"$key`"`t`t`"$val`"" }
+            return $text -replace '(?ms)(^\s*"Steam"\s*\{)(.*?)(\n\s*\})', "`$1$newInner`r`n`t`t}"
+        }
+    }
+    return $text
+}
+
+$vdfItems = @(
+    @{ Key = "PeerContentServerMode"; Val = "0" },
+    @{ Key = "bShaderCacheBGProcessingEnabled"; Val = "0" },
+    @{ Key = "AllowDownloadsDuringGameplay"; Val = "0" }
+)
+
+$updatedGlobal = $globalRaw
+foreach ($vc in $vdfItems) {
+    $updatedGlobal = Set-VdfBlockKey -text $updatedGlobal -key $vc.Key -val $vc.Val
+}
+[System.IO.File]::WriteAllText($ConfigFile, $updatedGlobal, [System.Text.UTF8Encoding]::new($false))
+Write-Host "✅ 全局 config.vdf 性能策略已原子落盘至: $ConfigFile" -ForegroundColor Green
+
+# 6.4 规范各账号下载速率单位
+if (Test-Path $UserDirBase) {
+    $userDirs = Get-ChildItem -Path $UserDirBase -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d+$' }
+    foreach ($u in $userDirs) {
+        $userVdf = Join-Path $u.FullName "config\localconfig.vdf"
+        if (-not (Test-Path $userVdf)) { continue }
+        $c = Get-Content -Path $userVdf -Raw -Encoding utf8NoBOM
+        if ($c -match '"displayratesasbits"\s+"[01]"') {
+            $c = $c -replace '"displayratesasbits"\s+"[01]"', '"displayratesasbits"`t`t"0"'
+            [System.IO.File]::WriteAllText($userVdf, $c, [System.Text.UTF8Encoding]::new($false))
+            Write-Host "✅ 账号 [$($u.Name)] 速率单位已规范为 MB/s (字节/秒)" -ForegroundColor Green
+        }
+    }
+}
+
+# 6.5 静默下发专用网络防火墙入站白名单 (仅限 Private，封死 Public)
+Write-Host "⚙️  正在预置专用网络防火墙规则 (防启动弹窗)..." -ForegroundColor Cyan
+$webHelperExe = Join-Path $InstallDir "bin\cef\cef.win7x64\steamwebhelper.exe"
+if (-not (Test-Path $webHelperExe)) {
+    $webHelperExe = Join-Path $InstallDir "bin\steamwebhelper.exe"
+}
+
+$rules = @(
+    @{ Name = "Steam-Client-In-TCP"; Program = $AppExe; Protocol = "TCP" },
+    @{ Name = "Steam-Client-In-UDP"; Program = $AppExe; Protocol = "UDP" }
+)
+if (Test-Path $webHelperExe) {
+    $rules += @(
+        @{ Name = "Steam-WebHelper-In-TCP"; Program = $webHelperExe; Protocol = "TCP" },
+        @{ Name = "Steam-WebHelper-In-UDP"; Program = $webHelperExe; Protocol = "UDP" }
+    )
+}
+
+foreach ($r in $rules) {
+    $existing = Get-NetFirewallRule -Name $r.Name -ErrorAction SilentlyContinue
+    if (-not $existing) {
+        New-NetFirewallRule -Name $r.Name -DisplayName "Steam Game Platform ($($r.Protocol))" `
+            -Direction Inbound -Program $r.Program -Protocol $r.Protocol -Action Allow `
+            -Profile Private -Enabled True -ErrorAction SilentlyContinue | Out-Null
+    } else {
+        Set-NetFirewallRule -Name $r.Name -Profile Private -Enabled True -ErrorAction SilentlyContinue | Out-Null
+    }
+}
+Write-Host "✅ 防火墙入站规则已加固 (仅放行 Private 专用网络，彻底阻断 Public 公共网络)。" -ForegroundColor Green
+
+# ==============================================================================
+# 7. 阶段 4: 尾部简报与动态真待办 (Report)
+# ==============================================================================
+Write-Host "`n====================================================================" -ForegroundColor Green
+Write-Host "  ✅ [$AppName] 基线与系统管控对齐完成！" -ForegroundColor Green
+Write-Host "====================================================================" -ForegroundColor Green
+Write-Host "   - 开机管理: 已从注册表彻底拔除 Steam 常驻自启" -ForegroundColor Gray
+Write-Host "   - 性能基线: 已禁用后台着色器预编译 (保 CPU)、禁用局域网 P2P 上传与游戏期间下载" -ForegroundColor Gray
+Write-Host "   - 网络安全: 防火墙已预置专用网络白名单，首次启动零弹窗" -ForegroundColor Gray
+
+return
