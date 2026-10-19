@@ -16,14 +16,18 @@
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
-    - Sync        : 增量补齐缺失的基础运行库 (默认)
-    - Check       : 只查不改体检巡检 (零写入)
-    - ResetConfig : 验证底层共享运行时状态 (运行库无私有配置)
-    - Uninstall   : 运行库安全保护阻断 (底层共享依赖禁止自动化粉碎)
-    - Upgrade     : 调用包管理器升级运行库至最新版本
+    - Sync      : 增量补齐缺失的基础运行库 (默认，缺失则装)
+    - Check     : 只查不改体检巡检 (零写入)
+    - Uninstall : 运行库安全保护阻断 (底层共享依赖禁止自动化粉碎)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
+
+.PARAMETER Force
+    配合 Sync 使用，强制重新调用包管理器安装/更新最新版本运行库。
+
+.PARAMETER Purge
+    预留参数契约 (运行库属于共享依赖，不触碰数据)。
 
 .EXAMPLE
     # 只查不改体检巡检
@@ -34,14 +38,19 @@
 
     # 无交互一键全量对齐
     pwsh -File .\scripts\apps\runtimes.ps1 -Yes
+
+    # 强制重新拉取/升级全部运行库
+    pwsh -File .\scripts\apps\runtimes.ps1 -Force
 #>
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [ValidateSet("Sync", "Check", "Uninstall")]
     [string]$Action = "Sync",
 
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
@@ -178,7 +187,7 @@ foreach ($key in $inv.Keys) {
         状态判定 = if ($item.Installed) { "✔ 匹配" } else { "✘ 缺失" }
     })
 
-    if (-not $item.Installed -or $Action -eq "Upgrade") {
+    if (-not $item.Installed -or $Force) {
         $DiffList.Add([PSCustomObject]@{
             Key       = $key
             Name      = $item.Name
@@ -194,8 +203,8 @@ foreach ($key in $inv.Keys) {
 Write-Host "`n📊 [巡检看板] 系统底层运行库基线审计清单:" -ForegroundColor Cyan
 $AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
 
-# 检查模式或纯配置重置模式立即安全退出
-if ($Action -eq "Check" -or $Action -eq "ResetConfig") {
+# 检查模式立即安全退出
+if ($Action -eq "Check") {
     $missingCount = ($DiffList | Where-Object { -not $_.Installed }).Count
     if ($missingCount -eq 0) {
         Write-Host "✨ [状态合规] 三大核心运行库均已完整就绪，无需补齐。`n" -ForegroundColor Green
@@ -206,7 +215,7 @@ if ($Action -eq "Check" -or $Action -eq "ResetConfig") {
 }
 
 $missingItems = @($DiffList | Where-Object { -not $_.Installed })
-if ($missingItems.Count -eq 0 -and $Action -ne "Upgrade") {
+if ($missingItems.Count -eq 0 -and -not $Force) {
     Write-Host "✨ [状态合规] 三大核心运行库均已在机就绪，无需安装补齐。`n" -ForegroundColor Green
     return
 }
@@ -214,7 +223,7 @@ if ($missingItems.Count -eq 0 -and $Action -ne "Upgrade") {
 # ==============================================================================
 # 5. 阶段 2: 审查门禁 (Gate - Shift-Left: 目的与影响结构化直出)
 # ==============================================================================
-$targetItems = if ($Action -eq "Upgrade") { $DiffList } else { $missingItems }
+$targetItems = if ($Force) { $DiffList } else { $missingItems }
 
 if (-not $Yes) {
     Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
@@ -222,7 +231,7 @@ if (-not $Yes) {
     $idx = 1
     foreach ($m in $targetItems) {
         Write-Host ("`n   [{0}] {1} [{2}]" -f $idx, $m.Name, $m.WingetId) -ForegroundColor Yellow
-        Write-Host ("       - 当前实机值: {0}  ==>  期望基线值: 已安装" -f (if ($m.Installed) { "已安装 ($($m.Version))" } else { "未安装" })) -ForegroundColor DarkGray
+        Write-Host ("       - 当前实机值: {0}  ==>  期望基线值: 已安装" -f ($m.Installed ? "已安装 ($($m.Version))" : "未安装")) -ForegroundColor DarkGray
         Write-Host ("       - [目的] {0}" -f $m.Purpose) -ForegroundColor White
         Write-Host ("       - [影响] {0}" -f $m.Impact) -ForegroundColor Gray
         $idx++
@@ -250,21 +259,22 @@ $wingetArgsBase = @(
 )
 
 foreach ($m in $targetItems) {
-    Write-Host -NoNewline ("🚀 正在对齐运行库: {0} ... " -f $m.Name)
-    $args = @("install", "--id", $m.WingetId) + $wingetArgsBase
-    if ($Action -eq "Upgrade") {
-        $args = @("upgrade", "--id", $m.WingetId) + $wingetArgsBase
+    Write-Host "`n🚀 正在对齐运行库: $($m.Name)..." -ForegroundColor Cyan
+    $args = if ($Force -and $m.Installed) {
+        @("upgrade", "--id", $m.WingetId) + $wingetArgsBase
+    } else {
+        @("install", "--id", $m.WingetId) + $wingetArgsBase
     }
 
     try {
-        $proc = Start-Process -FilePath "winget.exe" -ArgumentList $args -NoNewWindow -Wait -PassThru
-        if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010 -or $proc.ExitCode -eq -1978335189) {
-            Write-Host -ForegroundColor Green "[OK]"
+        & winget.exe @args
+        if ($LASTEXITCODE -eq 0 -or $LASTEXITCODE -eq 3010 -or $LASTEXITCODE -eq -1978335189) {
+            Write-Host "   ✔ $($m.Name) 对齐成功" -ForegroundColor Green
         } else {
-            Write-Host -ForegroundColor Red "[FAIL] (ExitCode: $($proc.ExitCode))"
+            Write-Host "   ✘ $($m.Name) 对齐失败 (ExitCode: $LASTEXITCODE)" -ForegroundColor Red
         }
     } catch {
-        Write-Host -ForegroundColor Red "[ERROR: $($_.Exception.Message)]"
+        Write-Host "   ✘ $($m.Name) 执行异常: $($_.Exception.Message)" -ForegroundColor Red
     }
 }
 

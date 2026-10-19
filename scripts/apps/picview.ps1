@@ -8,39 +8,49 @@
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 基于 Scoop 纳管的二进制本体 (D:\prog\scoop\apps\picview\current\PicView.exe)。
     3. 系统级图像关联与默认应用点亮：向注册表写入 ProgID (PicView.Image)、Capabilities 与 RegisteredApplications，在 Win11 设置中点亮 PicView，并注册 13 种主流图片格式。
-    4. 现代化看图体验黄金基线：注入 Config\UserSettings.json，固化简体中文界面、单窗口复用防多开霸屏、ESC 直接退出、循环看图与超大图自适应窗口。
+    4. 现代化看图体验基线：注入 Config\UserSettings.json，固化简体中文界面、单窗口复用防多开霸屏、ESC 直接退出、循环看图与超大图自适应窗口。
+    5. 终端矩阵呈现与决策交互统一委派内部辅助算子 _console.ps1 闭环承接。
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
-    - Sync        : 增量对齐黄金基线 (默认，缺失则装、偏离则修)
-    - Check       : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
-    - ResetConfig : 仅执行系统图像关联注册与 UserSettings.json 黄金基线注入
-    - Uninstall   : 彻底清洁卸载与注销系统图片关联，抹除软件与配置
-    - Upgrade     : 覆盖升级客户端本体 (调用 Scoop update)
+    - Sync      : 增量对齐工程基线 (默认，缺失则装、偏离则修)
+    - Check     : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
+    - Uninstall : 清洁卸载与注销系统图片关联 (默认保留用户持久化配置)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
+
+.PARAMETER Force
+    配合 Sync 使用，强制调用 Scoop 重新安装/更新本体并全量重写配置。
+
+.PARAMETER Purge
+    配合 Uninstall 使用，连带深度物理粉碎配置与持久化目录 (包含 persist)。
 
 .EXAMPLE
     # 只查不改体检巡检
     pwsh -File .\scripts\apps\picview.ps1 -Action Check
 
-    # 交互式检查并应用黄金基线
+    # 交互式检查并应用工程基线
     pwsh -File .\scripts\apps\picview.ps1
 
-    # 仅修复系统图像关联与体验基线配置
-    pwsh -File .\scripts\apps\picview.ps1 -Action ResetConfig
+    # 强制重新部署覆盖本体并对齐基线
+    pwsh -File .\scripts\apps\picview.ps1 -Force
 
-    # 彻底清洁卸载
+    # 安全清洁卸载 (保留配置)
     pwsh -File .\scripts\apps\picview.ps1 -Action Uninstall
+
+    # 深度粉碎卸载 (全抹除)
+    pwsh -File .\scripts\apps\picview.ps1 -Action Uninstall -Purge
 #>
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [ValidateSet("Sync", "Check", "Uninstall")]
     [string]$Action = "Sync",
 
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,6 +75,11 @@ if (-not $consoleUser) { $consoleUser = $currentUser }
 
 if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
     throw "【跨账号提权阻断】检测到终端运行身份 [$currentUser] 与当前桌面登录用户 [$consoleUser] 不一致！为防配置污染，请直接在桌面登录用户会话中以管理员身份运行。"
+}
+
+$console = Join-Path $PSScriptRoot "_console.ps1"
+if (-not (Test-Path $console)) {
+    throw "未在应用域定位到核心终端交互组件: _console.ps1，请确保仓库完整性！"
 }
 
 # ==============================================================================
@@ -100,124 +115,47 @@ function Ensure-Dir {
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
 }
 
-# 受控属性全景声明清单 (含 Purpose 目的 与 Impact 影响)
-$ManagedSpecs = @(
-    @{
-        Module   = "客户端本体"
-        Property = "主执行文件 (PicView.exe)"
-        Expected = "已安装于 Scoop 环境"
-        Purpose  = "部署极简快速看图工具本体，支持超大图快速解包与丰富图像格式渲染"
-        Impact   = "若未就绪将自动调用 Scoop 从 extras bucket 安装"
-        Type     = "Binary"
-    },
-    @{
-        Module   = "系统集成"
-        Property = "全功能看图器注册 (Capabilities)"
-        Expected = "已注册 (RegisteredApplications + ProgID)"
-        Purpose  = "在注册表中注入 PicView.Image 与 Capabilities，支持 13 种主流图片格式关联"
-        Impact   = "在 Windows 11 设置「默认应用」中点亮 PicView，允许一键设为默认图片查看器"
-        Type     = "Integration"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "UIProperties.UserLanguage"
-        Property = "界面语言 (UIProperties.UserLanguage)"
-        Expected = "zh-CN"
-        Purpose  = "固化简体中文界面"
-        Impact   = "界面所有按钮、提示与菜单以中文呈现"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "UIProperties.OpenInSameWindow"
-        Property = "单窗口复用 (UIProperties.OpenInSameWindow)"
-        Expected = "True"
-        Purpose  = "连续点击多张图片时在同一窗口中快速复用切换"
-        Impact   = "杜绝连续双击多张图片导致桌面弹出数十个窗口霸屏卡顿"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "UIProperties.ShowConfirmationOnEsc"
-        Property = "ESC 免确认退出 (UIProperties.ShowConfirmationOnEsc)"
-        Expected = "False"
-        Purpose  = "按 ESC 键直接关闭看图窗口"
-        Impact   = "退出时不再弹出「确认退出」询问对话框，提升看图流转效率"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "UIProperties.ShowFullPathInTitleBar"
-        Property = "标题栏显示完整路径 (UIProperties.ShowFullPathInTitleBar)"
-        Expected = "True"
-        Purpose  = "窗口标题栏直观呈现图片所在绝对磁盘路径"
-        Impact   = "方便快速定位文件所在目录"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "UIProperties.Looping"
-        Property = "循环看图 (UIProperties.Looping)"
-        Expected = "True"
-        Purpose  = "翻页至当前目录最后一张图片时自动循环回第一张"
-        Impact   = "看图翻页不中断"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "StartUp.OpenLastFile"
-        Property = "启动时不自动打开上次文件 (StartUp.OpenLastFile)"
-        Expected = "False"
-        Purpose  = "每次冷启动或双击新图片时仅聚焦当前目标"
-        Impact   = "避免打开查看器时闪现上次关闭时的历史图片"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "ImageScaling.ZoomToFit"
-        Property = "超大图自适应窗口 (ImageScaling.ZoomToFit)"
-        Expected = "True"
-        Purpose  = "超过屏幕分辨率的超大高像素图片自动等比例缩放适应窗口"
-        Impact   = "消除打开高分辨率相机原图时超出屏幕边界需拖动滚动条的问题"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "WindowProperties.KeepCentered"
-        Property = "窗口居中呈现 (WindowProperties.KeepCentered)"
-        Expected = "True"
-        Purpose  = "窗口每次打开始终保持屏幕居中呈现"
-        Impact   = "窗口位置稳定一致，不出现边缘偏移"
-        Type     = "Config"
-    },
-    @{
-        Module   = "偏好配置"
-        Path     = "Navigation.IsFileWatcherEnabled"
-        Property = "文件变动智能监视 (Navigation.IsFileWatcherEnabled)"
-        Expected = "True"
-        Purpose  = "当前目录下有新图片保存或删除时实时刷新图库"
-        Impact   = "动态更新翻页队列，无需手动按 F5 刷新"
-        Type     = "Config"
+function Ensure-ScoopBucket {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BucketName,
+        [string]$BucketRepo = ""
+    )
+    $bucketDir = Join-Path $scoopRoot "buckets\$BucketName"
+    if (Test-Path $bucketDir) { return }
+
+    $installedBuckets = @(& scoop bucket list 2>$null 3>$null | ForEach-Object {
+        if ($_.Name) { $_.Name } else { ($_ -split '\s+')[0] }
+    })
+    if ($installedBuckets -contains $BucketName) { return }
+
+    Write-Host "📦 正在添加 Scoop '$BucketName' bucket..." -ForegroundColor Cyan
+    if ($BucketRepo) {
+        & scoop bucket add $BucketName $BucketRepo
+    } else {
+        & scoop bucket add $BucketName
     }
-)
+}
+
+function Get-JsonValueByPath($obj, [string]$propPath) {
+    if ($null -eq $obj) { return $null }
+    $parts = $propPath.Split('.')
+    $curr = $obj
+    foreach ($p in $parts) {
+        if ($null -eq $curr -or -not ($curr.PSObject.Properties.Match($p).Count)) {
+            return $null
+        }
+        $curr = $curr.$p
+    }
+    return "$curr"
+}
 
 # ==============================================================================
-# 3. 独立流转分支：彻底清洁卸载 (-Action Uninstall)
+# 3. 独立流转分支：清洁卸载 (-Action Uninstall)
 # ==============================================================================
 if ($Action -eq "Uninstall") {
-    if (-not $Yes) {
-        Write-Host "`n⚠️  [清洁卸载警示] 即将注销系统图片关联并彻底清理 PicView 查看器！" -ForegroundColor Yellow
-        Write-Host "📌 【即将被物理抹除的高价值用户数据清单】:" -ForegroundColor Cyan
-        foreach ($d in $HighValueUserData) {
-            Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
-        }
-        Write-Host "👉 执行清洁卸载将彻底清理配置目录。若需保留客制配置，请先手动备份。`n" -ForegroundColor Yellow
-
-        $confirm = (Read-Host "确认注销系统图片关联并彻底清理 PicView 及其配置? [y/N]").Trim()
-        if ($confirm -notmatch '^(y|yes)$') {
-            Write-Host "[-] 用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
-            return
-        }
+    if (-not (& $console -Task ConfirmUninstall -AppName $AppName -UserDataList $HighValueUserData -Yes:$Yes -Purge:$Purge)) {
+        return
     }
 
     Write-Host "`n🧹 [清洁卸载模式] 正在清理 PicView 系统关联与配置..." -ForegroundColor Yellow
@@ -251,32 +189,42 @@ if ($Action -eq "Uninstall") {
         if (Test-Path $_) { Remove-Item -Path $_ -Force -ErrorAction SilentlyContinue }
     }
 
-    if (Test-Path $ConfDir) { Remove-Item -Path $ConfDir -Recurse -Force -ErrorAction SilentlyContinue }
-    if (Test-Path $PersistDir) { Remove-Item -Path $PersistDir -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($Purge) {
+        if (Test-Path $ConfDir) { Remove-Item -Path $ConfDir -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $PersistDir) { Remove-Item -Path $PersistDir -Recurse -Force -ErrorAction SilentlyContinue }
+        Write-Host "   - [已粉碎] 用户持久化配置与缓存数据。" -ForegroundColor Red
+    } else {
+        if (Test-Path $PersistDir) {
+            Write-Host "   - [数据安全保护] 用户配置已安全保留在: $PersistDir" -ForegroundColor Green
+        }
+    }
 
     if (Get-Command "scoop" -ErrorAction SilentlyContinue) {
         if (Test-Path (Join-Path $scoopRoot "apps\picview")) {
-            & scoop uninstall -p picview
+            if ($Purge) {
+                & scoop uninstall -p picview
+            } else {
+                & scoop uninstall picview
+            }
         }
     }
     if (Test-Path $InstallDir) {
         Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "`n✅ [清洁卸载完成] PicView 系统注册与本体已彻底清除。`n" -ForegroundColor Green
+    Write-Host "`n✅ [清洁卸载完成] PicView 系统注册与本体已清除。`n" -ForegroundColor Green
     return
 }
 
 # ==============================================================================
-# 4. 阶段 1: 全量只读嗅探与差异呈现 (Plan & Diff)
+# 4. 阶段 1: 全量只读嗅探与受控属性比对 (Plan & Diff)
 # ==============================================================================
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+
 Write-Host "`n====================================================================" -ForegroundColor Cyan
 Write-Host "  应用生命周期管理与基线巡检: $AppName (pwsh 7+)" -ForegroundColor Cyan
 Write-Host ("  操作意图: {0} | 授权放行: {1} | 部署路径: {2}" -f $Action, ($Yes ? "自动放行 (-Yes)" : "交互审查"), $InstallDir) -ForegroundColor DarkGray
 Write-Host "====================================================================" -ForegroundColor Cyan
-
-$AuditBoard = [System.Collections.Generic.List[PSCustomObject]]::new()
-$PendingItems = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 $isInstalled = Test-Path $AppExe
 $regApp = (Get-ItemProperty "HKLM:\SOFTWARE\RegisteredApplications" -Name "PicView" -ErrorAction SilentlyContinue).PicView
@@ -294,72 +242,124 @@ if (Test-Path $ConfigFile) {
     } catch { }
 }
 
-function Get-JsonValueByPath($obj, [string]$propPath) {
-    if ($null -eq $obj) { return $null }
-    $parts = $propPath.Split('.')
-    $curr = $obj
-    foreach ($p in $parts) {
-        if ($null -eq $curr -or -not ($curr.PSObject.Properties.Match($p).Count)) {
-            return $null
-        }
-        $curr = $curr.$p
+$Specs = @(
+    @{
+        Module   = "客户端本体"
+        Property = "主执行文件 (PicView.exe)"
+        Expected = "已安装于 Scoop 环境"
+        Actual   = if ($isInstalled) { "已安装于 Scoop 环境" } else { "未安装" }
+        IsMatch  = $isInstalled
+        Purpose  = "部署极简快速看图工具本体，支持超大图快速解包与丰富图像格式渲染"
+        Impact   = "若未就绪将自动调用 Scoop 从 extras bucket 安装"
+        Type     = "Binary"
+    },
+    @{
+        Module   = "系统集成"
+        Property = "全功能看图器注册 (Capabilities)"
+        Expected = "已注册 (RegisteredApplications + ProgID)"
+        Actual   = if ($isRegistered) { "已注册 (RegisteredApplications + ProgID)" } else { "未完整注册" }
+        IsMatch  = $isRegistered
+        Purpose  = "在注册表中注入 PicView.Image 与 Capabilities，支持 13 种主流图片格式关联"
+        Impact   = "在 Windows 11 设置「默认应用」中点亮 PicView，允许一键设为默认图片查看器"
+        Type     = "Integration"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "界面语言 (UIProperties.UserLanguage)"
+        Expected = "zh-CN"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "UIProperties.UserLanguage"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "UIProperties.UserLanguage") -eq "zh-CN")
+        Purpose  = "固化简体中文界面"
+        Impact   = "界面所有按钮、提示与菜单以中文呈现"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "单窗口复用 (UIProperties.OpenInSameWindow)"
+        Expected = "True"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "UIProperties.OpenInSameWindow"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "UIProperties.OpenInSameWindow") -eq "True")
+        Purpose  = "连续点击多张图片时在同一窗口中快速复用切换"
+        Impact   = "杜绝连续双击多张图片导致桌面弹出数十个窗口霸屏卡顿"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "ESC 免确认退出 (UIProperties.ShowConfirmationOnEsc)"
+        Expected = "False"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "UIProperties.ShowConfirmationOnEsc"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "UIProperties.ShowConfirmationOnEsc") -eq "False")
+        Purpose  = "按 ESC 键直接关闭看图窗口"
+        Impact   = "退出时不再弹出「确认退出」询问对话框，提升看图流转效率"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "标题栏显示完整路径 (UIProperties.ShowFullPathInTitleBar)"
+        Expected = "True"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "UIProperties.ShowFullPathInTitleBar"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "UIProperties.ShowFullPathInTitleBar") -eq "True")
+        Purpose  = "窗口标题栏直观呈现图片所在绝对磁盘路径"
+        Impact   = "方便快速定位文件所在目录"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "循环看图 (UIProperties.Looping)"
+        Expected = "True"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "UIProperties.Looping"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "UIProperties.Looping") -eq "True")
+        Purpose  = "翻页至当前目录最后一张图片时自动循环回第一张"
+        Impact   = "看图翻页不中断"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "启动时不自动打开上次文件 (StartUp.OpenLastFile)"
+        Expected = "False"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "StartUp.OpenLastFile"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "StartUp.OpenLastFile") -eq "False")
+        Purpose  = "每次冷启动或双击新图片时仅聚焦当前目标"
+        Impact   = "避免打开查看器时闪现上次关闭时的历史图片"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "超大图自适应窗口 (ImageScaling.ZoomToFit)"
+        Expected = "True"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "ImageScaling.ZoomToFit"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "ImageScaling.ZoomToFit") -eq "True")
+        Purpose  = "超过屏幕分辨率的超大高像素图片自动等比例缩放适应窗口"
+        Impact   = "消除打开高分辨率相机原图时超出屏幕边界需拖动滚动条的问题"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "窗口居中呈现 (WindowProperties.KeepCentered)"
+        Expected = "True"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "WindowProperties.KeepCentered"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "WindowProperties.KeepCentered") -eq "True")
+        Purpose  = "窗口每次打开始终保持屏幕居中呈现"
+        Impact   = "窗口位置稳定一致，不出现边缘偏移"
+        Type     = "Config"
+    },
+    @{
+        Module   = "偏好配置"
+        Property = "文件变动智能监视 (Navigation.IsFileWatcherEnabled)"
+        Expected = "True"
+        Actual   = $( $v = Get-JsonValueByPath $settingsJson "Navigation.IsFileWatcherEnabled"; if ($null -eq $v) { "<缺省未设>" } else { "$v" } )
+        IsMatch  = ((Get-JsonValueByPath $settingsJson "Navigation.IsFileWatcherEnabled") -eq "True")
+        Purpose  = "当前目录下有新图片保存或删除时实时刷新图库"
+        Impact   = "动态更新翻页队列，无需手动按 F5 刷新"
+        Type     = "Config"
     }
-    return "$curr"
-}
+)
 
-foreach ($spec in $ManagedSpecs) {
-    $actualStr = ""
-    $isMatch = $false
-
-    if ($spec.Type -eq "Binary") {
-        $actualStr = if ($isInstalled) { "已安装" } else { "未安装" }
-        $isMatch = $isInstalled
-    } elseif ($spec.Type -eq "Integration") {
-        $actualStr = if ($isRegistered) { "已注册" } else { "未完整注册" }
-        $isMatch = $isRegistered
-    } elseif ($spec.Type -eq "Config") {
-        $val = Get-JsonValueByPath $settingsJson $spec.Path
-        $actualStr = if ($null -eq $val) { "<缺省未设>" } else { "$val" }
-        $isMatch = ($actualStr -eq $spec.Expected)
-    }
-
-    $AuditBoard.Add([PSCustomObject]@{
-        分层模块 = $spec.Module
-        受控属性 = $spec.Property
-        期望基线 = $spec.Expected
-        实机状态 = $actualStr
-        状态判定 = if ($isMatch) { "✔ 匹配" } else { "✘ 偏离" }
-    })
-
-    if (-not $isMatch -and $Action -ne "Upgrade") {
-        $PendingItems.Add([PSCustomObject]@{
-            Spec     = $spec
-            Actual   = $actualStr
-            Expected = $spec.Expected
-        })
-    }
-}
-
-Write-Host "`n📊 [巡检看板] PicView 原子受控属性审计清单:" -ForegroundColor Cyan
-$AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
-
-$driftCount = $PendingItems.Count
-if ($Action -eq "Check") {
-    if ($driftCount -eq 0) {
-        Write-Host "✨ [状态合规] 所有受控属性均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
-    } else {
-        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $driftCount) -ForegroundColor Yellow
-    }
-    return
-}
-
-if ($driftCount -eq 0 -and $Action -ne "Upgrade") {
-    Write-Host "✨ [状态合规] 所有受控属性均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
-    return
-}
+# 委派 _console.ps1 渲染差异矩阵
+& $console -Task RenderDiff -Specs $Specs
 
 # ==============================================================================
-# 5. 阶段 2: 审查门禁与并发安全 (Gate - Shift-Left: 目的与影响结构化直出)
+# 5. 阶段 2: 审查门禁与并发安全 (Gate)
 # ==============================================================================
 
 # 5.1 运行态并发防覆写硬门禁
@@ -377,73 +377,44 @@ if ($runningPv) {
     Start-Sleep -Milliseconds 500
 }
 
-# 5.2 未安装审查门禁
-if (-not $isInstalled) {
-    if ($Action -eq "ResetConfig") {
-        throw "未检测到 PicView 客户端安装！请先执行 -Action Sync 安装后再执行配置重置。"
-    }
+# 5.2 状态体检与门禁授权
+$diffs = @($Specs | Where-Object { -not $_.IsMatch })
 
-    if (-not $Yes) {
-        $shouldInstall = (Read-Host "未检测到 PicView 客户端，是否立即调用 'scoop install extras/picview' 进行安装？[Y/n]").Trim()
-        if ($shouldInstall -match '^(n|no)$') {
-            Write-Host "[-] 操作已由用户取消，安全退出。`n" -ForegroundColor DarkGray
-            return
-        }
-    }
-}
-
-# 5.3 策略审查门禁 (Shift-Left Gate: 目的与影响结构化逐项直出)
-if (-not $Yes) {
-    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
-    Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
-    $idx = 1
-    foreach ($p in $PendingItems) {
-        Write-Host ("`n   [{0}] {1}" -f $idx, $p.Spec.Property) -ForegroundColor Yellow
-        Write-Host ("       - 当前实机值: {0}  ==>  期望基线值: {1}" -f $p.Actual, $p.Expected) -ForegroundColor DarkGray
-        Write-Host ("       - [目的] {0}" -f $p.Spec.Purpose) -ForegroundColor White
-        Write-Host ("       - [影响] {0}" -f $p.Spec.Impact) -ForegroundColor Gray
-        $idx++
-    }
-
-    $gateChoice = (Read-Host "`n确认应用上述黄金基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
-    if ($gateChoice -match '^(q|quit|n|no)$') {
-        Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
-        return
-    }
+if (-not (& $console -Task ConfirmGate -Specs $diffs -Action $Action -Yes:$Yes)) {
+    return
 }
 
 # ==============================================================================
 # 6. 阶段 3: 单向原子落盘 (Apply)
 # ==============================================================================
 
-# 6.1 程序本体安装或覆盖升级
-if (-not $isInstalled -or $Action -eq "Upgrade") {
+# 6.1 程序本体安装或强制重装
+$needBinaryDeploy = (-not $isInstalled) -or $Force
+if ($needBinaryDeploy) {
     if (-not (Get-Command "scoop" -ErrorAction SilentlyContinue)) {
         throw "未检测到 scoop 命令，请先就绪 Scoop 包管理器环境。"
     }
 
-    if ($Action -eq "Upgrade") {
-        Write-Host "`n📦 [覆盖升级] 正在调用 Scoop 升级 PicView 本体..." -ForegroundColor Cyan
-        & scoop update picview
-        Write-Host "✅ [升级完成] PicView 客户端本体已完成升级。`n" -ForegroundColor Green
-        return
+    Ensure-ScoopBucket $ScoopBucket
+    if ($Force -and $isInstalled) {
+        Write-Host "`n📦 [强制重新部署] 正在重新安装/更新 PicView 本体..." -ForegroundColor Cyan
+        & scoop install extras/picview --force
     } else {
         Write-Host "`n🚀 正在通过 Scoop 安装 PicView..." -ForegroundColor Cyan
-        & scoop bucket add extras 2>$null | Out-Null
         & scoop install extras/picview
+    }
 
-        if (Test-Path (Join-Path $InstallDir "PicView.exe")) {
-            $AppExe = Join-Path $InstallDir "PicView.exe"
-            $isInstalled = $true
-        }
-        if (-not $isInstalled) {
-            throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
-        }
+    if (Test-Path (Join-Path $InstallDir "PicView.exe")) {
+        $AppExe = Join-Path $InstallDir "PicView.exe"
+        $isInstalled = $true
+    }
+    if (-not $isInstalled) {
+        throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
     }
 }
 
 # 6.2 注册系统关联与 Capabilities
-Write-Host "`n⚙️  正在执行系统图像关联注册与 Capabilities 点亮..." -ForegroundColor Cyan
+Write-Host "⚙️  正在执行系统图像关联注册与 Capabilities 点亮..." -ForegroundColor Cyan
 
 $progIdKey = "HKLM:\SOFTWARE\Classes\$progId"
 Ensure-RegKey $progIdKey
@@ -478,7 +449,7 @@ foreach ($ext in $imgExts) {
     Ensure-RegKey $extKey
     Set-ItemProperty -Path $extKey -Name $progId -Value ([byte[]]@()) -Force
 }
-Write-Host "✅ 系统全功能看图器注册与 13 种主流图片格式关联完成。" -ForegroundColor Green
+Write-Host "✔ 系统全功能看图器注册与 13 种主流图片格式关联完成。" -ForegroundColor Green
 
 # 6.3 注入/调优 UserSettings.json 体验基线偏好
 Ensure-Dir $ConfDir
@@ -506,16 +477,13 @@ $settings.Navigation | Add-Member -MemberType NoteProperty -Name "IsFileWatcherE
 
 $jsonStr = $settings | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($ConfigFile, $jsonStr, [System.Text.UTF8Encoding]::new($false))
-Write-Host "✅ UserSettings.json 体验基线偏好已原子落盘至: $ConfigFile" -ForegroundColor Green
+Write-Host "✔ UserSettings.json 体验基线偏好已原子落盘。" -ForegroundColor Green
 
 # ==============================================================================
 # 7. 阶段 4: 尾部简报与动态真待办 (Report)
 # ==============================================================================
-Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 基线与系统注册管理完成！" -ForegroundColor Green
-Write-Host "====================================================================" -ForegroundColor Green
-Write-Host "   - 图像关联: 已注册 PicView.Image 与 Capabilities，支持 jpg/png/webp 等主流格式" -ForegroundColor Gray
-Write-Host "   - 偏好基线: 固化简体中文、单窗口复用(OpenInSameWindow)、ESC 免确认极速退出" -ForegroundColor Gray
+$sw.Stop()
+& $console -Task Summary -Duration $sw.Elapsed -AppliedCount $diffs.Count
 
 $isDefaultPhoto = $false
 try {
@@ -524,10 +492,8 @@ try {
 } catch { }
 
 if (-not $isDefaultPhoto) {
-    Write-Host "`n--------------------------------------------------------------------" -ForegroundColor DarkGray
     Write-Host "📋 [手动收尾清单 (Actionable Handoff)]" -ForegroundColor Cyan
-    Write-Host "  1. 设为默认: 在系统【默认应用】中将 PicView 设为照片查看器默认应用" -ForegroundColor Yellow
-    Write-Host "--------------------------------------------------------------------`n" -ForegroundColor DarkGray
+    Write-Host "   - 设为默认: 在系统【默认应用】中将 PicView 设为照片查看器默认应用`n" -ForegroundColor Yellow
 }
 
 return

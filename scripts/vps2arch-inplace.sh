@@ -495,10 +495,11 @@ unset ADMIN_PASSWORD p1 p2
 
 fetch() {
     local rel="$1" out="$2" base
+    printf '==> 正在下载: %s\n' "$rel"
     for base in "${ARCH_MIRRORS[@]}"; do
         curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-delay 1 \
             --connect-timeout 15 --speed-time 15 --speed-limit 1024 \
-            --silent --show-error --output "$out" "$base/$rel" && return 0
+            --progress-bar --show-error --output "$out" "$base/$rel" && return 0
     done
     die "下载失败：$rel"
 }
@@ -531,6 +532,7 @@ awk -v name="$NAME" '$2 == name {print; found=1} END {exit !found}' \
     "$WORKDIR/sha256sums.txt" > "$WORKDIR/sum" \
     || die 'SHA256 清单中缺少 bootstrap 条目'
 (cd "$WORKDIR" && sha256sum -c sum)
+printf '==> 正在解压 Arch Linux 根文件系统至临时内存沙盒...\n'
 tar -xpf "$WORKDIR/$NAME" -C "$WORKDIR"
 
 # 动态链接器封装：绕过宿主旧 glibc 兼容性限制

@@ -28,8 +28,6 @@ bash /tmp/archlinux-init.sh
 exec bash -i
 ```
 
-基础环境初始化完成。以下章节为可选进阶选配。
-
 ## 进阶选配向导（Shell 增强与工具链）
 
 脚本内置受控分界标记块（Managed Block），采用原位安全替换机制，反复运行不会造成配置污染：

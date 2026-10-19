@@ -11,9 +11,13 @@
     4. 禁用 8 项淘汰 CBS 可选特性 (SMBv1、PSv2、Telnet、TFTP 等)。
     5. 禁用系统保留存储 (DISM Reserved Storage)，释放 7GB+ 固态磁盘物理空间。
     6. 禁用存储感知企业组策略 (Storage Sense)，杜绝后台静默删除文件与云端脱水。
-    7. 卸载微软照片预装应用 (Photos，仅 Full)。
-    8. 彻底卸载 Edge 浏览器 (欧盟 DMA 合规、物理粉碎与 WebView2 原生静默分流，仅 Full)。
-    9. 清理驱动解包临时目录与系统出厂残留 (C:\AMD, PerfLogs 等，仅 Full)。
+    7. 开启 PowerShell 现代解混淆脚本块日志记录 (ScriptBlockLogging=1)。
+    8. 开启 LSA 受保护进程光模式 (RunAsPPL) 并切断 WDigest 内存明文凭据。
+    9. 启用 Windows Defender ASR 核心攻击面减少高价值规则 (LSASS防窃取/Office防衍生子进程)。
+    10. 固化 Windows Defender 特征库更新周期为 72 小时 (3 天)，保障安全智能定时静默拉取并杜绝过期警报。
+    11. 卸载微软照片预装应用 (Photos，仅 Full)。
+    12. 彻底卸载 Edge 浏览器 (欧盟 DMA 合规、物理粉碎与 WebView2 原生静默分流，仅 Full)。
+    13. 清理驱动解包临时目录与系统出厂残留 (C:\AMD, PerfLogs 等，仅 Full)。
 
 .PARAMETER Action
     操作模式:
@@ -22,8 +26,8 @@
 
 .PARAMETER Profile
     加固预设:
-    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
-    - General : 通用稳健基线 (保守兼容，跳过卸载 Edge 浏览器与微软照片)
+    - Full    : 全量基线 (默认，覆盖全量受控规则)
+    - General : 通用基线 (仅覆盖通用受控规则，跳过深度裁剪项)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
@@ -97,7 +101,15 @@ function Get-RegVal {
     param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
     if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return if ($null -ne $val) { "$val" } else { $Default }
+    if ($null -ne $val) { return "$val" }
+    return $Default
+}
+
+function Test-RegDword {
+    param([string]$Path, [string]$Name, [int]$ExpectedValue)
+    if (-not (Test-Path $Path)) { return $false }
+    $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
+    return ($null -ne $val -and [int]$val -eq $ExpectedValue)
 }
 
 # ==============================================================================
@@ -230,8 +242,9 @@ $Rules = @(
         Impact  = "系统盘若处于极限严重空间不足（剩余容量低于 2GB）时，后续大版本补丁更新可能提示磁盘空间不足需先手动腾出空间"
         Check   = {
             $res = Get-WindowsReservedStorageState -ErrorAction SilentlyContinue
-            $isPass = ($res -eq 'Disabled')
-            return @{ Actual = "$res"; Expected = "Disabled"; IsCompliant = $isPass }
+            $state = if ($null -ne $res -and $null -ne $res.ReservedStorageState) { "$($res.ReservedStorageState)" } else { "Unknown" }
+            $isPass = ($state -eq 'Disabled')
+            return @{ Actual = $state; Expected = "Disabled"; IsCompliant = $isPass }
         }
         Apply   = {
             Set-WindowsReservedStorageState -State Disabled -ErrorAction SilentlyContinue | Out-Null
@@ -249,6 +262,105 @@ $Rules = @(
         }
         Apply   = {
             Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\StorageSense" "AllowStorageSense" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "powershell-enable-script-block-logging"
+        Name    = "PowerShell 现代解混淆脚本块日志记录 (ScriptBlockLogging = 1)"
+        Profile = "General"
+        Purpose = "开启系统级 PowerShell 脚本块完整性审计 (Event ID 4104)，对内存管道与动态反射代码拥有解混淆后的完整可观测性"
+        Impact  = "在事件查看器 Operational 日志中记录执行文本，对系统性能与日常使用零负面影响"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" "EnableScriptBlockLogging"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging" "EnableScriptBlockLogging" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "lsa-runasppl-protection"
+        Name    = "LSA 本地安全机构受保护进程光模式 (RunAsPPL = 1)"
+        Profile = "General"
+        Purpose = "将核心认证进程 lsass.exe 置于 PPL 保护级别，免疫未签名驱动或管理员特权下的内存转储 (Mimikatz 抓密码)"
+        Impact  = "彻底阻断内存明文凭据外泄；若使用非微软官方驱动级认证插件可能受限（现代系统标准基线）"
+        Check   = {
+            $r1 = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "RunAsPPL"
+            $r2 = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "RunAsPPLBoot"
+            $isPass = ($r1 -eq "1" -and $r2 -eq "2")
+            return @{ Actual = "RunAsPPL=$r1, RunAsPPLBoot=$r2"; Expected = "RunAsPPL=1, RunAsPPLBoot=2"; IsCompliant = $isPass }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "RunAsPPL" 1
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "RunAsPPLBoot" 2
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "wdigest-disable-logon-credential"
+        Name    = "WDigest 协议内存明文凭据缓存切断 (UseLogonCredential = 0)"
+        Profile = "General"
+        Purpose = "禁止 Windows 在内核内存中保留旧式 WDigest 协议的明文密码副本，消除内存明文泄漏隐患"
+        Impact  = "现代网络认证完全兼容，零负面影响"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest" "UseLogonCredential"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest" "UseLogonCredential" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "defender-asr-core-rules"
+        Name    = "Windows Defender 攻击面减少核心高价值规则 (ASR LSASS凭据防御/Office宏阻断)"
+        Profile = "General"
+        Purpose = "启用 Defender 攻击面减少规则，硬性阻断凭据从 LSASS 子系统窃取 (9e6c4e1f...)，并阻断 Office 应用程序衍生子进程 (d4f940ab...)"
+        Impact  = "强力切断恶意注入与钓鱼文档执行链，开发与常规办公环境误报率极低"
+        Check   = {
+            $mp = Get-MpPreference -ErrorAction SilentlyContinue
+            $targetRules = @{
+                "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2" = "LSASS防凭据窃取"
+                "d4f940ab-401b-4efc-aadc-ad5f3c50688a" = "Office防衍生子进程"
+            }
+            $activeCount = 0
+            if ($mp -and $mp.AttackSurfaceReductionRules_Ids) {
+                for ($i = 0; $i -lt $mp.AttackSurfaceReductionRules_Ids.Count; $i++) {
+                    $id = "$($mp.AttackSurfaceReductionRules_Ids[$i])".ToLower()
+                    $action = $mp.AttackSurfaceReductionRules_Actions[$i]
+                    if ($targetRules.ContainsKey($id) -and ($action -eq 1 -or "$action" -eq "Enabled")) {
+                        $activeCount++
+                    }
+                }
+            }
+            $isPass = ($activeCount -eq $targetRules.Count)
+            return @{
+                Actual      = if ($isPass) { "已全部启用 ($activeCount/2)" } else { "仅启用 $activeCount/2" }
+                Expected    = "全部启用 (2/2)"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            Add-MpPreference -AttackSurfaceReductionRules_Ids "9e6c4e1f-7d60-472f-ba1a-a39ef669e4b2" -AttackSurfaceReductionRules_Actions Enabled -ErrorAction SilentlyContinue
+            Add-MpPreference -AttackSurfaceReductionRules_Ids "d4f940ab-401b-4efc-aadc-ad5f3c50688a" -AttackSurfaceReductionRules_Actions Enabled -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "defender-signature-update-interval"
+        Name    = "Windows Defender 特征更新周期固化 (SignatureUpdateInterval = 72h)"
+        Profile = "General"
+        Purpose = "固化 Defender 独立特征更新轮询周期为 72 小时 (3 天)，在系统更新截停模式下保障病毒库定时静默拉取，根治黄色感叹号"
+        Impact  = "Defender 每 3 天在后台利用闲置网络静默拉取增量特征补丁（单次约几 MB），前台游戏与编译完全零感知、零卡顿"
+        Check   = {
+            $mp = Get-MpPreference -ErrorAction SilentlyContinue
+            $val = $mp.SignatureUpdateInterval
+            $isPass = ($val -eq 72)
+            return @{
+                Actual      = if ($null -eq $val -or $val -eq 0) { "系统默认 (0 / 听从WindowsUpdate)" } else { "${val}h" }
+                Expected    = "72h"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            Set-MpPreference -SignatureUpdateInterval 72 -ErrorAction SilentlyContinue
         }
     },
     [PSCustomObject]@{
@@ -278,8 +390,14 @@ $Rules = @(
                        (Test-Path "C:\Program Files\Microsoft\Edge\Application\msedge.exe")
             $edgeReg = (Test-Path "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge") -or
                        (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Microsoft Edge")
-            $isPass = (-not $edgeExe -and -not $edgeReg)
-            return @{ Actual = if ($isPass) { "已物理移除" } else { "本体/卸载项残留" }; Expected = "已物理移除"; IsCompliant = $isPass }
+            $edgeShortcuts = @(
+                "C:\Users\Public\Desktop\Microsoft Edge.lnk",
+                "$([Environment]::GetFolderPath('Desktop'))\Microsoft Edge.lnk",
+                "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk",
+                "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk"
+            ) | Where-Object { Test-Path $_ }
+            $isPass = (-not $edgeExe -and -not $edgeReg -and $edgeShortcuts.Count -eq 0)
+            return @{ Actual = if ($isPass) { "已物理移除" } else { "本体/卸载项/快捷方式残留" }; Expected = "已物理移除"; IsCompliant = $isPass }
         }
         Apply   = {
             Stop-Process -Name "msedge", "pwahelper", "edge_feedback", "notification_helper" -Force -ErrorAction SilentlyContinue
@@ -306,6 +424,16 @@ $Rules = @(
             @("MicrosoftEdgeElevationService", "edgeupdate", "edgeupdatem") | ForEach-Object {
                 & sc.exe stop $_ *>$null
                 & sc.exe delete $_ *>$null
+            }
+
+            @(
+                "C:\Users\Public\Desktop\Microsoft Edge.lnk",
+                "$([Environment]::GetFolderPath('Desktop'))\Microsoft Edge.lnk",
+                "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk",
+                "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Microsoft Edge.lnk",
+                "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Microsoft Edge.lnk"
+            ) | ForEach-Object {
+                if (Test-Path $_) { Remove-Item -Path $_ -Force -ErrorAction SilentlyContinue }
             }
 
             @(

@@ -23,24 +23,28 @@
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
-    - Sync        : 增量对齐黄金基线 (默认，缺失则装、偏离则修)
-    - Check       : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
-    - ResetConfig : 仅执行 Terminal 策略重置与各 Shell 配置块刷新
-    - Uninstall   : 恢复 Windows Terminal 默认配置，剥离三大 Shell 托管配置块
-    - Upgrade     : 刷新并检查各 Shell 运行环境
+    - Sync      : 增量对齐受控基线 (默认，缺失则装、偏离则修)
+    - Check     : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
+    - Uninstall : 恢复 Windows Terminal 默认配置，剥离三大 Shell 托管配置块
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
+
+.PARAMETER Force
+    配合 Sync 使用，强制重新装配等宽字体并全量覆写终端与各 Shell 配置块。
+
+.PARAMETER Purge
+    预留参数契约 (终端配置剥离后无用户独立数据目录)。
 
 .EXAMPLE
     # 只查不改体检巡检
     pwsh -File .\scripts\apps\terminal.ps1 -Action Check
 
-    # 交互式检查并应用黄金基线
+    # 交互式检查并应用工程基线
     pwsh -File .\scripts\apps\terminal.ps1
 
-    # 仅强制重写配置为工程黄金基线
-    pwsh -File .\scripts\apps\terminal.ps1 -Action ResetConfig
+    # 强制重新覆写并对齐基线
+    pwsh -File .\scripts\apps\terminal.ps1 -Force
 
     # 清洁卸载并剥离托管配置
     pwsh -File .\scripts\apps\terminal.ps1 -Action Uninstall
@@ -48,10 +52,12 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [ValidateSet("Sync", "Check", "Uninstall")]
     [string]$Action = "Sync",
 
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
@@ -132,28 +138,53 @@ $gitBashExe = $gitBashCandidates | Where-Object { & $testInternalValid $_ } | Se
 
 $regHklm = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
 $regHkcu = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
-$installedFontsHklm = (Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-$installedFontsHkcu = (Get-ItemProperty -Path $regHkcu -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-$hasMapleFont = ($null -ne $installedFontsHklm -or $null -ne $installedFontsHkcu)
+
+$testFontInstalled = {
+    $fontFile = Join-Path $env:SystemRoot "Fonts\MapleMonoNL-NFMono-CN-Regular.ttf"
+    if (Test-Path $fontFile) { return $true }
+    $hklm = Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue
+    if ($hklm) {
+        $found = $hklm.PSObject.Properties | Where-Object {
+            ($_.Name -like "*Maple*Mono*NL*" -or $_.Name -like "*MapleMonoNL*") -and $_.Name -like "*CN*"
+        }
+        if ($found) { return $true }
+    }
+    return $false
+}
+$hasMapleFont = (& $testFontInstalled)
+
+function Invoke-DownloadFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [Parameter(Mandatory = $true)][string]$OutFile,
+        [string]$Description = "文件",
+        [long]$MinBytes = 1024,
+        [int]$TimeoutSec = 300
+    )
+
+    $tool = Join-Path $PSScriptRoot "_aria2.ps1"
+    if (-not (Test-Path $tool)) {
+        throw "未在应用域定位到核心下载引擎: _aria2.ps1，请确保仓库完整性！"
+    }
+
+    & $tool -Url $Url -OutFile $OutFile -Description $Description -MinBytes $MinBytes -TimeoutSec $TimeoutSec
+}
 
 function Install-MapleFontKit {
-    Write-Host "[*] 正在准备从 GitHub 官方 Release 装配工作站等宽字体 (Maple Mono NL CN)..." -ForegroundColor Cyan
-    $tempZip = Join-Path $env:TEMP "MapleMono-autoinstall.zip"
-    $tempSandboxDir = Join-Path $env:TEMP ("MapleMono-" + [Guid]::NewGuid().ToString("N"))
+    Write-Host "[*] 正在从 assets 资产分支拉取工作站等宽字体预编译包 (Maple Mono NL NFMono CN)..." -ForegroundColor Cyan
+    $tempZip = Join-Path $env:TEMP "MapleMonoNL-autoinstall.zip"
+    $tempSandboxDir = Join-Path $env:TEMP ("MapleMonoNL-" + [Guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $tempSandboxDir -Force | Out-Null
 
     try {
-        $fontReleaseApi = "https://api.github.com/repos/subframe7536/maple-font/releases/latest"
-        $rel = Invoke-RestMethod -Uri $fontReleaseApi -Headers @{ "User-Agent" = "vpsbase-terminal-script" } -TimeoutSec 15
-        $asset = $rel.assets | Where-Object { $_.name -match 'MapleMono-NF-CN\.zip$' } | Select-Object -First 1
-        if (-not $asset) { $asset = $rel.assets | Where-Object { $_.name -match '\.zip$' } | Select-Object -First 1 }
-        if (-not $asset) { throw "未在 GitHub 最新 Release 中匹配到 Maple Mono 字体发布包" }
-
-        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tempZip -TimeoutSec 60
+        # 工作站等宽字体定制编译产物 (托管于 assets 独立分支)
+        $fontZipUrl = "https://raw.githubusercontent.com/Lokyael/vpsbase/assets/latest-maple-mono-nl.zip"
+        Invoke-DownloadFile -Url $fontZipUrl -OutFile $tempZip -Description "Maple Mono NL 等宽字体包" -TimeoutSec 300
+        Write-Host "   - 正在解包字体压缩包并筛选工作站等宽字体 (NL NFMono CN)..." -ForegroundColor Gray
         Expand-Archive -Path $tempZip -DestinationPath $tempSandboxDir -Force
 
         $fontFiles = Get-ChildItem -Path $tempSandboxDir -Recurse -Include "*.ttf", "*.otf" |
-                     Where-Object { $_.Name -match 'MapleMono.*CN' -and $_.Name -notmatch 'BoldItalic|ExtraLightItalic' }
+                     Where-Object { $_.Name -like "*MapleMonoNL*CN*.ttf" }
 
         if (-not $fontFiles -or $fontFiles.Count -eq 0) {
             $fontFiles = Get-ChildItem -Path $tempSandboxDir -Recurse -Include "*.ttf", "*.otf"
@@ -169,27 +200,44 @@ using System.Runtime.InteropServices;
 public class FontManager {
     [DllImport("gdi32.dll", EntryPoint="AddFontResourceW", SetLastError=true)]
     public static extern int AddFontResource([In, MarshalAs(UnmanagedType.LPWStr)] string lpFileName);
+    [DllImport("gdi32.dll", EntryPoint="RemoveFontResourceW", SetLastError=true)]
+    public static extern int RemoveFontResource([In, MarshalAs(UnmanagedType.LPWStr)] string lpFileName);
     [DllImport("user32.dll")]
     public static extern int SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 }
 "@ -ErrorAction SilentlyContinue
 
+        # 规范字体注册表 Typography 全名映射
+        $faceDisplayNames = @{
+            "Regular"    = "Maple Mono NL NFMono CN (TrueType)"
+            "Bold"       = "Maple Mono NL NFMono CN Bold (TrueType)"
+            "Italic"     = "Maple Mono NL NFMono CN Italic (TrueType)"
+            "BoldItalic" = "Maple Mono NL NFMono CN Bold Italic (TrueType)"
+        }
+
         foreach ($f in $fontFiles) {
             $dest = Join-Path $fontsTargetDir $f.Name
             Copy-Item -Path $f.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
+
+            $styleKey = "Regular"
+            if ($f.BaseName -match "BoldItalic$") { $styleKey = "BoldItalic" }
+            elseif ($f.BaseName -match "Bold$") { $styleKey = "Bold" }
+            elseif ($f.BaseName -match "Italic$") { $styleKey = "Italic" }
+
+            $regName = if ($faceDisplayNames.ContainsKey($styleKey)) { $faceDisplayNames[$styleKey] } else { "$($f.BaseName) (TrueType)" }
+            Set-ItemProperty -Path $regPath -Name $regName -Value $f.Name -Force -ErrorAction SilentlyContinue
             Set-ItemProperty -Path $regPath -Name "$($f.BaseName) (TrueType)" -Value $f.Name -Force -ErrorAction SilentlyContinue
             [FontManager]::AddFontResource($dest) | Out-Null
         }
         [FontManager]::SendMessage([IntPtr]0xffff, 0x001D, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
 
         for ($i = 0; $i -lt 10; $i++) {
-            $hklmReady = (Get-ItemProperty -Path $regHklm -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-            $hkcuReady = (Get-ItemProperty -Path $regHkcu -ErrorAction SilentlyContinue).PSObject.Properties | Where-Object { $_.Name -like "*Maple Mono NL*" }
-            if ($hklmReady -or $hkcuReady) { break }
+            if (& $testFontInstalled) { break }
             Start-Sleep -Milliseconds 500
         }
 
-        Write-Host "  [+] Maple Mono NL 等宽字体基线已成功装配至系统字体库" -ForegroundColor Green
+        Write-Host "  [+] Maple Mono NL NFMono CN 等宽字体基线已成功装配至系统字体库" -ForegroundColor Green
+        Write-Host "  ℹ️  [提示] 若 Windows Terminal 处于打开状态，请完全退出并重启 Windows Terminal 窗口以使 DirectWrite 加载新字体。" -ForegroundColor Yellow
     } finally {
         if (Test-Path $tempZip) { Remove-Item -Path $tempZip -Force -ErrorAction SilentlyContinue }
         if (Test-Path $tempSandboxDir) { Remove-Item -Path $tempSandboxDir -Recurse -Force -ErrorAction SilentlyContinue }
@@ -413,9 +461,7 @@ if ($isWtFileReady) {
         if ($defaults) {
             $isDirMatch = ($defaults.startingDirectory -eq $targetStartDir)
             $isAcrylicMatch = ($defaults.useAcrylic -eq $true -and ($defaults.acrylicOpacity -eq 0.85 -or $defaults.opacity -eq 85))
-            $isFontMatch = if ($hasMapleFont) {
-                ($null -ne $defaults.font -and $defaults.font.face -eq "Maple Mono NL NFMono CN")
-            } else { $true }
+            $isFontMatch = ($null -ne $defaults.font -and $defaults.font.face -eq "Maple Mono NL NFMono CN")
         }
 
         $azureList = @($wtJson.profiles.list | Where-Object { $GUID_AZURE -contains $_.guid -or $_.name -match 'Azure Cloud Shell' })
@@ -425,6 +471,9 @@ if ($isWtFileReady) {
             if ($p.hidden -ne $true) { $allHidden = $false; break }
         }
         $isLegacyHidden = $allHidden
+
+        $pwshProfile = $wtJson.profiles.list | Where-Object { $_.guid -eq $GUID_PWSH -or $_.name -in @("PowerShell", "PowerShell 7", "pwsh") }
+        $isPwshProfileReady = [bool]($pwshProfile -and $pwshProfile.hidden -eq $false)
 
         $nuProfile = $wtJson.profiles.list | Where-Object { $_.guid -eq $GUID_NU -or $_.name -eq "Nushell" }
         $isNuProfileReady = [bool]($nuProfile -and $nuProfile.hidden -eq $false)
@@ -448,27 +497,47 @@ if (-not $hasMapleFont) {
         受控属性 = "等宽字体装配 (Maple Mono NL NFMono CN)"
         实机状态 = "未安装"
         期望基线 = "已安装并注册至系统字体库"
-        Purpose  = "装配工作站标准开源等宽编程字体 Maple Mono"
-        Impact   = "为 Terminal、代码编辑器与终端应用提供中英文等宽与 Nerd Font 图标排版"
+        Purpose  = "装配工作站标准开源等宽编程字体 Maple Mono NL NFMono CN"
+        Impact   = "为 Terminal、代码编辑器与终端应用提供无连字、中英文 1:2 绝对等宽与单字符宽度 Nerd Font 图标排版"
     })
 }
 
-# 4.2 Terminal 默认 Profile
+# 4.2 Terminal 默认 Profile 与配置注册
+$isPwshHealthy = ($isDefaultPwsh -and $isPwshProfileReady)
 $chkList.Add([PSCustomObject]@{
     分层模块 = "Terminal核心"
     受控属性 = "默认终端Shell (defaultProfile)"
     期望基线 = "PowerShell 7 ($GUID_PWSH)"
-    实机状态 = if ($isDefaultPwsh) { "已绑定 PowerShell 7" } else { "未绑定或文件缺失" }
-    状态判定 = if ($isDefaultPwsh) { "✔ 匹配" } else { "✘ 偏离" }
+    实机状态 = if ($isPwshHealthy) { "已绑定 PowerShell 7" } else { if ($wtJson) { "$($wtJson.defaultProfile)" } else { "未绑定或文件缺失" } }
+    状态判定 = if ($isPwshHealthy) { "✔ 匹配" } else { "✘ 偏离" }
 })
-if (-not $isDefaultPwsh) {
+if (-not $isPwshHealthy) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "Terminal核心"
         受控属性 = "默认终端Shell (defaultProfile)"
         实机状态 = if ($wtJson) { "$($wtJson.defaultProfile)" } else { "缺失" }
         期望基线 = "PowerShell 7 ($GUID_PWSH)"
-        Purpose  = "将 Windows Terminal 默认启动会话绑定为 PowerShell 7 (pwsh)"
-        Impact   = "每次点击打开终端默认直接进入现代 pwsh 会话"
+        Purpose  = "在 Windows Terminal 注册并绑定 PowerShell 7 (pwsh) 为默认会话"
+        Impact   = "每次点击打开终端默认直接进入现代 pwsh 会话，杜绝回退到 Windows PowerShell 5.1"
+    })
+}
+
+# 4.3 Terminal 渲染字体与视效细项
+$chkList.Add([PSCustomObject]@{
+    分层模块 = "Terminal视效"
+    受控属性 = "终端渲染字体 (defaults.font.face)"
+    期望基线 = "Maple Mono NL NFMono CN"
+    实机状态 = if ($wtJson -and $wtJson.profiles.defaults -and $wtJson.profiles.defaults.font -and $wtJson.profiles.defaults.font.face) { "$($wtJson.profiles.defaults.font.face)" } else { "<未配置>" }
+    状态判定 = if ($isFontMatch) { "✔ 匹配" } else { "✘ 偏离" }
+})
+if (-not $isFontMatch) {
+    $diffList.Add([PSCustomObject]@{
+        分层模块 = "Terminal视效"
+        受控属性 = "终端渲染字体 (defaults.font.face)"
+        实机状态 = if ($wtJson -and $wtJson.profiles.defaults -and $wtJson.profiles.defaults.font -and $wtJson.profiles.defaults.font.face) { "$($wtJson.profiles.defaults.font.face)" } else { "<未配置>" }
+        期望基线 = "Maple Mono NL NFMono CN"
+        Purpose  = "将 Windows Terminal 默认渲染字体锁定为 Maple Mono NL NFMono CN"
+        Impact   = "提供清晰高辨识度的中英文等宽与单字符宽度 Nerd Font 图标排版"
     })
 }
 
@@ -480,7 +549,7 @@ $chkList.Add([PSCustomObject]@{
     实机状态 = if ($wtJson -and $wtJson.profiles.defaults -and $wtJson.profiles.defaults.startingDirectory) { "$($wtJson.profiles.defaults.startingDirectory)" } else { "<未配置>" }
     状态判定 = if ($isDirMatch) { "✔ 匹配" } else { "✘ 偏离" }
 })
-if (-not $isDirMatch -and $Action -ne "Upgrade") {
+if (-not $isDirMatch) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "Terminal视效"
         受控属性 = "默认起始目录 (defaults.startingDirectory)"
@@ -498,7 +567,7 @@ $chkList.Add([PSCustomObject]@{
     实机状态 = if ($isAcrylicMatch) { "已启用 (0.85)" } else { "未配置/已关闭" }
     状态判定 = if ($isAcrylicMatch) { "✔ 匹配" } else { "✘ 偏离" }
 })
-if (-not $isAcrylicMatch -and $Action -ne "Upgrade") {
+if (-not $isAcrylicMatch) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "Terminal视效"
         受控属性 = "亚克力磨砂效果 (useAcrylic / 0.85)"
@@ -517,7 +586,7 @@ $chkList.Add([PSCustomObject]@{
     实机状态 = if ($isLegacyHidden) { "已全部隐藏" } else { "存在未隐藏项" }
     状态判定 = if ($isLegacyHidden) { "✔ 匹配" } else { "✘ 偏离" }
 })
-if (-not $isLegacyHidden -and $Action -ne "Upgrade") {
+if (-not $isLegacyHidden) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "Terminal环境"
         受控属性 = "旧版与云端干扰项隐藏 (Azure/CMD/PS5.1)"
@@ -537,7 +606,7 @@ $chkList.Add([PSCustomObject]@{
     实机状态 = if ($pwshHasBlock) { "已注入" } else { "未注入" }
     状态判定 = if ($pwshHasBlock) { "✔ 匹配" } else { "✘ 偏离" }
 })
-if (-not $pwshHasBlock -and $Action -ne "Upgrade") {
+if (-not $pwshHasBlock) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "Shell配置"
         受控属性 = "PowerShell 7 PSReadLine 历史回溯"
@@ -556,7 +625,7 @@ $chkList.Add([PSCustomObject]@{
     实机状态 = if ($nuHasBlock) { "已注入" } else { "未注入" }
     状态判定 = if ($nuHasBlock) { "✔ 匹配" } else { "✘ 偏离" }
 })
-if (-not $nuHasBlock -and $Action -ne "Upgrade") {
+if (-not $nuHasBlock) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "Shell配置"
         受控属性 = "Nushell SQLite 结构化历史检索"
@@ -575,7 +644,7 @@ $chkList.Add([PSCustomObject]@{
     实机状态 = if ($gitBashHasBlock) { "已注入" } else { "未注入" }
     状态判定 = if ($gitBashHasBlock) { "✔ 匹配" } else { "✘ 偏离" }
 })
-if (-not $gitBashHasBlock -and $Action -ne "Upgrade") {
+if (-not $gitBashHasBlock) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "Shell配置"
         受控属性 = "Git Bash 中文 UTF-8 与历史即时同步"
@@ -591,20 +660,20 @@ $chkList | Format-Table -AutoSize | Out-String | Write-Host
 
 if ($Action -eq "Check") {
     if ($diffList.Count -eq 0) {
-        Write-Host "✨ [状态合规] Windows Terminal 与三大 Shell 配置均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
+        Write-Host "✨ [状态合规] Windows Terminal 与三大 Shell 配置均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
         Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $diffList.Count) -ForegroundColor Yellow
     }
     return
 }
 
-if ($diffList.Count -eq 0 -and $Action -ne "Upgrade") {
-    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+if ($diffList.Count -eq 0 -and -not $Force) {
+    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
 if ($diffList.Count -gt 0) {
-    Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离黄金基线:" -ForegroundColor Cyan
+    Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
     $diffList | Format-Table -AutoSize | Out-String | Write-Host
 }
 
@@ -623,7 +692,7 @@ if (-not $Yes) {
         $idx++
     }
 
-    $gateChoice = (Read-Host "`n确认应用上述黄金基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
+    $gateChoice = (Read-Host "`n确认应用上述工程基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
     if ($gateChoice -match '^(q|quit|n|no)$') {
         Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
@@ -635,13 +704,13 @@ if (-not $Yes) {
 # ==============================================================================
 
 # 6.1 装配等宽字体
-if (-not $hasMapleFont) {
+if (-not $hasMapleFont -or $Force) {
     Install-MapleFontKit
     $hasMapleFont = $true
 }
 
 # 6.2 注入并调优 Windows Terminal settings.json
-Write-Host "`n⚙️  正在单向对齐 Windows Terminal 黄金基线策略..." -ForegroundColor Cyan
+Write-Host "`n⚙️  正在单向对齐 Windows Terminal 工程基线策略..." -ForegroundColor Cyan
 if (-not (Test-Path $wtSettings)) {
     $parent = Split-Path -Path $wtSettings -Parent
     if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
@@ -698,30 +767,62 @@ if ($jsonObj.profiles.list) {
         }
     }
 
-    # 注册或回正 Nushell Profile
+    # 注册或回正 PowerShell 7 Profile (适配 Scoop 绿色解包未自动生成动态 Profile 场景)
+    if ($pwshExe) {
+        $foundPwsh = $jsonObj.profiles.list | Where-Object { $_.guid -eq $GUID_PWSH -or $_.name -in @("PowerShell", "PowerShell 7", "pwsh") }
+        $pwshIcon = "ms-appx:///ProfileIcons/{574e775e-4f2a-5b96-ac1e-a2962a402336}.png"
+        if (-not $foundPwsh) {
+            $pwshObj = [PSCustomObject]@{
+                guid        = $GUID_PWSH
+                name        = "PowerShell 7"
+                commandline = "`"$pwshExe`" -NoLogo"
+                hidden      = $false
+                icon        = $pwshIcon
+            }
+            $jsonObj.profiles.list = @($jsonObj.profiles.list) + @($pwshObj)
+        } else {
+            Set-OrAddProperty $foundPwsh "guid" $GUID_PWSH
+            Set-OrAddProperty $foundPwsh "commandline" "`"$pwshExe`" -NoLogo"
+            Set-OrAddProperty $foundPwsh "hidden" $false
+            if (-not $foundPwsh.icon) {
+                Set-OrAddProperty $foundPwsh "icon" $pwshIcon
+            }
+        }
+    }
+
+    # 注册或回正 Nushell Profile (绑定原生内置官方图标)
     if ($nuExe) {
         $foundNu = $jsonObj.profiles.list | Where-Object { $_.guid -eq $GUID_NU -or $_.name -eq "Nushell" }
+        $nuIcon = $nuExe
         if (-not $foundNu) {
             $nuObj = [PSCustomObject]@{
                 guid        = $GUID_NU
                 name        = "Nushell"
                 commandline = "`"$nuExe`""
                 hidden      = $false
-                icon        = "ms-appx:///ProfileIcons/{0caa0dad-35be-5f56-a8ff-afceeeaa6101}.png"
+                icon        = $nuIcon
             }
             $jsonObj.profiles.list = @($jsonObj.profiles.list) + @($nuObj)
         } else {
             Set-OrAddProperty $foundNu "guid" $GUID_NU
             Set-OrAddProperty $foundNu "commandline" "`"$nuExe`""
             Set-OrAddProperty $foundNu "hidden" $false
+            Set-OrAddProperty $foundNu "icon" $nuIcon
         }
     }
 
-    # 注册或回正 Git Bash Profile
+    # 注册或回正 Git Bash Profile (多级自适应探测官方菱形图标，缺失则回退至主执行体)
     if ($gitBashExe) {
         $foundGit = $jsonObj.profiles.list | Where-Object { $_.guid -eq $GUID_GIT -or $_.name -eq "Git Bash" }
-        $gitIcon = (Join-Path (Split-Path (Split-Path $gitBashExe -Parent) -Parent) "mingw64\share\git\git-for-windows.ico")
-        if (-not (Test-Path $gitIcon)) { $gitIcon = $null }
+        $gitIconCandidates = @(
+            (Join-Path $scoopRoot "apps\git\current\ucrt64\share\git\git-for-windows.ico"),
+            (Join-Path $scoopRoot "apps\git\current\usr\share\git\git-for-windows.ico"),
+            (Join-Path $scoopRoot "apps\git\current\mingw64\share\git\git-for-windows.ico"),
+            "C:\Program Files\Git\mingw64\share\git\git-for-windows.ico",
+            "C:\Program Files\Git\usr\share\git\git-for-windows.ico"
+        )
+        $gitIcon = $gitIconCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $gitIcon) { $gitIcon = $gitBashExe }
 
         if (-not $foundGit) {
             $gitObj = [PSCustomObject]@{
@@ -729,14 +830,14 @@ if ($jsonObj.profiles.list) {
                 name        = "Git Bash"
                 commandline = "`"$gitBashExe`" --login -i"
                 hidden      = $false
+                icon        = $gitIcon
             }
-            if ($gitIcon) { Set-OrAddProperty $gitObj "icon" $gitIcon }
             $jsonObj.profiles.list = @($jsonObj.profiles.list) + @($gitObj)
         } else {
             Set-OrAddProperty $foundGit "guid" $GUID_GIT
             Set-OrAddProperty $foundGit "commandline" "`"$gitBashExe`" --login -i"
             Set-OrAddProperty $foundGit "hidden" $false
-            if ($gitIcon) { Set-OrAddProperty $foundGit "icon" $gitIcon }
+            Set-OrAddProperty $foundGit "icon" $gitIcon
         }
     }
 }

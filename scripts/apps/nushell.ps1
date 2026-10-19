@@ -8,39 +8,48 @@
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 基于 Scoop 纳管的二进制本体 (D:\prog\scoop\apps\nu\current\nu.exe)。
     3. 官方核心插件自治管理与自愈：管理并自动重新签名注册 5 大官方核心插件 (polars, formats, gstat, query, inc)，彻底解决 Nushell 版本升级导致插件签名协议失效 (invalid) 的问题。
-    4. 现代化历史体验黄金基线：注入 config.nu 托管配置块，固化 SQLite 数据库结构化存储、多终端跨会话即时同步与前缀检索。
+    4. 现代化历史体验工程基线：注入 config.nu 托管配置块，固化 SQLite 数据库结构化存储、多终端跨会话即时同步与前缀检索。
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
-    - Sync        : 增量对齐黄金基线 (默认，缺失则装、偏离则修)
-    - Check       : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
-    - ResetConfig : 仅执行插件重新注册与 config.nu 黄金基线注入
-    - Uninstall   : 彻底清洁卸载 Nushell、注销核心插件并清理环境
-    - Upgrade     : 覆盖升级客户端本体 (调用 Scoop update)
+    - Sync      : 增量对齐受控基线 (默认，缺失则装、偏离则修)
+    - Check     : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
+    - Uninstall : 清洁卸载 Nushell、注销核心插件并清理环境 (默认保留历史数据)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
+
+.PARAMETER Force
+    配合 Sync 使用，强制重新调用 Scoop 重新安装/更新本体并重写配置与插件签名。
+
+.PARAMETER Purge
+    配合 Uninstall 使用，连带深度物理粉碎配置目录与 SQLite 历史数据库 (包含 persist)。
 
 .EXAMPLE
     # 只查不改体检巡检
     pwsh -File .\scripts\apps\nushell.ps1 -Action Check
 
-    # 交互式检查并应用黄金基线
+    # 交互式检查并应用工程基线
     pwsh -File .\scripts\apps\nushell.ps1
 
-    # 仅修复插件注册与历史基线配置
-    pwsh -File .\scripts\apps\nushell.ps1 -Action ResetConfig
+    # 强制重新部署覆盖本体并对齐基线
+    pwsh -File .\scripts\apps\nushell.ps1 -Force
 
-    # 彻底清洁卸载
+    # 安全清洁卸载 (保留历史记录)
     pwsh -File .\scripts\apps\nushell.ps1 -Action Uninstall
+
+    # 深度粉碎卸载 (全抹除)
+    pwsh -File .\scripts\apps\nushell.ps1 -Action Uninstall -Purge
 #>
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [ValidateSet("Sync", "Check", "Uninstall")]
     [string]$Action = "Sync",
 
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
@@ -353,7 +362,7 @@ foreach ($spec in $ManagedSpecs) {
         状态判定 = if ($isMatch) { "✔ 匹配" } else { "✘ 偏离" }
     })
 
-    if (-not $isMatch -and $Action -ne "Upgrade") {
+    if (-not $isMatch) {
         $PendingItems.Add([PSCustomObject]@{
             Spec     = $spec
             Actual   = $actualStr
@@ -368,15 +377,15 @@ $AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
 $driftCount = $PendingItems.Count
 if ($Action -eq "Check") {
     if ($driftCount -eq 0) {
-        Write-Host "✨ [状态合规] 所有受控属性与插件环境均符合工程黄金基线，无需调整。`n" -ForegroundColor Green
+        Write-Host "✨ [状态合规] 所有受控属性与插件环境均符合工程基线，无需调整。`n" -ForegroundColor Green
     } else {
         Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $driftCount) -ForegroundColor Yellow
     }
     return
 }
 
-if ($driftCount -eq 0 -and $Action -ne "Upgrade") {
-    Write-Host "✨ [状态合规] 所有受控属性均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+if ($driftCount -eq 0 -and -not $Force) {
+    Write-Host "✨ [状态合规] 所有受控属性均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
@@ -399,14 +408,16 @@ if ($runningNu) {
     Start-Sleep -Milliseconds 500
 }
 
-# 5.2 未安装审查门禁
-if (-not $isInstalled) {
-    if ($Action -eq "ResetConfig") {
-        throw "未检测到 Nushell 客户端安装！请先执行 -Action Sync 安装本体后再重置配置。"
-    }
-
+# 5.2 未安装或强制重装审查门禁
+$needBinaryDeploy = (-not $isInstalled) -or $Force
+if ($needBinaryDeploy) {
     if (-not $Yes) {
-        $shouldInstall = (Read-Host "未检测到 Nushell，是否立即调用 'scoop install main/nu' 进行安装？[Y/n]").Trim()
+        $promptMsg = if (-not $isInstalled) {
+            "未检测到 Nushell，是否立即调用 'scoop install main/nu' 进行安装？[Y/n]"
+        } else {
+            "已开启强制重新部署 (-Force)，是否重新通过 Scoop 安装/更新 Nushell 本体？[Y/n]"
+        }
+        $shouldInstall = (Read-Host $promptMsg).Trim()
         if ($shouldInstall -match '^(n|no)$') {
             Write-Host "[-] 操作已由用户取消，安全退出。`n" -ForegroundColor DarkGray
             return
@@ -427,7 +438,7 @@ if (-not $Yes) {
         $idx++
     }
 
-    $gateChoice = (Read-Host "`n确认应用上述黄金基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
+    $gateChoice = (Read-Host "`n确认应用上述工程基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
     if ($gateChoice -match '^(q|quit|n|no)$') {
         Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
@@ -439,27 +450,25 @@ if (-not $Yes) {
 # ==============================================================================
 
 # 6.1 程序本体安装或覆盖升级
-if (-not $isInstalled -or $Action -eq "Upgrade") {
+if ($needBinaryDeploy) {
     if (-not (Get-Command "scoop" -ErrorAction SilentlyContinue)) {
         throw "未检测到 scoop 命令，请先就绪 Scoop 包管理器环境。"
     }
 
-    if ($Action -eq "Upgrade") {
-        Write-Host "`n📦 [覆盖升级] 正在调用 Scoop 升级 Nushell 本体..." -ForegroundColor Cyan
-        & scoop update nu
-        Write-Host "✅ [升级完成] Nushell 客户端本体已完成升级。`n" -ForegroundColor Green
-        return
+    if ($Force -and $isInstalled) {
+        Write-Host "`n📦 [强制重新部署] 正在重新安装/更新 Nushell 本体..." -ForegroundColor Cyan
+        & scoop install main/nu --force
     } else {
         Write-Host "`n🚀 正在通过 Scoop 安装 Nushell..." -ForegroundColor Cyan
         & scoop install main/nu
+    }
 
-        if (Test-Path (Join-Path $InstallDir "nu.exe")) {
-            $AppExe = Join-Path $InstallDir "nu.exe"
-            $isInstalled = $true
-        }
-        if (-not $isInstalled) {
-            throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
-        }
+    if (Test-Path (Join-Path $InstallDir "nu.exe")) {
+        $AppExe = Join-Path $InstallDir "nu.exe"
+        $isInstalled = $true
+    }
+    if (-not $isInstalled) {
+        throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
     }
 }
 
@@ -488,8 +497,8 @@ if (Test-Path $helperScript) {
     }
 }
 
-# 6.3 注入 config.nu 黄金基线配置
-Write-Host "⚙️  正在单向对齐 config.nu 黄金体验基线..." -ForegroundColor Cyan
+# 6.3 注入 config.nu 工程基线配置
+Write-Host "⚙️  正在单向对齐 config.nu 体验基线..." -ForegroundColor Cyan
 Update-ManagedConfigFile -FilePath $ConfigFile -Tag "nu-history-baseline" -NewContent $nuBaseline
 Write-Host "✅ config.nu 体验基线配置已原子落盘至: $ConfigFile" -ForegroundColor Green
 

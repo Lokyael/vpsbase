@@ -12,22 +12,29 @@
     3. 与包管理器的协同契约：
        - 纳管对象涵盖 D:\prog\<app> 独立原生维护应用，以及具备系统特权提权（免 UAC 计划任务）、TUN 网络集成或运行态并发保护的 Scoop 增强应用；
        - 针对 Scoop 托管的应用，恪守“二进制版本迭代委托 Scoop 原生管道、配置持久化尊重 persist 规范、系统提权与基线巡检由子脚本自治闭环”的协同契约。
-    4. 支持现代正交生命周期操作模式与复合编排：
-       - Sync        : 增量对齐 (默认，缺失则装、偏离则修，保留用户动态数据)；
-       - Check       : 状态体检 (100% 只读比对受控属性 Diff，零写入安全退出)；
-       - ResetConfig : 纯配置重置 (本体不动，强制将受控策略、注册表与软链接重写为黄金基线)；
-       - Uninstall   : 彻底清洁卸载 (终止进程，注销系统关联与快捷方式，抹除软件目录与数据)；
-       - Reinstall   : 深度清洁重装 (双阶流水线编排——先调用 Uninstall 彻底抹除，再调用 Sync 全新构建)；
-       - Upgrade     : 覆盖升级本体 (重新解包/升级程序本体，保留用户数据与配置)。
+    4. 支持现代正交声明式生命周期操作模式与控制开关：
+       - Sync      : 增量对齐受控基线 (默认，缺失/版本漂移则装、偏离则修，保留用户动态数据)；
+       - Check     : 状态体检巡检 (100% 只读比对三层受控属性 Diff，零写入安全退出)；
+       - Uninstall : 清洁卸载退役 (终止进程，注销系统关联与快捷方式，抹除软件本体；默认保留用户核心数据)。
+       控制开关契约：
+       - Force     : 配合 Sync，强制重新下载/解包覆盖安装程序本体并回正基线 (替代高危重装，数据零丢失)；
+       - Purge     : 配合 Uninstall，连带深度物理粉碎用户数据目录与持久化缓存；
+       - Yes       : 免交互全量放行开关。
 
 .PARAMETER Action
-    指定生命周期操作模式，可选值: Sync, Check, ResetConfig, Uninstall, Reinstall, Upgrade。默认交互选择。
+    指定生命周期操作模式，可选值: Sync, Check, Uninstall。默认交互选择。
 
 .PARAMETER Apps
     指定要执行的应用标识列表 (以逗号分隔，如 'zen-browser,steam' 或 'all')。默认交互选择。
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过应用审查交互，直接全量执行指定基线 (适用于全新装机自动化流水线)。
+
+.PARAMETER Force
+    配合 Sync 使用，强制重新拉取/解包覆盖安装程序本体并回正配置 (用于程序损坏或强制刷新环境)。
+
+.PARAMETER Purge
+    配合 Uninstall 使用，连带深度物理粉碎用户数据目录与客制配置。
 
 .EXAMPLE
     # 交互式全流程引导 (自动发现大盘 -> 序号勾选应用 -> 选模式 -> 调度自治执行)
@@ -39,21 +46,26 @@
     # 静默增量对齐 Zen Browser 与 Steam
     pwsh -File .\scripts\setup-apps.ps1 -Action Sync -Apps zen-browser,steam -Yes
 
-    # 深度清洁重装指定应用 (双阶自动流转: 先彻底卸载，再全新构建)
-    pwsh -File .\scripts\setup-apps.ps1 -Action Reinstall -Apps zen-browser
+    # 强制重新部署覆盖指定应用 (数据零丢失)
+    pwsh -File .\scripts\setup-apps.ps1 -Action Sync -Force -Apps zen-browser
 
-    # 彻底清洁卸载指定应用 (下线退役并扫除一切关联)
+    # 安全清洁卸载指定应用 (默认保留用户数据)
     pwsh -File .\scripts\setup-apps.ps1 -Action Uninstall -Apps steam
+
+    # 彻底粉碎卸载指定应用 (连带抹除数据)
+    pwsh -File .\scripts\setup-apps.ps1 -Action Uninstall -Purge -Apps steam
 #>
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Reinstall", "Upgrade", "")]
+    [ValidateSet("Sync", "Check", "Uninstall", "")]
     [string]$Action = "",
 
     [string[]]$Apps,
 
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,7 +108,7 @@ if ($localCandidates.Count -gt 0) {
 # 阶段 1: 基于契约的静态发现与元数据提取 (Plan - Zero-Cost AST Introspection)
 # ==============================================================================
 $DiscoveredApps = [ordered]@{}
-$scriptFiles = Get-ChildItem -Path $AppsDir -Filter "*.ps1" -File | Sort-Object Name
+$scriptFiles = Get-ChildItem -Path $AppsDir -Filter "*.ps1" -File | Where-Object { -not $_.Name.StartsWith('_') } | Sort-Object Name
 
 foreach ($file in $scriptFiles) {
     $appId = $file.BaseName.ToLower()
@@ -264,12 +276,9 @@ if ($selectedIds.Count -eq 0) {
 # 2. 判定生命周期操作模式
 if ([string]::IsNullOrWhiteSpace($Action) -and -not $Yes) {
     Write-Host "`n⚙️  请选择要执行的通用生命周期模式:" -ForegroundColor Cyan
-    Write-Host "  [1] 增量对齐 (Sync)        - 推荐：缺失则装、偏离则修，保留用户数据" -ForegroundColor White
-    Write-Host "  [2] 纯配置重置 (ResetConfig) - 强制回正策略、注册表与配置为黄金基线" -ForegroundColor White
-    Write-Host "  [3] 彻底清洁卸载 (Uninstall) - 终止进程、注销系统关联并抹除软件与数据" -ForegroundColor Yellow
-    Write-Host "  [4] 深度清洁重装 (Reinstall) - 双阶流水线：先清洁卸载抹除，再全新构建基线" -ForegroundColor Magenta
-    Write-Host "  [5] 状态体检巡检 (Check)     - 100% 只读比对所有配置项 Diff，零写入安全退出" -ForegroundColor Green
-    Write-Host "  [6] 覆盖升级程序 (Upgrade)   - 重新解包/升级程序本体，保留用户数据" -ForegroundColor White
+    Write-Host "  [1] 增量对齐受控基线 (Sync)     - 推荐：缺失/版本漂移则装、偏离则修，保留用户数据" -ForegroundColor White
+    Write-Host "  [2] 状态体检只读巡检 (Check)    - 100% 只读比对所有配置项 Diff，零写入安全退出" -ForegroundColor Green
+    Write-Host "  [3] 安全清洁卸载退役 (Uninstall)- 终止进程、注销系统关联、清理本体 (默认保留数据)" -ForegroundColor Yellow
     Write-Host "  [Q] 退出编排器`n" -ForegroundColor Gray
 
     $modeChoice = Read-Host "选择操作模式 [默认: 1 (Sync 增量对齐)]"
@@ -278,18 +287,18 @@ if ([string]::IsNullOrWhiteSpace($Action) -and -not $Yes) {
         return
     }
     $Action = switch ($modeChoice.Trim()) {
-        "2" { "ResetConfig" }
+        "2" { "Check" }
         "3" { "Uninstall" }
-        "4" { "Reinstall" }
-        "5" { "Check" }
-        "6" { "Upgrade" }
         default { "Sync" }
     }
 } elseif ([string]::IsNullOrWhiteSpace($Action)) {
     $Action = "Sync"
 }
 
-Write-Host "`n🚀 编排目标锁定: [ $($selectedIds -join ', ') ] | 执行模式: [ $Action ]`n" -ForegroundColor Green
+Write-Host "`n🚀 编排目标锁定: [ $($selectedIds -join ', ') ] | 执行模式: [ $Action ]" -ForegroundColor Green
+if ($Force) { Write-Host "⚡ 启用强制重装模式 (-Force): 将全量重新下载/解包覆盖安装本体" -ForegroundColor Yellow }
+if ($Purge) { Write-Host "🔥 启用深度粉碎模式 (-Purge): 卸载时将连带物理抹除用户数据" -ForegroundColor Red }
+Write-Host ""
 
 # ==============================================================================
 # 阶段 3: 单向流水线调度 (Apply)
@@ -304,21 +313,11 @@ foreach ($key in $selectedIds) {
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        if ($Action -eq "Reinstall") {
-            Write-Host "  ▶ [流水线 1/2] 正在彻底清洁卸载: $($app.Name)..." -ForegroundColor Yellow
-            $uninstSplat = @{ Action = "Uninstall" }
-            if ($Yes) { $uninstSplat["Yes"] = $true }
-            & $app.FullName @uninstSplat
-
-            Write-Host "`n  ▶ [流水线 2/2] 正在全新装配黄金基线: $($app.Name)..." -ForegroundColor Cyan
-            $syncSplat = @{ Action = "Sync" }
-            if ($Yes) { $syncSplat["Yes"] = $true }
-            & $app.FullName @syncSplat
-        } else {
-            $splat = @{ Action = $Action }
-            if ($Yes) { $splat["Yes"] = $true }
-            & $app.FullName @splat
-        }
+        $splat = @{ Action = $Action }
+        if ($Yes) { $splat["Yes"] = $true }
+        if ($Force) { $splat["Force"] = $true }
+        if ($Purge) { $splat["Purge"] = $true }
+        & $app.FullName @splat
         $sw.Stop()
 
         $executionReport.Add([PSCustomObject]@{

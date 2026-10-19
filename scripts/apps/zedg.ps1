@@ -4,43 +4,52 @@
     ZedG 编辑器
 
 .DESCRIPTION
-    ZedG (Zed Globalization) 汉化版现代高性能代码编辑器 (Windows) 黄金基线配置与字体注入工具。
+    ZedG (Zed Globalization) 汉化版现代高性能代码编辑器 (Windows) 工程基线配置与字体注入工具。
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 基于 Scoop 纳管的二进制本体 (D:\prog\scoop\apps\zedg\current\ZedG.exe)。
-    3. 注入 %APPDATA%\Zed\settings.json 黄金基线配置：固化工作站官方等宽字体基线 (Maple Mono NL NFMono CN)、关闭代码连字、规范 2 空格缩进、规范 POSIX 换行 (prefer_lf)、失焦自动保存、pwsh 终端集成与原生遥测切断。
+    3. 注入 %APPDATA%\Zed\settings.json 工程基线配置：固化工作站等宽字体基线 (Maple Mono NL NFMono CN)、关闭代码连字、规范 2 空格缩进、自动软折行与空白字符显示、规范 POSIX 换行 (prefer_lf)、失焦自动保存、pwsh 终端集成与原生遥测切断。
     4. 采用无破坏增量合并机制纳管 settings.json：原生兼容 JSONC 注释与尾随逗号，完整保留用户自定义主题、插件与客制配置。
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
-    - Sync        : 增量对齐黄金基线 (默认，缺失则装、偏离则修)
-    - Check       : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
-    - ResetConfig : 仅执行 settings.json 黄金基线注入与回正
-    - Uninstall   : 彻底清洁卸载 ZedG 并抹除配置与持久化
-    - Upgrade     : 覆盖升级客户端本体 (调用 Scoop update)
+    - Sync      : 增量对齐受控基线 (默认，缺失则装、偏离则修)
+    - Check     : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
+    - Uninstall : 清洁卸载 ZedG (默认保留用户自定义配置与插件)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
+
+.PARAMETER Force
+    配合 Sync 使用，强制重新调用 Scoop 重新安装/更新本体并全量重写配置。
+
+.PARAMETER Purge
+    配合 Uninstall 使用，连带深度物理粉碎配置目录与持久化缓存 (包含 persist)。
 
 .EXAMPLE
     # 只查不改体检巡检
     pwsh -File .\scripts\apps\zedg.ps1 -Action Check
 
-    # 交互式检查并应用黄金基线
+    # 交互式检查并应用工程基线
     pwsh -File .\scripts\apps\zedg.ps1
 
-    # 仅修复字体与黄金基线配置
-    pwsh -File .\scripts\apps\zedg.ps1 -Action ResetConfig
+    # 强制重新部署覆盖本体并对齐基线
+    pwsh -File .\scripts\apps\zedg.ps1 -Force
 
-    # 彻底清洁卸载
+    # 安全清洁卸载 (保留配置)
     pwsh -File .\scripts\apps\zedg.ps1 -Action Uninstall
+
+    # 深度粉碎卸载 (全抹除)
+    pwsh -File .\scripts\apps\zedg.ps1 -Action Uninstall -Purge
 #>
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [ValidateSet("Sync", "Check", "Uninstall")]
     [string]$Action = "Sync",
 
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,6 +106,35 @@ function Ensure-Dir {
     if (-not (Test-Path $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
 }
 
+function Ensure-ScoopBucket {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BucketName,
+        [string]$BucketRepo = ""
+    )
+    $bucketDir = Join-Path $scoopRoot "buckets\$BucketName"
+    if (Test-Path $bucketDir) {
+        return
+    }
+
+    $installedBuckets = @(& scoop bucket list 2>$null 3>$null | ForEach-Object {
+        if ($_.Name) { $_.Name } else { ($_ -split '\s+')[0] }
+    })
+    if ($installedBuckets -contains $BucketName) {
+        return
+    }
+
+    Write-Host "📦 正在添加 Scoop '$BucketName' bucket..." -ForegroundColor Cyan
+    if ($BucketRepo) {
+        & scoop bucket add $BucketName $BucketRepo
+    } else {
+        & scoop bucket add $BucketName
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "添加 Scoop bucket '$BucketName' 失败 (退出代码 $LASTEXITCODE)，请检查网络连接与仓库地址。"
+    }
+}
+
 function ConvertFrom-Jsonc {
     param([string]$JsoncText)
     if ([string]::IsNullOrWhiteSpace($JsoncText)) { return $null }
@@ -114,7 +152,7 @@ $ManagedSpecs = @(
         Property = "代码主等宽字体 (buffer_font_family)"
         Path     = "buffer_font_family"
         Expected = "Maple Mono NL NFMono CN"
-        Purpose  = "固化工作站官方开源等宽字体 Maple Mono"
+        Purpose  = "固化工作站等宽字体 (Maple Mono NL NFMono CN)"
         Impact   = "提供清晰高辨识度的中英文代码等宽排版，避免字形变形"
     },
     @{
@@ -158,6 +196,20 @@ $ManagedSpecs = @(
         Expected = "False"
         Purpose  = "禁止在代码中插入硬制表符 \t"
         Impact   = "按 Tab 键自动展开为 2 个真实空格字符"
+    },
+    @{
+        Property = "自动软折行 (soft_wrap)"
+        Path     = "soft_wrap"
+        Expected = "editor_width"
+        Purpose  = "超出编辑器视口宽度的长文本自动折行"
+        Impact   = "消除水平横向滚动条，按当前窗口边缘动态折行显示"
+    },
+    @{
+        Property = "显示空白与换行符 (show_whitespaces)"
+        Path     = "show_whitespaces"
+        Expected = "all"
+        Purpose  = "在编辑区显式渲染空格、制表符及换行标记"
+        Impact   = "增强代码缩进与不可见字符的可视化排查能力"
     },
     @{
         Property = "优先 POSIX LF 换行 (prefer_lf = true)"
@@ -332,7 +384,7 @@ foreach ($item in $ManagedSpecs) {
         状态判定 = if ($matched) { "✔ 匹配" } else { "✘ 偏离" }
     })
 
-    if (-not $matched -and $Action -ne "Upgrade") {
+    if (-not $matched) {
         $PendingItems.Add([PSCustomObject]@{
             Property = $item.Property
             Path     = $item.Path
@@ -350,15 +402,15 @@ $AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
 $driftCount = $PendingItems.Count
 if ($Action -eq "Check") {
     if ($driftCount -eq 0) {
-        Write-Host "✨ [状态合规] 所有受控属性与黄金基线完全一致，无需调整。`n" -ForegroundColor Green
+        Write-Host "✨ [状态合规] 所有受控属性与工程基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
         Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $driftCount) -ForegroundColor Yellow
     }
     return
 }
 
-if ($driftCount -eq 0 -and $Action -ne "Upgrade") {
-    Write-Host "✨ [状态合规] 所有受控属性均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+if ($driftCount -eq 0 -and -not $Force) {
+    Write-Host "✨ [状态合规] 所有受控属性均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
@@ -381,14 +433,16 @@ if ($runningZed) {
     Start-Sleep -Milliseconds 500
 }
 
-# 5.2 未安装审查门禁
-if (-not $isInstalled) {
-    if ($Action -eq "ResetConfig") {
-        throw "未检测到 ZedG 编辑器安装！请先执行 -Action Sync 安装本体后再重置配置。"
-    }
-
+# 5.2 未安装或强制重装审查门禁
+$needBinaryDeploy = (-not $isInstalled) -or $Force
+if ($needBinaryDeploy) {
     if (-not $Yes) {
-        $shouldInstall = (Read-Host "未检测到 ZedG 编辑器，是否立即调用 Scoop 安装？[Y/n]").Trim()
+        $promptMsg = if (-not $isInstalled) {
+            "未检测到 ZedG 编辑器，是否立即调用 Scoop 安装？[Y/n]"
+        } else {
+            "已开启强制重新部署 (-Force)，是否重新通过 Scoop 安装/更新 ZedG 本体？[Y/n]"
+        }
+        $shouldInstall = (Read-Host $promptMsg).Trim()
         if ($shouldInstall -match '^(n|no)$') {
             Write-Host "[-] 操作已由用户取消，安全退出。`n" -ForegroundColor DarkGray
             return
@@ -409,7 +463,7 @@ if (-not $Yes) {
         $idx++
     }
 
-    $gateChoice = (Read-Host "`n确认应用上述黄金基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
+    $gateChoice = (Read-Host "`n确认应用上述工程基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
     if ($gateChoice -match '^(q|quit|n|no)$') {
         Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
@@ -421,32 +475,33 @@ if (-not $Yes) {
 # ==============================================================================
 
 # 6.1 程序本体安装或覆盖升级
-if (-not $isInstalled -or $Action -eq "Upgrade") {
+if ($needBinaryDeploy) {
     if (-not (Get-Command "scoop" -ErrorAction SilentlyContinue)) {
         throw "未检测到 scoop 命令，请先就绪 Scoop 包管理器环境。"
     }
 
-    if ($Action -eq "Upgrade") {
-        Write-Host "`n📦 [覆盖升级] 正在调用 Scoop 升级 ZedG 本体..." -ForegroundColor Cyan
-        & scoop update zedg
-        Write-Host "✅ [升级完成] ZedG 客户端本体已完成升级。`n" -ForegroundColor Green
-        return
+    Ensure-ScoopBucket $ScoopBucket "https://github.com/x6nux/scoop-zedg"
+    if ($Force -and $isInstalled) {
+        Write-Host "`n📦 [强制重新部署] 正在重新安装/更新 ZedG 本体..." -ForegroundColor Cyan
+        & scoop install zedg/zedg --force
     } else {
         Write-Host "`n🚀 正在通过 Scoop 安装 ZedG..." -ForegroundColor Cyan
-        & scoop bucket add zedg https://github.com/shunf4/zedg-scoop 2>$null | Out-Null
         & scoop install zedg/zedg
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Scoop 部署 ZedG 失败 (退出代码 $LASTEXITCODE)。"
+    }
 
-        $cand = Join-Path $scoopRoot "apps\zedg\current"
-        if (Test-Path (Join-Path $cand "ZedG.exe")) {
-            $AppExe = Join-Path $cand "ZedG.exe"
-            $isInstalled = $true
-        } elseif (Test-Path (Join-Path $cand "bin\ZedG.exe")) {
-            $AppExe = Join-Path $cand "bin\ZedG.exe"
-            $isInstalled = $true
-        }
-        if (-not $isInstalled) {
-            throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
-        }
+    $cand = Join-Path $scoopRoot "apps\zedg\current"
+    if (Test-Path (Join-Path $cand "ZedG.exe")) {
+        $AppExe = Join-Path $cand "ZedG.exe"
+        $isInstalled = $true
+    } elseif (Test-Path (Join-Path $cand "bin\ZedG.exe")) {
+        $AppExe = Join-Path $cand "bin\ZedG.exe"
+        $isInstalled = $true
+    }
+    if (-not $isInstalled) {
+        throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
     }
 }
 
@@ -476,7 +531,7 @@ foreach ($item in $ManagedSpecs) {
 
 $finalJson = $targetJsonObj | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText($ConfigFile, $finalJson, [System.Text.UTF8Encoding]::new($false))
-Write-Host "✅ settings.json 黄金基线已原子落盘至: $ConfigFile" -ForegroundColor Green
+Write-Host "✅ settings.json 工程基线已原子落盘至: $ConfigFile" -ForegroundColor Green
 
 # ==============================================================================
 # 7. 阶段 4: 尾部简报与动态真待办 (Report)
@@ -485,7 +540,7 @@ Write-Host "`n==================================================================
 Write-Host "  ✅ [$AppName] 基线与配置管理完成！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 Write-Host "   - 字体基线: 已注入 Maple Mono NL NFMono CN 并关闭代码连字" -ForegroundColor Gray
-Write-Host "   - 编辑基线: 固化 2 空格缩进、失焦即时保存与 LF 换行格式" -ForegroundColor Gray
+Write-Host "   - 编辑基线: 固化 2 空格缩进、自动软折行、空白符显示、失焦即时保存与 LF 换行格式" -ForegroundColor Gray
 Write-Host "   - 隐私与终端: 切断遥测与匿名指标上传，锁定系统终端集成" -ForegroundColor Gray
 
 return

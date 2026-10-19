@@ -11,30 +11,30 @@
        - 严格精确匹配模块标识（Exact Match Only），拒绝隐式猜测，保障基础设施操作的 100% 确定性。
     3. 支持系统加固正交二要素：
        - 操作意图 (Action)  : Sync (增量对齐收敛/默认) 或 Check (只查不改/体检巡检)；
-       - 加固预设 (Profile) : Full (黄金深度基线/默认) 或 General (通用稳健预设，跳过激进项)。
-    4. 审查门禁：默认逐模块交互确认；亦支持 -Yes 一键全采纳流水线。
+       - 加固预设 (Profile) : Full (全量工程基线/默认) 或 General (通用基线，跳过深度裁剪项)。
+    4. 审查门禁：默认逐模块交互确认；亦支持 -Yes 免交互全量流水线。
     5. 内置远程一键执行适配层 (Remote Fallback)，在 irm ... | iex 无落盘内存态下自动拉取子模块执行并自愈销毁临时目录。
 
 .PARAMETER Action
     指定生命周期模式，可选值: Sync (执行加固), Check (只查不改/体检巡检)。默认交互选择。
 
 .PARAMETER Profile
-    指定配置预设，可选值: Full (黄金深度基线), General (通用稳健基线)。默认交互选择。
+    指定配置预设，可选值: Full (全量工程基线), General (通用基线)。默认交互选择。
 
 .PARAMETER Modules
     指定要执行的模块标识列表 (以逗号分隔，如 'telemetry,shell' 或 'all')。默认全量有序调度。
 
 .PARAMETER Yes
-    一键全量确认放行。跳过模块审查交互，直接全量执行指定基线。
+    免交互全量确认放行开关。跳过模块审查交互，直接全量执行指定基线。
 
 .EXAMPLE
     # 交互式全流程引导 (自动发现大盘 -> 模式决策 -> 调度自治执行)
     pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1
 
-    # 个人黄金深度基线一键全量加固 (包含全域黄金深度优化)
+    # 全量工程基线加固 (应用全量受控规则)
     pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Profile Full -Yes
 
-    # 通用稳健预设基线加固 (通用稳健预设，温和兼容)
+    # 通用基线加固 (仅应用通用项)
     pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Profile General -Yes
 
     # 只读全量巡检体检 (绝不修改任何系统配置)
@@ -275,8 +275,8 @@ try {
             if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = "Full" }
         } else {
             Write-Host "`n=========================== 请选择配置执行模式 ===========================" -ForegroundColor Cyan
-            Write-Host "  [1] 个人全量模式 (一键 Y: 7 大领域全量黄金深度基线加固)" -ForegroundColor White
-            Write-Host "  [2] 通用稳健模式 (通用预设: 7 大领域通用稳健加固，跳过激进项)" -ForegroundColor White
+            Write-Host "  [1] 全量模式 (免交互: 7 大领域全量工程基线加固)" -ForegroundColor White
+            Write-Host "  [2] 通用模式 (免交互: 7 大领域通用基线加固，跳过深度裁剪项)" -ForegroundColor White
             Write-Host "  [3] 逐块审查模式 (全交互 [默认回车]: 逐模块展示待优化项，交互确认执行)" -ForegroundColor White
             Write-Host "  [4] 只查不改模式 (体检巡检: 预览全部模块待加固项明细，绝不触碰系统)" -ForegroundColor White
             Write-Host "  [Q] 退出脚本 (不执行任何命令)" -ForegroundColor DarkGray
@@ -289,13 +289,13 @@ try {
                     $Action = "Sync"
                     $Profile = "Full"
                     $Yes = $true
-                    Write-Host "  [+] 已选择: 个人全量模式 (Profile: Full, 一键 Y)" -ForegroundColor Green
+                    Write-Host "  [+] 已选择: 全量模式 (Profile: Full, 免交互自动确认)" -ForegroundColor Green
                 }
                 '2' {
                     $Action = "Sync"
                     $Profile = "General"
                     $Yes = $true
-                    Write-Host "  [+] 已选择: 通用稳健模式 (Profile: General, 选配项跳过保持原样)" -ForegroundColor Cyan
+                    Write-Host "  [+] 已选择: 通用模式 (Profile: General, 免交互自动确认)" -ForegroundColor Cyan
                 }
                 '4' {
                     $Action = "Check"

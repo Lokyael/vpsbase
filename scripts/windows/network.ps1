@@ -13,6 +13,9 @@
     6. 禁止系统更新后有用户登录状态下自动重启，关闭 P2P 局域网/公网传递优化以节约带宽。
     7. 禁用 Microsoft Store 应用在后台静默自动下载与更新。
     8. Windows Defender 防火墙全域安全基线：锁定 Domain/Private/Public 配置文件全域开启，默认阻断所有未受控入站并允许正常出站。
+    9. 禁用 TCP/IP 上的 NetBIOS (NetbiosOptions=2)，切断 137/138/139 广播名称解析，收敛至纯 DNS/DoH。
+    10. 强制远程桌面网络级别身份验证 (NLA)，阻断未设密码本地账户的网络远程登录。
+    11. 切换中立全球 Anycast 高可用 NTP 时间同步集群 (Cloudflare / Pool / Apple)，加固 3600s 轮询，消除握手丢包与遥测心跳。
 
 .PARAMETER Action
     操作模式:
@@ -21,8 +24,8 @@
 
 .PARAMETER Profile
     加固预设:
-    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
-    - General : 通用稳健基线 (保守兼容)
+    - Full    : 全量基线 (默认，覆盖全量受控规则)
+    - General : 通用基线 (仅覆盖通用受控规则，跳过深度裁剪项)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
@@ -96,7 +99,15 @@ function Get-RegVal {
     param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
     if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return if ($null -ne $val) { "$val" } else { $Default }
+    if ($null -ne $val) { return "$val" }
+    return $Default
+}
+
+function Test-RegDword {
+    param([string]$Path, [string]$Name, [int]$ExpectedValue)
+    if (-not (Test-Path $Path)) { return $false }
+    $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
+    return ($null -ne $val -and [int]$val -eq $ExpectedValue)
 }
 
 # ==============================================================================
@@ -260,6 +271,57 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "disable-netbios-over-tcpip"
+        Name    = "NetBIOS over TCP/IP 广播协议禁用 (NetbiosOptions = 2)"
+        Profile = "General"
+        Purpose = "禁用网络适配器上的 NetBIOS over TCP/IP，彻底阻断 137/138/139 广播名称解析与局域网欺骗，使网络名称解析全面收敛于 DNS/DoH"
+        Impact  = "无法通过古老的 NetBIOS 单机名访问未经现代 DNS 解析的极老旧内网设备（现代 SMB 445 端口直连完全不受影响）"
+        Check   = {
+            $nics = @(Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object IPEnabled -eq $true)
+            if ($nics.Count -eq 0) { return @{ Actual = "无 IP 适配器"; Expected = "全部为 2 (已禁用)"; IsCompliant = $true } }
+            $nonCompliant = @($nics | Where-Object { $_.TcpipNetbiosOptions -ne 2 })
+            $isPass = ($nonCompliant.Count -eq 0)
+            $actualStr = if ($isPass) { "全部已禁用 (2)" } else { "$($nonCompliant.Count) 块网卡未禁用 ($($nonCompliant.Description -join '; '))" }
+            return @{ Actual = $actualStr; Expected = "全部为 2 (已禁用)"; IsCompliant = $isPass }
+        }
+        Apply   = {
+            $nics = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object IPEnabled -eq $true
+            foreach ($nic in $nics) {
+                if ($nic.TcpipNetbiosOptions -ne 2) {
+                    $nic.SetTcpipNetbios(2) | Out-Null
+                }
+            }
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "rdp-require-nla"
+        Name    = "远程桌面网络级别身份验证强制 (NLA UserAuthentication = 1)"
+        Profile = "General"
+        Purpose = "强制 RDP 远程桌面连接必须先完成网络级身份认证方可分配图形会话资源，防御未认证远程溢出与 DoS 攻击"
+        Impact  = "不支持现代 CredSSP 认证协议的极老旧第三方 RDP 客户端将无法连接"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" "UserAuthentication"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" "UserAuthentication" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "access-limit-blank-password-use"
+        Name    = "空密码网络远程登录硬阻断 (LimitBlankPasswordUse = 1)"
+        Profile = "General"
+        Purpose = "若系统本地账户未设密码，强制切断一切通过网络发起该账户认证的远程交互通道（RDP/SMB/WinRM），杜绝横向渗透"
+        Impact  = "免密账户仅能在本地物理屏幕前交互式登录，无法通过网络跨机访问"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "LimitBlankPasswordUse"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" "LimitBlankPasswordUse" 1
+        }
+    },
+    [PSCustomObject]@{
         Id      = "disable-wu-driver-overwrite"
         Name    = "Windows Update 排除驱动更新 (ExcludeWUDriversInQualityUpdate = 1)"
         Profile = "General"
@@ -383,6 +445,60 @@ $Rules = @(
         }
         Apply   = {
             Set-NetFirewallProfile -Profile Domain, Private, Public -DefaultOutboundAction Allow -ErrorAction SilentlyContinue | Out-Null
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "ntp-time-servers-anycast"
+        Name    = "Anycast 高可用中立 NTP 时间服务器集群 (Cloudflare / Pool / Apple)"
+        Profile = "General"
+        Purpose = "将时间同步源由微软遥测节点 (time.windows.com) 替换为全球 Anycast 高可用中立集群，消除握手超时并杜绝存活心跳遥测"
+        Impact  = "系统时间同步直接向 Cloudflare / Pool.ntp.org / Apple 发送校时报文，不再向微软 time.windows.com 发送请求"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" "NtpServer"
+            $isPass = ($val -match "time\.cloudflare\.com" -and $val -match "pool\.ntp\.org")
+            return @{
+                Actual      = $val
+                Expected    = "time.cloudflare.com,0x9 pool.ntp.org,0x9 time.apple.com,0x9"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $key = "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters"
+            Ensure-RegKey $key
+            Set-ItemProperty -Path $key -Name "NtpServer" -Value "time.cloudflare.com,0x9 pool.ntp.org,0x9 time.apple.com,0x9" -Force
+            Restart-Service w32time -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "ntp-sync-type-standard"
+        Name    = "时间客户端同步协议模式 (Type = NTP)"
+        Profile = "General"
+        Purpose = "强制将 Windows Time 客户端模式锁定为标准独立 NTP 模式，阻断域时间层次结构覆盖"
+        Impact  = "工作站脱离活动目录域控的时间强制覆盖，完全按本地配置的 NTP 服务器独立校时"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" "Type"
+            return @{ Actual = $val; Expected = "NTP"; IsCompliant = ($val -eq "NTP") }
+        }
+        Apply   = {
+            $key = "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters"
+            Ensure-RegKey $key
+            Set-ItemProperty -Path $key -Name "Type" -Value "NTP" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "ntp-special-poll-interval"
+        Name    = "NTP 校时间隔固化 (SpecialPollInterval = 3600s)"
+        Profile = "General"
+        Purpose = "将时间同步周期固化为 3600 秒 (1 小时)，保障时钟精度并防止漂移超过 3 分钟触发 TLS 证书与 TOTP 鉴权失效"
+        Impact  = "时间同步客户端每小时发起一次校时查询，维持高精度本地时钟"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient" "SpecialPollInterval"
+            return @{ Actual = $val; Expected = "3600"; IsCompliant = ($val -eq "3600") }
+        }
+        Apply   = {
+            $key = "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient"
+            Ensure-RegKey $key
+            Set-RegDword $key "SpecialPollInterval" 3600
         }
     }
 )

@@ -17,8 +17,8 @@
 
 .PARAMETER Profile
     加固预设:
-    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
-    - General : 通用稳健基线 (保守兼容)
+    - Full    : 全量基线 (默认，覆盖全量受控规则)
+    - General : 通用基线 (仅覆盖通用受控规则，跳过深度裁剪项)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
@@ -27,7 +27,7 @@
     # 只读体检巡检
     pwsh -File .\scripts\windows\search.ps1 -Action Check
 
-    # 交互式检查并应用黄金深度基线
+    # 交互式检查与加固
     pwsh -File .\scripts\windows\search.ps1
 
     # 无交互一键全量对齐
@@ -92,7 +92,15 @@ function Get-RegVal {
     param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
     if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return if ($null -ne $val) { "$val" } else { $Default }
+    if ($null -ne $val) { return "$val" }
+    return $Default
+}
+
+function Test-RegDword {
+    param([string]$Path, [string]$Name, [int]$ExpectedValue)
+    if (-not (Test-Path $Path)) { return $false }
+    $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
+    return ($null -ne $val -and [int]$val -eq $ExpectedValue)
 }
 
 # ==============================================================================

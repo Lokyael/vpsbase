@@ -6,16 +6,19 @@
 .DESCRIPTION
     Windows 11 外壳交互纯净化、小组件切断、任务栏轻量化与资源管理器极简基准模块。
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
-    2. 资源管理器默认打开“此电脑”，全景显示已知文件扩展名与隐藏文件。
-    3. 剥离任务栏小组件 (Widgets) 资讯流与 Teams 聊天 (Chat) 图标。
-    4. 禁用连按 5 次 Shift 触发粘滞键与筛选键劫持（杜绝游戏与编程中断）。
-    5. 禁用 Windows 聚焦锁屏动态建议、广告推销与开始菜单推荐项目。
-    6. 禁用 USB 移动介质自动播放 (AutoPlay) 阻断蠕虫自启传播。
-    7. 解除耳机音量 37% 限制警告弹窗 (VolumeLimiter)。
-    8. 彻底卸载 OneDrive、清理用户目录并剥离资源管理器侧边栏驻留 (仅 Full)。
-    9. 剥离资源管理器图库 (Gallery) 驻留与遗留已知文件夹沙盒化 (仅 Full)。
-    10. 从左侧导航窗格隐藏网络 (Network) 网上邻居图标 (仅 Full)。
-    11. 从左侧导航窗格隐藏小房子主页与用户个人主文件夹，直达此电脑 (仅 Full)。
+    2. 资源管理器默认打开“此电脑”，全景显示已知文件扩展名、隐藏文件与完整物理路径。
+    3. 恢复 Windows 10 经典完整右键上下文菜单，新建快捷方式免除「- 快捷方式」文本后缀。
+    4. 剥离任务栏小组件 (Widgets) 资讯流、Teams 聊天、任务视图与 Copilot 图标，系统时钟显示秒数。
+    5. 资源管理器切断服务商横幅广告通知，切断快速访问常用文件夹与最近文件记录。
+    6. 禁用连按 5 次 Shift 触发粘滞键与筛选键劫持，关闭鼠标指针加速度并锁定 1:1 纯线性位移。
+    7. 组策略彻底阻断桌面 Windows 聚焦集合，跳过锁屏壁纸画幅直达登录框，切断锁屏热点建议与开始菜单推荐项目。
+    8. 禁用 USB 移动介质自动播放 (AutoPlay) 阻断蠕虫自启传播。
+    9. 解除耳机音量 37% 限制警告弹窗 (VolumeLimiter)。
+    10. 彻底卸载 OneDrive、清理用户目录并剥离资源管理器侧边栏驻留 (仅 Full)。
+    11. 剥离资源管理器图库 (Gallery) 驻留与遗留已知文件夹沙盒化 (仅 Full)。
+    12. 从左侧导航窗格隐藏网络 (Network) 网上邻居图标 (仅 Full)。
+    13. 从左侧导航窗格隐藏小房子主页与用户个人主文件夹，直达此电脑 (仅 Full)。
+    14. 锁定国家/地区归属为 United States (GeoID 244) 并固化 en-US 区域格式与纯 US 键盘，构建全球通用低熵画像 (仅 Full)。
 
 .PARAMETER Action
     操作模式:
@@ -24,8 +27,8 @@
 
 .PARAMETER Profile
     加固预设:
-    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
-    - General : 通用稳健基线 (保守兼容，跳过卸载 OneDrive 与隐藏侧边栏快捷导航)
+    - Full    : 全量基线 (默认，覆盖全量受控规则)
+    - General : 通用基线 (仅覆盖通用受控规则，跳过深度裁剪项)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
@@ -99,7 +102,36 @@ function Get-RegVal {
     param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
     if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return if ($null -ne $val) { "$val" } else { $Default }
+    if ($null -ne $val) { return "$val" }
+    return $Default
+}
+
+function Test-RegDword {
+    param([string]$Path, [string]$Name, [int]$ExpectedValue)
+    if (-not (Test-Path $Path)) { return $false }
+    $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
+    return ($null -ne $val -and [int]$val -eq $ExpectedValue)
+}
+
+function Set-DesktopWallpaper {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return }
+    if (-not ([System.Management.Automation.PSTypeName]'WallpaperHelper').Type) {
+        $sig = @"
+using System;
+using System.Runtime.InteropServices;
+public class WallpaperHelper {
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+}
+"@
+        Add-Type -TypeDefinition $sig -ErrorAction SilentlyContinue
+    }
+    try {
+        [WallpaperHelper]::SystemParametersInfo(0x0014, 0, $Path, 0x01 -bor 0x02) | Out-Null
+    } catch {
+        Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "WallPaper" -Value $Path -Force
+    }
 }
 
 # ==============================================================================
@@ -149,17 +181,145 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
-        Id      = "taskbar-disable-widgets-icon"
-        Name    = "任务栏小组件资讯流图标剥离 (TaskbarDa = 0)"
+        Id      = "explorer-launch-separate-process"
+        Name    = "资源管理器独立进程模式开启 (SeparateProcess = 1)"
         Profile = "General"
-        Purpose = "移除任务栏左侧天气温度与八卦新闻流小组件悬浮图标，释放桌面注意力"
-        Impact  = "任务栏左侧将不再常驻天气与温度提示，鼠标悬停不再弹出新闻画板"
+        Purpose = "开启「在单独的进程中打开文件夹窗口」，每个资源管理器窗口运行于独立进程，单个窗口卡死或崩溃绝不拖垮任务栏与桌面"
+        Impact  = "每个文件夹窗口占用约数十 MB 独立进程内存，显著提升系统外壳容灾防崩能力"
         Check   = {
-            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarDa"
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "SeparateProcess"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "SeparateProcess" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "window-disable-snap-assist"
+        Name    = "窗口贴靠助手推荐窗口切断 (SnapAssist = 0)"
+        Profile = "General"
+        Purpose = "窗口拖拽至屏幕边缘触发贴靠分屏时，不再强制弹窗推荐其余未分屏窗口，保持桌面极简专注"
+        Impact  = "贴靠后屏幕另一侧不会自动展示候选窗口大图，需手动点击选择目标窗口"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "SnapAssist"
             return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
         }
         Apply   = {
-            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarDa" 0
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "SnapAssist" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "explorer-cabinet-state-full-path"
+        Name    = "资源管理器标题栏显示完整路径 (FullPath = 1)"
+        Profile = "General"
+        Purpose = "在文件资源管理器顶部标题栏始终呈现当前文件夹完整物理绝对路径，方便快速确认工作区层级"
+        Impact  = "顶部标题栏文本变长，在多窗口窄屏并排时路径过长可能部分截断"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" "FullPath"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState" "FullPath" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "explorer-disable-sync-provider-notifications"
+        Name    = "资源管理器同步服务商横幅广告切断 (ShowSyncProviderNotifications = 0)"
+        Profile = "General"
+        Purpose = "切断文件资源管理器顶部可能弹出的 OneDrive 与 Microsoft 365 订阅促销与横幅广告推送"
+        Impact  = "资源管理器顶部不再呈现云同步营销提示"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSyncProviderNotifications"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSyncProviderNotifications" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "explorer-disable-shortcut-suffix"
+        Name    = "新建快捷方式免除「- 快捷方式」后缀 (link = 00 00 00 00)"
+        Profile = "General"
+        Purpose = "创建文件或程序快捷方式时直接继承源名称，不再自动追加「 - 快捷方式」文字后缀，消除手动重命名冗余"
+        Impact  = "快捷方式与本体同名（文件扩展名仍为 .lnk），依赖左下角小箭头图标区分快捷方式与源文件"
+        Check   = {
+            $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"
+            $val = (Get-ItemProperty -Path $key -Name "link" -ErrorAction SilentlyContinue).link
+            $isZero = ($null -ne $val -and $val.Length -ge 4 -and $val[0] -eq 0 -and $val[1] -eq 0 -and $val[2] -eq 0 -and $val[3] -eq 0)
+            $act = if ($isZero) { "00 00 00 00" } elseif ($null -ne $val) { ($val | ForEach-Object { '{0:X2}' -f $_ }) -join ' ' } else { "<未配置>" }
+            return @{ Actual = $act; Expected = "00 00 00 00"; IsCompliant = $isZero }
+        }
+        Apply   = {
+            $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"
+            Ensure-RegKey $key
+            Set-ItemProperty -Path $key -Name "link" -Type Binary -Value ([byte[]](0, 0, 0, 0)) -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "explorer-disable-recent-frequent-recommendations"
+        Name    = "快速访问常用文件夹与最近文件记录切断"
+        Profile = "General"
+        Purpose = "切断资源管理器主页与快速访问对常用文件夹、最近打开文件及云端文件的自动收集与展示，保护隐私防窥探"
+        Impact  = "文件资源管理器「主页」不再自动陈列常用目录与近期文档历史"
+        Check   = {
+            $exp = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"
+            $frequent = Get-RegVal $exp "ShowFrequent"
+            $recent = Get-RegVal $exp "ShowRecent"
+            $cloud = Get-RegVal $exp "ShowCloudFilesInQuickAccess"
+            $isPass = ($frequent -eq "0" -and $recent -eq "0" -and $cloud -eq "0")
+            return @{
+                Actual      = "Frequent=$frequent, Recent=$recent, Cloud=$cloud"
+                Expected    = "Frequent=0, Recent=0, Cloud=0"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $exp = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer"
+            Set-RegDword $exp "ShowFrequent" 0
+            Set-RegDword $exp "ShowRecent" 0
+            Set-RegDword $exp "ShowCloudFilesInQuickAccess" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "taskbar-show-seconds-in-system-clock"
+        Name    = "任务栏系统时钟显示秒数 (ShowSecondsInSystemClock = 1)"
+        Profile = "General"
+        Purpose = "任务栏右下角系统时钟精确呈现时:分:秒，方便毫秒级排障、时间审计与工作节拍把控"
+        Impact  = "任务栏时钟每秒刷新一次，对极低功耗待机设备略微增加极微小唤醒开销（正常使用可忽略）"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSecondsInSystemClock"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSecondsInSystemClock" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "taskbar-hide-task-view-button"
+        Name    = "任务栏任务视图图标隐藏 (ShowTaskViewButton = 0)"
+        Profile = "General"
+        Purpose = "从任务栏剥离常驻的任务视图图标，释放任务栏紧凑空间"
+        Impact  = "任务栏不再显示多任务切换图标，多桌面切换可通过原生快捷键 Win+Tab 或 Win+Ctrl+左/右 调度"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowTaskViewButton"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowTaskViewButton" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "taskbar-hide-copilot-button"
+        Name    = "任务栏 Copilot 图标隐藏 (ShowCopilotButton = 0)"
+        Profile = "General"
+        Purpose = "从任务栏剥离常驻的 Copilot AI 悬浮按钮，净化桌面任务栏空间"
+        Impact  = "任务栏右侧或托盘旁不再显示 Copilot 入口图标"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowCopilotButton"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowCopilotButton" 0
         }
     },
     [PSCustomObject]@{
@@ -178,16 +338,40 @@ $Rules = @(
     },
     [PSCustomObject]@{
         Id      = "taskbar-disable-dsh-policy"
-        Name    = "新闻资讯流组策略全局阻断 (AllowNewsAndInterests = 0)"
+        Name    = "任务栏小组件与新闻资讯流全局阻断 (AllowNewsAndInterests = 0)"
         Profile = "General"
-        Purpose = "从组策略层彻底切断新闻与兴趣资讯流后台刷新通道，杜绝开机静默消耗网络"
-        Impact  = "系统中所有本地账户均无法重新开启任务栏小组件新闻流"
+        Purpose = "从组策略层彻底切断新闻资讯流后台通道并拔除任务栏小组件悬浮图标，释放桌面注意力与网络带宽"
+        Impact  = "任务栏左侧不再呈现小组件天气与温度提示，鼠标悬停不再弹出新闻画板，系统中所有本地账户均生效"
         Check   = {
             $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "AllowNewsAndInterests"
             return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
         }
         Apply   = {
             Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "AllowNewsAndInterests" 0
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarDa" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "explorer-classic-context-menu"
+        Name    = "恢复经典完整右键上下文菜单 (InprocServer32 Override)"
+        Profile = "General"
+        Purpose = "剥离 Windows 11 折叠式二级右键菜单，恢复 Windows 10 经典完整右键菜单，所有扩展菜单项一级直达"
+        Impact  = "右键菜单回归传统紧凑样式，7-Zip、Git、VS Code 等第三方菜单项直接呈现，无需点击「显示更多选项」"
+        Check   = {
+            $clsid = "{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
+            $keyPath = "HKCU:\Software\Classes\CLSID\$clsid\InprocServer32"
+            if (-not (Test-Path $keyPath)) {
+                return @{ Actual = "<未配置 (Win11 折叠菜单)>"; Expected = "经典菜单 (Default=空串)"; IsCompliant = $false }
+            }
+            $defaultVal = (Get-ItemProperty -Path $keyPath -Name "(Default)" -ErrorAction SilentlyContinue)."(Default)"
+            $isPass = ($null -ne $defaultVal -and $defaultVal -eq "")
+            return @{ Actual = if ($isPass) { "经典菜单 (Default=空串)" } else { "<未正确配置>" }; Expected = "经典菜单 (Default=空串)"; IsCompliant = $isPass }
+        }
+        Apply   = {
+            $clsid = "{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
+            $keyPath = "HKCU:\Software\Classes\CLSID\$clsid\InprocServer32"
+            Ensure-RegKey $keyPath
+            Set-ItemProperty -Path $keyPath -Name "(Default)" -Value "" -Force
         }
     },
     [PSCustomObject]@{
@@ -236,6 +420,111 @@ $Rules = @(
             $key = "HKCU:\Control Panel\Accessibility\Keyboard Response"
             Ensure-RegKey $key
             Set-ItemProperty -Path $key -Name "Flags" -Type String -Value "122" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "mouse-disable-pointer-precision-acceleration"
+        Name    = "鼠标指针加速禁用与 1:1 纯线性位移锁定 (MouseSpeed = 0)"
+        Profile = "General"
+        Purpose = "关闭系统「提高指针精确度」非线性曲线加速，将灵敏度锁定在 6/11 标准刻度 (10)，实现手部物理移动与屏幕光标的绝对 1:1 线性映射"
+        Impact  = "彻底消除光标非线性插值漂移，为高精度操控与肌肉记忆打底；习惯了加速插值的用户可能需要短暂适应"
+        Check   = {
+            $p = "HKCU:\Control Panel\Mouse"
+            $speed = Get-RegVal $p "MouseSpeed"
+            $t1 = Get-RegVal $p "MouseThreshold1"
+            $t2 = Get-RegVal $p "MouseThreshold2"
+            $sens = Get-RegVal $p "MouseSensitivity"
+            $isPass = ($speed -eq "0" -and $t1 -eq "0" -and $t2 -eq "0" -and $sens -eq "10")
+            return @{
+                Actual      = "Speed=$speed, T1=$t1, T2=$t2, Sens=$sens"
+                Expected    = "Speed=0, T1=0, T2=0, Sens=10"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $p = "HKCU:\Control Panel\Mouse"
+            Ensure-RegKey $p
+            Set-ItemProperty -Path $p -Name "MouseSpeed" -Type String -Value "0" -Force
+            Set-ItemProperty -Path $p -Name "MouseThreshold1" -Type String -Value "0" -Force
+            Set-ItemProperty -Path $p -Name "MouseThreshold2" -Type String -Value "0" -Force
+            Set-ItemProperty -Path $p -Name "MouseSensitivity" -Type String -Value "10" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "desktop-disable-spotlight-collection"
+        Name    = "桌面 Windows 聚焦组策略阻断 (DisableSpotlightCollectionOnDesktop = 1)"
+        Profile = "General"
+        Purpose = "企业策略级彻底切断桌面 Windows 聚焦集合，移除个性化背景中的聚焦选项，杜绝后台抓取必应壁纸并在桌面生成交互热点"
+        Impact  = "个性化背景设置中的「Windows 聚焦」选项被禁用移除，桌面回归静态壁纸且桌面右上角不再驻留「了解此图片」图标"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableSpotlightCollectionOnDesktop"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableSpotlightCollectionOnDesktop" 1
+            Set-RegDword "HKCU:\Software\Policies\Microsoft\Windows\CloudContent" "DisableSpotlightCollectionOnDesktop" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "desktop-wallpaper-spotlight-decoupling"
+        Name    = "桌面壁纸聚焦缓存脱离与默认静态壁纸回正"
+        Profile = "General"
+        Purpose = "切断当前桌面壁纸对 DesktopSpotlight 临时下载缓存的依赖，清除主题中的聚焦激活标记并回正为官方原生静态壁纸，销毁桌面上常驻的「了解此图片」图标"
+        Impact  = "当前若正在使用 Windows 聚焦壁纸将被重置为 Windows 默认静态壁纸（用户自定义个人图片不受任何影响）"
+        Check   = {
+            $wp = Get-RegVal "HKCU:\Control Panel\Desktop" "WallPaper"
+            $isSpotlight = ($wp -like "*DesktopSpotlight*")
+            $themePath = "$env:LOCALAPPDATA\Microsoft\Windows\Themes\Custom.theme"
+            $isThemeSpotlight = $false
+            if (Test-Path $themePath) {
+                $content = Get-Content $themePath -Raw -ErrorAction SilentlyContinue
+                if ($content -match 'WindowsSpotlight\s*=\s*1') { $isThemeSpotlight = $true }
+            }
+            $isDecoupled = (-not $isSpotlight -and -not $isThemeSpotlight)
+            $actual = if ($isSpotlight -or $isThemeSpotlight) { "聚焦临时缓存与主题激活态" } else { "独立静态壁纸" }
+            return @{ Actual = $actual; Expected = "独立静态壁纸"; IsCompliant = $isDecoupled }
+        }
+        Apply   = {
+            $defaultWp = "$env:SystemRoot\web\wallpaper\Windows\img0.jpg"
+            if (-not (Test-Path $defaultWp)) {
+                $defaultWp = "$env:SystemRoot\web\wallpaper\spotlight\img1.jpg"
+            }
+            if (Test-Path $defaultWp) {
+                Set-DesktopWallpaper $defaultWp
+                Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "WallpaperStyle" -Value "10" -Force
+                Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "TileWallpaper" -Value "0" -Force
+
+                Get-ChildItem -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops\Desktops" -ErrorAction SilentlyContinue | ForEach-Object {
+                    $curWp = (Get-ItemProperty -Path $_.PSPath -Name "Wallpaper" -ErrorAction SilentlyContinue).Wallpaper
+                    if ($curWp -like "*DesktopSpotlight*") {
+                        Set-ItemProperty -Path $_.PSPath -Name "Wallpaper" -Value $defaultWp -Force
+                    }
+                }
+
+                $themePath = "$env:LOCALAPPDATA\Microsoft\Windows\Themes\Custom.theme"
+                if (Test-Path $themePath) {
+                    $tContent = Get-Content $themePath -Raw -ErrorAction SilentlyContinue
+                    if ($tContent) {
+                        $tContent = $tContent -replace 'WindowsSpotlight\s*=\s*1', 'WindowsSpotlight=0'
+                        $tContent = $tContent -replace '(?m)^Wallpaper=.*DesktopSpotlight.*$', "Wallpaper=$defaultWp"
+                        Set-Content -Path $themePath -Value $tContent -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "lockscreen-bypass-to-pin-entry"
+        Name    = "开机与唤醒跳过锁屏壁纸直达登录框 (NoLockScreen = 1)"
+        Profile = "General"
+        Purpose = "开机或按 Win+L 锁屏后，跳过冗余的向上滑动壁纸过渡层，直接呼出密码或 PIN 码键入界面"
+        Impact  = "锁屏状态下不再呈现全屏壁纸与时钟气泡，轻触任意键直接进入凭据输入界面"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" "NoLockScreen"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" "NoLockScreen" 1
         }
     },
     [PSCustomObject]@{
@@ -299,8 +588,8 @@ $Rules = @(
         Id      = "audio-disable-volume-limiter"
         Name    = "耳机音量超出 37% 警告弹窗解除 (VolumeLimiter = 0)"
         Profile = "General"
-        Purpose = "接入耳机或音箱拉大音量时不再阻断并弹出所谓高音量听力保护警告弹窗"
-        Impact  = "在接大功率高灵敏度耳机时，调大系统音量时系统不再保护性强制截断，需用户自行留心音量大小"
+        Purpose = "接入耳机或音频设备拉大音量时解除音量限制，不再弹出听力保护提示弹窗"
+        Impact  = "调大系统音量时系统不再自动截断，需注意音量控制"
         Check   = {
             $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Audio" "VolumeLimiter"
             return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
@@ -447,6 +736,57 @@ $Rules = @(
                 Ensure-RegKey $hkcuPath
                 Set-ItemProperty -Path $hkcuPath -Name "System.IsPinnedToNameSpaceTree" -Type DWord -Value 0 -Force
             }
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "locale-user-geo-united-states"
+        Name    = "国家与地理区域归属锁定 (GeoID = 244 / United States)"
+        Profile = "Full"
+        Purpose = "将用户主位置固定为 United States (GeoID 244)，与美版镜像低熵画像对齐并阻断区域特化组件注入"
+        Impact  = "Microsoft Store 默认展示美区应用分发内容，阻断针对特定区域的营销推广（仅 Full 生效）"
+        Check   = {
+            $geo = (Get-ItemProperty -Path "HKCU:\Control Panel\International\Geo" -ErrorAction SilentlyContinue).Nation
+            return @{ Actual = "$geo"; Expected = "244"; IsCompliant = ("$geo" -eq "244") }
+        }
+        Apply   = {
+            Set-WinHomeLocation -GeoId 244 -ErrorAction SilentlyContinue
+            Ensure-RegKey "HKCU:\Control Panel\International\Geo"
+            Set-ItemProperty -Path "HKCU:\Control Panel\International\Geo" -Name "Nation" -Value "244" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "locale-regional-format-en-us"
+        Name    = "区域格式与文化设定锁定 (LocaleName = en-US)"
+        Profile = "Full"
+        Purpose = "将日期、时间与数字格式严格锁定为全球通用 en-US 标准，杜绝自定义格式产生高熵 Web 指纹"
+        Impact  = "短日期呈现为 M/d/yyyy 格式，12 小时制，符合全球 en-US 企业基线标准（仅 Full 生效）"
+        Check   = {
+            $loc = (Get-ItemProperty -Path "HKCU:\Control Panel\International" -ErrorAction SilentlyContinue).LocaleName
+            return @{ Actual = "$loc"; Expected = "en-US"; IsCompliant = ("$loc" -eq "en-US") }
+        }
+        Apply   = {
+            Set-Culture -CultureInfo "en-US" -ErrorAction SilentlyContinue
+            Ensure-RegKey "HKCU:\Control Panel\International"
+            Set-ItemProperty -Path "HKCU:\Control Panel\International" -Name "LocaleName" -Value "en-US" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "locale-keyboard-pure-us"
+        Name    = "键盘输入法收敛为纯 US 键盘 (0409:00000409)"
+        Profile = "Full"
+        Purpose = "收敛系统输入法列表为原生纯 US 键盘，切断微软自带输入法云端联想并杜绝键入焦点窃取"
+        Impact  = "日常中文打字建议搭配纯离线开源输入法（如 Rime / 小狼毫）（仅 Full 生效）"
+        Check   = {
+            $langs = Get-WinUserLanguageList -ErrorAction SilentlyContinue
+            $isPass = ($langs -and $langs.Count -ge 1 -and $langs[0].LanguageTag -eq "en-US" -and ($langs[0].InputMethodTips -contains "0409:00000409"))
+            $act = if ($langs) { ($langs | ForEach-Object { "$($_.LanguageTag):$($_.InputMethodTips -join ';')" }) -join " | " } else { "未获取" }
+            return @{ Actual = $act; Expected = "en-US:0409:00000409"; IsCompliant = $isPass }
+        }
+        Apply   = {
+            $userLangs = New-WinUserLanguageList -Language "en-US"
+            $userLangs[0].InputMethodTips.Clear()
+            $userLangs[0].InputMethodTips.Add("0409:00000409")
+            Set-WinUserLanguageList -LanguageList $userLangs -Force
         }
     }
 )

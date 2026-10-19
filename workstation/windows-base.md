@@ -43,8 +43,8 @@ irm https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/setup-windows
 
 # 2. 本地执行（管理员 pwsh）
 pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1                    # 交互式引导全流程
-pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Profile Full -Yes # 个人黄金基线一键全量
-pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Profile General -Yes # 通用稳健预设 (跳过激进深度优化项)
+pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Profile Full -Yes # 全量工程基线一键应用
+pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Profile General -Yes # 通用基线一键应用 (跳过深度裁剪项)
 pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Action Check    # 全量只读体检巡检
 pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Modules shell,performance # 定向加固指定模块
 
@@ -81,9 +81,30 @@ Set-ItemProperty -Path $wuKey -Name "ProductVersion" -Type String -Value "Window
 
 ---
 
+## 隐私加固、区域时区与防指纹基线（管理员 pwsh）
+
+操作系统底层物理位置、墨迹击键遥测、区域时区与编码基准已由加固体系（`telemetry.ps1`、`network.ps1`、`performance.ps1`、`shell.ps1`）原生纳管收敛：
+
+| 领域 | 受控基准 | 技术目的与防指纹意图 |
+| :--- | :--- | :--- |
+| **地理位置与传感器** | 组策略阻断 `DisableLocation=1`，停用 `lfsvc` 服务 | 物理切断 Wi-Fi BSSID 与 IP 定位探测，API 调用直接拒绝且永不弹窗打扰 |
+| **键入与墨迹隐私** | 阻断 `TabletPC` / `InputPersonalization` / 撤销隐私协议 | 切断笔迹样本与击键文本云端上传，禁止通讯录人脉挖掘与键入画像分析 |
+| **时间同步协议 (NTP)** | `time.cloudflare.com,0x9 pool.ntp.org,0x9 time.apple.com,0x9` | 替换微软官方节点为 Anycast 高可用集群，消除握手超时与存活心跳遥测 |
+| **系统时区与自更新** | 锁定 `Singapore Standard Time` (UTC+8)，禁用 `tzautoupdate` | 通用低熵东八区画像（无夏令时干扰），消除位置轮询且避免与出站网络冲突 |
+| **编码与底层代码页** | 全局启用 Unicode UTF-8 (`ACP/OEMCP/MACCP = 65001`) | 彻底解决终端与现代开发工具链中文乱码（重启系统后生效） |
+| **国家、格式与键盘** | 国家设为 United States (GeoID 244)，格式 `en-US`，纯 US 键盘 | 契合全球基数最大基准画像，切断特定营销组件与输入法焦点抢占 |
+
+### 只读审计实机状态（pwsh）
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Action Check
+```
+
+---
+
 ## 网络安全与 DNS 泄漏审计（管理员 pwsh）
 
-系统原生 DoH 模板（`223.5.5.5` / `223.6.6.6`）与网络加固已由 `scripts/windows/network.ps1` 自动下发。执行以下基线审计，验证 DNS 加密状态与多网卡解析防泄漏：
+系统原生 DoH 模板（`223.5.5.5` / `223.6.6.6`）与网络加固已由 `scripts/windows/network.ps1` 自动下发。
 
 ### 1. 终端自动化批量探测（pwsh）
 
@@ -117,7 +138,7 @@ Select-String -Path PktMon.txt -Pattern "port 53"
 Get-NetAdapter -Physical | Set-DnsClientServerAddress -ResetServerAddresses
 ```
 
-> **恢复 DoH 黄金基线**：完成网络认证后，执行 `pwsh -File scripts\windows\network.ps1` 即可一键重新下发阿里 DoH 安全模板。
+> **恢复 DoH 工程基线**：完成网络认证后，执行 `pwsh -File scripts\windows\network.ps1` 即可一键重新下发阿里 DoH 安全模板。
 
 ### 5. 按需开启物理网卡 IPv6（管理员 pwsh）
 

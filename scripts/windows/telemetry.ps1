@@ -8,9 +8,12 @@
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 深度切断 DiagTrack、dmwappushservice、CEIP 与 SQMClient 遥测数据流。
     3. 禁用活动历史跨设备流转 (Project Rome) 与 Windows 错误报告 (WER)。
-    4. 阻断 CloudContent 消费级静默预装、更新全屏推销 (SCOOBE) 与开始菜单推广建议。
-    5. 限制剪贴板历史仅限本地，停用 DPS/WDI 诊断策略服务，切断 Edge 后台常驻。
-    6. 阻断外设厂商推广套件与驱动协同安装器静默注入 (Razer 等驱动全家桶，仅 Full)。
+    4. 禁用跨应用广告标识符 (Advertising ID) 与 ContentDeliveryManager 推广/静默预装通道。
+    5. 阻断大版本更新全屏推销 (SCOOBE)、满意度调查 (SIUF) 与开始菜单推广建议。
+    6. 启用本地多项剪贴板历史并阻断云端上传，停用 DPS/WDI 诊断策略服务，切断 Edge 后台常驻。
+    7. 阻断外设厂商推广套件与驱动协同安装器静默注入 (Razer 等驱动全家桶，仅 Full)。
+    8. 组策略底层阻断 Windows 定位系统、物理传感器与位置脚本，停用 lfsvc 服务杜绝权限弹窗。
+    9. 深度切断键入文本分析、墨迹笔迹识别与通讯录人脉挖掘遥测通道，撤销键入个性化授权。
 
 .PARAMETER Action
     操作模式:
@@ -19,8 +22,8 @@
 
 .PARAMETER Profile
     加固预设:
-    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
-    - General : 通用稳健基线 (保守兼容，跳过阻断外设厂商驱动协同安装器等激进项)
+    - Full    : 全量基线 (默认，覆盖全量受控规则)
+    - General : 通用基线 (仅覆盖通用受控规则，跳过深度裁剪项)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
@@ -94,7 +97,15 @@ function Get-RegVal {
     param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
     if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return if ($null -ne $val) { "$val" } else { $Default }
+    if ($null -ne $val) { return "$val" }
+    return $Default
+}
+
+function Test-RegDword {
+    param([string]$Path, [string]$Name, [int]$ExpectedValue)
+    if (-not (Test-Path $Path)) { return $false }
+    $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
+    return ($null -ne $val -and [int]$val -eq $ExpectedValue)
 }
 
 # ==============================================================================
@@ -223,7 +234,7 @@ $Rules = @(
             return @{ Actual = if ($activeCount -eq 0) { "已全部禁用" } else { "$activeCount 项活跃" }; Expected = "全部禁用"; IsCompliant = ($activeCount -eq 0) }
         }
         Apply   = {
-            Get-ScheduledTask -TaskPath "\Microsoft\Windows\Customer Experience Improvement Program\" -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
+            Get-ScheduledTask -TaskPath "\Microsoft\Windows\Customer Experience Improvement Program\" -ErrorAction SilentlyContinue | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null
         }
     },
     [PSCustomObject]@{
@@ -233,13 +244,22 @@ $Rules = @(
         Purpose = "禁用 Microsoft Compatibility Appraiser 等大量消耗 CPU 盘查已装软件的后台扫描任务"
         Impact  = "Windows 不再向微软服务器提交设备软硬件清单用以评估 Windows 12 潜在升级资格"
         Check   = {
-            $tasks = @(Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -ErrorAction SilentlyContinue)
-            if ($tasks.Count -eq 0) { return @{ Actual = "无 AppExperience 任务"; Expected = "全部禁用"; IsCompliant = $true } }
-            $activeCount = ($tasks | Where-Object State -ne 'Disabled').Count
-            return @{ Actual = if ($activeCount -eq 0) { "已全部禁用" } else { "$activeCount 项活跃" }; Expected = "全部禁用"; IsCompliant = ($activeCount -eq 0) }
+            $targetNames = @("Microsoft Compatibility Appraiser*", "ProgramDataUpdater", "StartupAppTask", "MareBackup", "PcaPatchDbTask")
+            $tasks = @(Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -ErrorAction SilentlyContinue | Where-Object {
+                $name = $_.TaskName
+                $matched = $false
+                foreach ($t in $targetNames) { if ($name -like $t) { $matched = $true; break } }
+                $matched
+            })
+            if ($tasks.Count -eq 0) { return @{ Actual = "无 AppExperience 遥测任务"; Expected = "全部禁用"; IsCompliant = $true } }
+            $active = @($tasks | Where-Object State -ne 'Disabled')
+            $actStr = if ($active.Count -eq 0) { "已全部禁用" } else { "$($active.Count) 项活跃 ($($active.TaskName -join ', '))" }
+            return @{ Actual = $actStr; Expected = "全部禁用"; IsCompliant = ($active.Count -eq 0) }
         }
         Apply   = {
-            Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
+            Get-ScheduledTask -TaskPath "\Microsoft\Windows\Application Experience\" -ErrorAction SilentlyContinue | Where-Object {
+                $_.TaskName -ne "SdbinstMergeDbTask"
+            } | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null
         }
     },
     [PSCustomObject]@{
@@ -285,6 +305,20 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "project-rome-disable-mmx"
+        Name    = "跨设备活动体验匹配调度切断 (EnableMmx = 0)"
+        Profile = "General"
+        Purpose = "切断 Project Rome (Match Maker eXperience) 后台跨设备活动事件匹配与状态推送通道"
+        Impact  = "设备不再接收或分发其他关联 Windows 设备的跨机流转事件"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "EnableMmx"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" "EnableMmx" 0
+        }
+    },
+    [PSCustomObject]@{
         Id      = "privacy-disable-tailored-experiences"
         Name    = "基于诊断数据的量身定制体验切断 (TailoredExperiences = 0)"
         Profile = "General"
@@ -296,6 +330,20 @@ $Rules = @(
         }
         Apply   = {
             Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Privacy" "TailoredExperiencesWithDiagnosticDataEnabled" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "telemetry-disable-advertising-id"
+        Name    = "跨应用个性化广告标识符禁用 (AdvertisingInfo Enabled = 0)"
+        Profile = "General"
+        Purpose = "关闭系统为本机分配的唯一广告 ID，切断应用与第三方广告联盟跨应用的商业行为追踪"
+        Impact  = "应用内可能展示通用广告，但不再基于用户跨应用的行为画像推送精准商业广告"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" "Enabled"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" "Enabled" 0
         }
     },
     [PSCustomObject]@{
@@ -324,6 +372,48 @@ $Rules = @(
         }
         Apply   = {
             Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableWindowsConsumerFeatures" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "cdm-disable-content-delivery"
+        Name    = "内容传送管理器主通道阻断 (ContentDeliveryAllowed = 0)"
+        Profile = "General"
+        Purpose = "切断 ContentDeliveryManager 后台主要传送通道，阻断云端商业推广内容静默注入"
+        Impact  = "系统不再主动从云端拉取 Windows 推广内容与商业卡片"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "ContentDeliveryAllowed"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "ContentDeliveryAllowed" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "cdm-disable-oem-preinstalled-apps"
+        Name    = "OEM 出厂合作推广应用静默装配阻断 (OemPreInstalledAppsEnabled = 0)"
+        Profile = "General"
+        Purpose = "阻断系统依据硬件厂商 OEM 合作协议在后台静默下发第三方预装捆绑软件"
+        Impact  = "新用户配置文件创建时不自动拉取硬件厂商关联的推广 UWP 应用"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "OemPreInstalledAppsEnabled"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "OemPreInstalledAppsEnabled" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "cdm-disable-preinstalled-apps"
+        Name    = "微软云端预装推荐应用装配阻断 (PreInstalledAppsEnabled = 0)"
+        Profile = "General"
+        Purpose = "阻断 ContentDeliveryManager 从微软服务器静默分发精选推广应用"
+        Impact  = "消除开始菜单中静默冒出的三方推荐磁贴与应用占位符"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "PreInstalledAppsEnabled"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "PreInstalledAppsEnabled" 0
         }
     },
     [PSCustomObject]@{
@@ -366,6 +456,34 @@ $Rules = @(
         }
         Apply   = {
             Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" "ScoobeSystemSettingEnabled" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "telemetry-disable-siuf-feedback"
+        Name    = "系统反馈与满意度调查弹窗切断 (NumberOfSIUFInPeriod = 0)"
+        Profile = "General"
+        Purpose = "将 Windows 意见反馈与满意度调查（SIUF）触发频率强制固化为 0（从不请求反馈），消除右下角打扰弹窗"
+        Impact  = "系统不再主动弹窗询问体验反馈，但用户仍可手动打开「反馈中心」主动提交问题"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Siuf\Rules" "NumberOfSIUFInPeriod"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Siuf\Rules" "NumberOfSIUFInPeriod" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "clipboard-enable-local-history"
+        Name    = "本地多项剪贴板历史记录启用 (EnableClipboardHistory = 1)"
+        Profile = "General"
+        Purpose = "开启本地多项剪贴板历史功能（快捷键 Win+V 呼出），保留最近复制的多段文本与截图，提升文字处理与编码效率"
+        Impact  = "剪贴板历史仅在本地受控内存中留存，重启系统后自动清空（配合云端上传切断策略，零隐私外泄风险）"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Clipboard" "EnableClipboardHistory"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Clipboard" "EnableClipboardHistory" 1
         }
     },
     [PSCustomObject]@{
@@ -484,6 +602,162 @@ $Rules = @(
             $key = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\RazerInstaller.exe"
             Ensure-RegKey $key
             Set-ItemProperty -Path $key -Name "Debugger" -Value "systray.exe" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "location-disable-system"
+        Name    = "全局地理位置系统级阻断 (DisableLocation = 1)"
+        Profile = "General"
+        Purpose = "企业策略级关闭 Windows 11 全局定位系统，禁止操作系统探测设备物理坐标"
+        Impact  = "系统定位功能完全关闭，应用将无法通过系统位置 API 获知地理坐标"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableLocation"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableLocation" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "location-disable-scripting"
+        Name    = "位置脚本接口调用阻断 (DisableLocationScripting = 1)"
+        Profile = "General"
+        Purpose = "阻断系统脚本与托管环境访问位置 API，防止后台通过脚本刺探物理位置"
+        Impact  = "脚本引擎与自动化运行时无法读取物理位置上下文"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableLocationScripting"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableLocationScripting" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "location-disable-sensors"
+        Name    = "环境与物理传感器全局禁用 (DisableSensors = 1)"
+        Profile = "General"
+        Purpose = "关闭系统环境光、陀螺仪、加速度计等物理传感器接口，消除硬件侧信道探测"
+        Impact  = "平板/二合一设备的屏幕自动旋转与环境光感自适应亮度将被关闭"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableSensors"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableSensors" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "location-disable-windows-provider"
+        Name    = "Windows 定位服务提供程序切断 (DisableWindowsLocationProvider = 1)"
+        Profile = "General"
+        Purpose = "禁止系统向微软定位云端查询物理位置，切断 Wi-Fi BSSID 扫描与 IP 反查定位"
+        Impact  = "Windows 不再向微软服务器发送周边 Wi-Fi 热点 MAC 地址与网络反查请求"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableWindowsLocationProvider"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableWindowsLocationProvider" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "service-disable-lfsvc"
+        Name    = "地理位置支持服务停用与禁用 (lfsvc = Disabled)"
+        Profile = "General"
+        Purpose = "彻底停用底层地理位置支持服务 (lfsvc)，物理切断位置 API 轮询与权限弹窗触发通道"
+        Impact  = "应用与浏览器调用定位 API 时直接返回失败或不可用，系统外壳绝不再弹出位置授权打扰弹窗"
+        Check   = {
+            $s = Get-Service -Name lfsvc -ErrorAction SilentlyContinue
+            $act = if ($s) { "$($s.StartType)" } else { "未安装" }
+            return @{ Actual = $act; Expected = "Disabled"; IsCompliant = ($s -and $s.StartType -eq 'Disabled') }
+        }
+        Apply   = {
+            Stop-Service -Name lfsvc -Force -ErrorAction SilentlyContinue
+            Set-Service -Name lfsvc -StartupType Disabled -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "privacy-disable-implicit-ink-collection"
+        Name    = "墨迹笔迹样本隐式采集组策略阻断 (RestrictImplicitInkCollection = 1)"
+        Profile = "General"
+        Purpose = "企业策略级禁止收集和上报用户手写笔迹与绘图样本数据"
+        Impact  = "微软手写识别引擎将无法根据用户笔迹习惯进行自适应学习"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\TabletPC" "RestrictImplicitInkCollection"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\TabletPC" "RestrictImplicitInkCollection" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "privacy-disable-implicit-text-collection"
+        Name    = "击键文本样本隐式采集组策略阻断 (RestrictImplicitTextCollection = 1)"
+        Profile = "General"
+        Purpose = "企业策略级禁止收集和分析输入法键入的文本、字符序列与高频词汇"
+        Impact  = "微软无法分析用户输入文本以改进云端词库，保障击键内容绝对本地化"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\TabletPC" "RestrictImplicitTextCollection"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\TabletPC" "RestrictImplicitTextCollection" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "privacy-disable-input-personalization-ink"
+        Name    = "输入个性化墨迹分析策略切断 (InputPersonalization RestrictInk = 1)"
+        Profile = "General"
+        Purpose = "组策略切断输入个性化组件的墨迹样本上报通道，消除笔迹画像泄露"
+        Impact  = "墨迹样本收集全面失效"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitInkCollection"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitInkCollection" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "privacy-disable-input-personalization-text"
+        Name    = "输入个性化文本键入分析策略切断 (InputPersonalization RestrictText = 1)"
+        Profile = "General"
+        Purpose = "组策略切断输入个性化组件的击键文本上报通道，杜绝字典挖掘"
+        Impact  = "击键习惯与上下文分析全面失效"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitTextCollection"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\InputPersonalization" "RestrictImplicitTextCollection" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "privacy-disable-contacts-harvesting"
+        Name    = "输入法通讯录人脉挖掘切断 (HarvestContacts = 0)"
+        Profile = "General"
+        Purpose = "禁止输入法从人脉与通讯录中挖掘联系人姓名与关系网用作联想词库"
+        Impact  = "输入法不会自动将通讯录人名作为高频联想词"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\InputPersonalization\TrainedDataStore" "HarvestContacts"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\InputPersonalization\TrainedDataStore" "HarvestContacts" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "privacy-disable-personalization-accepted"
+        Name    = "墨迹书写与键入个性化隐私授权撤销 (AcceptedPrivacyPolicy = 0)"
+        Profile = "General"
+        Purpose = "撤销墨迹书写和键入个性化隐私协议授权，将系统内部键入画像重置为未授权状态"
+        Impact  = "系统不再在后台建立用户的专属键入行为画像"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Personalization\Settings" "AcceptedPrivacyPolicy"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Personalization\Settings" "AcceptedPrivacyPolicy" 0
         }
     }
 )

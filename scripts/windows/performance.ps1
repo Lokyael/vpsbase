@@ -11,8 +11,12 @@
     4. 解除 MAX_PATH 260 字符长路径限制，禁用 NTFS 写入访问时间戳。
     5. SysMain 硬件门禁检测与停用（满足 NVMe SSD + >=16GB 内存时停用后台预读）。
     6. 大内存工作站优化（物理内存 >= 32GB 时停用 MMAgent 内存压缩与页面合并以释放算力）。
-    7. 固化硬件时钟为 UTC (RealTimeIsUniversal) 并禁用自动时区，消除双系统/装机时钟漂移。
-    8. 启用精简休眠模式 (powercfg -h -type reduced)，释放 10GB+ C 盘物理空间 (仅 Full)。
+    7. 固化硬件时钟为 UTC (RealTimeIsUniversal) 并停用自动时区服务，消除双系统/装机时钟漂移与位置遥测。
+    8. 固化系统时区为全球通用低熵的 Singapore Standard Time (UTC+8 / Asia/Singapore，仅 Full)。
+    9. 启用全局 Unicode UTF-8 代码页 (ACP/OEMCP/MACCP = 65001)，根除现代工具链与终端乱码 (仅 Full)。
+    10. 启用精简休眠模式 (powercfg -h -type reduced)，释放 10GB+ C 盘物理空间 (仅 Full)。
+    11. 系统崩溃蓝屏停止自动重启并锁定小型转储 (AutoReboot=0, Minidump)，保护排障现场与内存隐私。
+    12. 组策略阻断 BitLocker 设备加密自动静默激活 (PreventDeviceEncryption=1) 并全景检测磁盘驱动器加密状态。
 
 .PARAMETER Action
     操作模式:
@@ -21,8 +25,8 @@
 
 .PARAMETER Profile
     加固预设:
-    - Full    : 个人黄金深度基线 (默认，极致性能与全域深度加固)
-    - General : 通用稳健基线 (保守兼容，跳过精简休眠等激进项)
+    - Full    : 全量基线 (默认，覆盖全量受控规则)
+    - General : 通用基线 (仅覆盖通用受控规则，跳过深度裁剪项)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行单向收敛。
@@ -96,7 +100,15 @@ function Get-RegVal {
     param([string]$Path, [string]$Name, [string]$Default = "<未配置>")
     if (-not (Test-Path $Path)) { return $Default }
     $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
-    return if ($null -ne $val) { "$val" } else { $Default }
+    if ($null -ne $val) { return "$val" }
+    return $Default
+}
+
+function Test-RegDword {
+    param([string]$Path, [string]$Name, [int]$ExpectedValue)
+    if (-not (Test-Path $Path)) { return $false }
+    $val = (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue).$Name
+    return ($null -ne $val -and [int]$val -eq $ExpectedValue)
 }
 
 # ==============================================================================
@@ -223,25 +235,73 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
-        Id      = "hardware-clock-utc-timezone"
-        Name    = "固化硬件时钟为 UTC 与禁用自动时区更新 (RealTimeIsUniversal = 1)"
+        Id      = "hardware-clock-realtime-is-universal"
+        Name    = "固化主板 CMOS 硬件时钟为 UTC (RealTimeIsUniversal = 1)"
         Profile = "General"
-        Purpose = "将主板 CMOS 硬件时钟锚定为国际标准 UTC 时间，消除 Linux/Windows 双系统与离线开机时间漂移"
-        Impact  = "若主板电池耗尽且处于离线无网环境，开机时间可能不会自动与本地时区同步"
+        Purpose = "将主板 CMOS 硬件时钟锚定为国际标准 UTC 时间，消除双系统与冷启动离线时钟漂移"
+        Impact  = "主板硬件时钟将直接存储 UTC 时间而非本地时间"
         Check   = {
-            $rtc = (Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" "RealTimeIsUniversal") -eq "1"
-            $tzSvc = (Get-Service tzautoupdate -ErrorAction SilentlyContinue).StartType -eq 'Disabled'
-            $isPass = ($rtc -and $tzSvc)
+            $val = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" "RealTimeIsUniversal"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" "RealTimeIsUniversal" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "service-disable-tzautoupdate"
+        Name    = "自动时区更新服务停用与禁用 (tzautoupdate = Disabled)"
+        Profile = "General"
+        Purpose = "停用后台通过网络与位置探测自动修改时区的服务，切断地理位置遥测轮询"
+        Impact  = "时区不会随物理地理位置变换而自动漂移，需手动或通过工程基线固定"
+        Check   = {
+            $s = Get-Service -Name tzautoupdate -ErrorAction SilentlyContinue
+            $act = if ($s) { "$($s.StartType)" } else { "未安装" }
+            return @{ Actual = $act; Expected = "Disabled"; IsCompliant = ($s -and $s.StartType -eq 'Disabled') }
+        }
+        Apply   = {
+            Stop-Service -Name tzautoupdate -Force -ErrorAction SilentlyContinue
+            Set-Service -Name tzautoupdate -StartupType Disabled -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "timezone-target-singapore"
+        Name    = "系统时区锚定 Singapore Standard Time (UTC+8 / Asia/Singapore)"
+        Profile = "Full"
+        Purpose = "将系统时区固化为通用低熵的新加坡标准时间 (UTC+8)，杜绝区域指纹泄漏且无夏令时干扰"
+        Impact  = "系统本地时间呈现为 UTC+8 新加坡时间，不影响 UTC 内部时间戳，浏览器指纹防线可进一步虚拟化（仅 Full 生效）"
+        Check   = {
+            $tzId = (Get-TimeZone).Id
+            return @{ Actual = $tzId; Expected = "Singapore Standard Time"; IsCompliant = ($tzId -eq "Singapore Standard Time") }
+        }
+        Apply   = {
+            Set-TimeZone -Id "Singapore Standard Time" -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "codepage-utf8-global"
+        Name    = "启用全局 Unicode UTF-8 代码页 (ACP/OEMCP/MACCP = 65001)"
+        Profile = "Full"
+        Purpose = "将系统 ANSI/OEM 代码页锁定为 65001 (UTF-8)，消除现代开发工具链、终端与跨平台文本中文乱码"
+        Impact  = "极少数未采用 Unicode 的数十年前老旧非 Unicode 软件可能出现界面文本异常（需重启计算机生效，仅 Full 生效）"
+        Check   = {
+            $nls = "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage"
+            $acp = Get-RegVal $nls "ACP"
+            $oemcp = Get-RegVal $nls "OEMCP"
+            $maccp = Get-RegVal $nls "MACCP"
+            $isPass = ($acp -eq "65001" -and $oemcp -eq "65001" -and $maccp -eq "65001")
             return @{
-                Actual      = if ($isPass) { "UTC=1, tzautoupdate=Disabled" } else { "未配置" }
-                Expected    = "UTC=1, tzautoupdate=Disabled"
+                Actual      = "ACP=$acp, OEMCP=$oemcp, MACCP=$maccp"
+                Expected    = "ACP=65001, OEMCP=65001, MACCP=65001"
                 IsCompliant = $isPass
             }
         }
         Apply   = {
-            Set-RegDword "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation" "RealTimeIsUniversal" 1
-            Stop-Service -Name tzautoupdate -Force -ErrorAction SilentlyContinue
-            Set-Service -Name tzautoupdate -StartupType Disabled
+            $nls = "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\CodePage"
+            Ensure-RegKey $nls
+            Set-ItemProperty -Path $nls -Name "ACP" -Type String -Value "65001" -Force
+            Set-ItemProperty -Path $nls -Name "OEMCP" -Type String -Value "65001" -Force
+            Set-ItemProperty -Path $nls -Name "MACCP" -Type String -Value "65001" -Force
         }
     },
     [PSCustomObject]@{
@@ -264,6 +324,64 @@ $Rules = @(
         }
         Apply   = {
             powercfg -h -type reduced
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "crashcontrol-dump-governance"
+        Name    = "系统崩溃蓝屏停止自动重启与转储轻量化 (AutoReboot = 0, Minidump)"
+        Profile = "General"
+        Purpose = "蓝屏死机时禁止自动重启，保留屏幕错误代码与驱动文件名以供排障；转储模式锁定为 256KB 小型转储 (Minidump)，消除巨型 Dump 占用磁盘与内存敏感数据外泄风险"
+        Impact  = "发生罕见蓝屏时需长按电源键手动重启系统；无法提取全量物理内存镜像用于深度驱动逆向"
+        Check   = {
+            $ar = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl" "AutoReboot"
+            $cd = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl" "CrashDumpEnabled"
+            $isPass = ($ar -eq "0" -and $cd -eq "3")
+            return @{ Actual = "AutoReboot=$ar, CrashDump=$cd"; Expected = "AutoReboot=0, CrashDump=3"; IsCompliant = $isPass }
+        }
+        Apply   = {
+            $ccKey = "HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl"
+            Set-RegDword $ccKey "AutoReboot" 0
+            Set-RegDword $ccKey "CrashDumpEnabled" 3
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "bitlocker-prevent-device-encryption"
+        Name    = "BitLocker 设备加密自动激活阻断与状态检测 (PreventDeviceEncryption = 1)"
+        Profile = "General"
+        Purpose = "企业策略级阻断 Windows 11 在安装、硬件变更或接入网络时自动静默加密磁盘，并全量检测磁盘驱动器加密保护状态"
+        Impact  = "系统绝不会在后台自动将磁盘静默上锁；若检测到已有卷处于加密中，需按说明执行 Disable-BitLocker 解密以恢复全盘纯净无加密状态"
+        Check   = {
+            $gpoVal = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\BitLocker" "PreventDeviceEncryption"
+            $volumes = @(Get-BitLockerVolume -ErrorAction SilentlyContinue)
+            $encryptedVols = @($volumes | Where-Object { $_.VolumeStatus -ne 'FullyDecrypted' -or $_.ProtectionStatus -eq 'On' })
+            $isGpoPass = ($gpoVal -eq "1")
+            $isVolPass = ($encryptedVols.Count -eq 0)
+            $isPass = ($isGpoPass -and $isVolPass)
+            $actualStr = if ($isPass) {
+                "已阻断自动加密且全盘已解密"
+            } else {
+                $parts = @()
+                if (-not $isGpoPass) { $parts += "策略未阻断(PreventDeviceEncryption=$gpoVal)" }
+                if (-not $isVolPass) {
+                    $volDetails = $encryptedVols | ForEach-Object { "$($_.MountPoint) $($_.VolumeStatus)/$($_.ProtectionStatus)" }
+                    $parts += "加密卷残留: $($volDetails -join ', ')"
+                }
+                $parts -join '; '
+            }
+            return @{ Actual = $actualStr; Expected = "PreventDeviceEncryption=1, 全卷FullyDecrypted"; IsCompliant = $isPass }
+        }
+        Apply   = {
+            $blKey = "HKLM:\SYSTEM\CurrentControlSet\Control\BitLocker"
+            Set-RegDword $blKey "PreventDeviceEncryption" 1
+            $volumes = @(Get-BitLockerVolume -ErrorAction SilentlyContinue)
+            $encryptedVols = @($volumes | Where-Object { $_.VolumeStatus -ne 'FullyDecrypted' -or $_.ProtectionStatus -eq 'On' })
+            if ($encryptedVols.Count -gt 0) {
+                Write-Host ""
+                foreach ($v in $encryptedVols) {
+                    Write-Host "   💡 [BitLocker 状态说明] 检测到驱动器 [$($v.MountPoint)] 处于加密或受保护状态 (VolumeStatus: $($v.VolumeStatus), Protection: $($v.ProtectionStatus))。" -ForegroundColor Yellow
+                    Write-Host "   💡 [解密指引] 若需恢复该磁盘为未加密状态，请在管理员终端执行: Disable-BitLocker -MountPoint $($v.MountPoint)" -ForegroundColor Yellow
+                }
+            }
         }
     }
 )

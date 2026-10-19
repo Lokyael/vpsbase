@@ -1,174 +1,63 @@
 # Pi
 
-Pi 智能体（pi-coding-agent）部署、端点配置、扩展套件。
+Pi 智能体（pi-coding-agent）全生命周期工程部署、端点模型纳管与检索套件基线。
 
-## 基础环境安装
+## 一键部署与全量基线对齐
 
-### 1. Linux 终端环境（AUR）
+通过 `pi.sh` 单一主线脚本，一键完成环境依赖对齐、Git Bash 路径绑定、工程偏好固化、以及依托 `models.dev` 权威数据库即时补全端点模型规格（上下文上限、输出限制与计费参数）：
 
-依赖 AUR 包管理器（如 `paru`）与 Node.js 运行环境。安装 Pi 智能体与检索依赖：
+### 1. 多终端执行方式
 
-```bash
-(
-set -euo pipefail
+- **Linux 终端（Bash）**：
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi.sh | bash
+  ```
 
-command -v paru >/dev/null 2>&1 || { printf '❌ 未检测到 paru 包管理器，请先就绪 AUR 环境\n' >&2; exit 1; }
-command -v node >/dev/null 2>&1 || { printf '❌ 未检测到 Node.js 运行环境，请先就绪 Node.js LTS（建议 fnm）\n' >&2; exit 1; }
+- **Windows 工作站（pwsh）**：
+  ```powershell
+  sh.exe -c "curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi.sh | bash"
+  ```
 
-paru -S --needed --noconfirm --skipreview pi-coding-agent-bin ripgrep fd
+- **Windows Git Bash**：
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi.sh | bash
+  ```
 
-printf '✅ Pi 主体就绪: %s\n' "$(pi --version)"
-printf '✅ Node 插件环境: %s (npm %s)\n' "$(node -v)" "$(npm -v)"
-)
-```
+> **本地执行**：在仓库根目录直接运行 `bash scripts/pi.sh`（pwsh 环境下运行 `sh.exe scripts/pi.sh`）。
 
-### 2. Windows 工作站环境（Scoop）
-
-依赖 Scoop 包管理器与 Git Bash 终端环境。安装 Pi 智能体、检索依赖并绑定 Git Bash 路径：
-
-```bash
-(
-set -euo pipefail
-
-command -v scoop >/dev/null 2>&1 || { printf '❌ 未检测到 scoop 命令，请先就绪 Scoop 包管理器环境\n' >&2; exit 1; }
-
-scoop install git nodejs-lts pi-coding-agent ripgrep fd
-
-GIT_PREFIX=$(scoop prefix git 2>/dev/null || true)
-if [[ -n "$GIT_PREFIX" && -f "$GIT_PREFIX/bin/bash.exe" ]]; then
-    BASH_PATH="$(cygpath -m "$GIT_PREFIX")/bin/bash.exe"
-else
-    BASH_PATH="$(cygpath -m "$(which bash)")"
-fi
-
-AGENT_DIR="${HOME}/.pi/agent"
-mkdir -p "$AGENT_DIR"
-SETTINGS_FILE="${AGENT_DIR}/settings.json"
-
-node - "$SETTINGS_FILE" "$BASH_PATH" <<'NODE'
-const fs = require("fs");
-const [,, settingsPath, shellPath] = process.argv;
-let settings = {};
-try {
-  settings = JSON.parse(fs.readFileSync(settingsPath, "utf8").replace(/^\uFEFF/, ""));
-} catch (e) {}
-
-settings.shellPath = shellPath;
-
-if (!settings.defaultThinkingLevel) {
-  Object.assign(settings, {
-    defaultThinkingLevel: "high",
-    theme: "system",
-    cacheWarming: "off",
-    quietStartup: true,
-    enableInstallTelemetry: false,
-    compaction: { enabled: false },
-    terminal: { showImages: false },
-    markdown: { mermaid: "off" }
-  });
-}
-
-fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n", "utf8");
-NODE
-
-printf '✅ settings.json 已绑定 Git Bash: %s\n' "$BASH_PATH"
-printf '✅ Pi 主体就绪: %s\n' "$(pi --version)"
-printf '✅ Node 插件环境: %s (npm %s)\n' "$(node -v)" "$(npm -v)"
-)
-```
-
-## 核心配置：Provider、模型与 Pi 偏好
-
-通过 `pi-provider.sh` 配置 Provider、模型端点与偏好，支持两种零明文模式：
-- **Bitwarden 模式**：Bitwarden CLI 运行时从内存动态注入，磁盘零明文；
-- **Pi 原生金库模式**：密钥存入 `auth.json`（`0600`），`models.json` 零明文。
-
-终端执行（兼容 Linux / Windows Git Bash）：
+### 2. 命令行静默调用速查
 
 ```bash
-(
-set -Eeuo pipefail
-
-SCRIPT_FILE=$(mktemp)
-trap 'rm -f "$SCRIPT_FILE"' EXIT
-
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh -o "$SCRIPT_FILE"
-bash "$SCRIPT_FILE"
-)
+# 指定 Provider ID、端点 Base URL 与 Key，自动对齐全量基线
+bash scripts/pi.sh -p cpa -u https://cpa.[HERE_DOMAIN]/v1 -k "[HERE_KEY]" -d -y
 ```
 
-常用 CLI 选项与速查：
+## 配置文件拓扑与受控权限
+
+脚本执行后，在 `~/.pi/agent/` 生成三份职责分立的受控配置（物理权限严格锁定 `0600`）：
+
+| 配置文件路径 | 受控职责与核心语义 | 规范契约 |
+|---|---|---|
+| `~/.pi/agent/settings.json` | 全局首选项、Git Bash 路径绑定 | 挂载官方 Settings Schema，关闭遥测与缓存预热 |
+| `~/.pi/agent/models.json` | 兼容端点定义与可用模型规格（纯净元数据，绝无 `apiKey`） | 挂载官方 Models Schema，由 models.dev 补全上下文与计费 |
+| `~/.pi/agent/auth.json` | 原生凭据存储（按 Provider ID 索引对应 API Key / Token） | 敏感凭据独立物理隔离，运行时内存直接匹配 |
+
+## 扩展生态与规则注入
+
+### 1. 多源检索扩展（pi-search）
+
+挂载 Web 事实搜索、技术规范检索（`docs_search`）与网页抓取清洗（`web_fetch`）：
 
 ```bash
-# 查看端点配置脚本全部选项
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh | bash -s -- -h
-
-# Bitwarden 标志引用模式 (models.json 写入动态引用)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh | bash -s -- -p cpa -u https://cpa.[HERE_DOMAIN]/v1 --mode bw -b cpa
-
-# Pi 原生金库模式 (密钥存入 auth.json 0600)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-provider.sh | bash -s -- -p cpa -u https://cpa.[HERE_DOMAIN]/v1 --mode direct -k "[HERE_KEY]"
+pi install git:github.com/justhil/pi-search
 ```
 
-## 扩展套件与检索配置
+安装后启动 Pi，在会话中输入 `/search-config` 调出交互式菜单配置信源凭据与开关，配置自动落盘于 `~/.config/pi-search/config.json`。
 
-组合多源检索工具与独立上下文子智能体：
+### 2. 规则注入与层叠机制
 
-```text
-Pi 原生（低摩擦通用主控：日常命令执行、代码生成与主会话管理）
-├── justhil/pi-search（多源网络与文档检索引擎）
-│   ├── search（AI 深度搜索）
-│   ├── docs_search（官方规范与权威库检索）
-│   ├── web_fetch（网页正文抓取与智能降级清洗）
-│   └── 底层信源（Context7 / Exa / Tavily / Firecrawl）
-└── pi-subagents（独立上下文多智能体协作）
-    ├── scout（代码库快速侦察：定位关键路径与调用链，只读压缩上下文）
-    ├── researcher（互联网公开事实与多源技术调研：调用检索工具输出高密度简报）
-    ├── reviewer（代码质量审查：排查逻辑缺陷、边缘异常与过度设计）
-    └── oracle（决策质询与架构评估：提供第二意见，风险攻防与假设挑战）
-```
+Pi 通过不同维度的配置文件向模型注入约束，加载与生效顺序如下：
 
-终端执行（兼容 Linux / Windows Git Bash）。部署标准扩展套件（`pi-search` 与 `pi-subagents`）：
-
-```bash
-(
-set -Eeuo pipefail
-
-SCRIPT_FILE=$(mktemp)
-trap 'rm -f "$SCRIPT_FILE"' EXIT
-
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh -o "$SCRIPT_FILE"
-bash "$SCRIPT_FILE"
-)
-```
-
-### 检索服务配置（/search-config）
-
-支持通过 BW 自动化静默配置或 Pi 会话内输入 `/search-config` 交互配置：
-
-| 信源 / 选项 | 默认 Base URL / 端点 | 核心定位与用途 | 必要性 | Bitwarden 条目名 |
-|---|---|---|---|---|
-| **Search API** | 自定义（兼容 OpenAI 端点） | 提炼检索结果的 LLM 端点 | **必选**（检索基础） | `cpa` |
-| **Context7** | `https://context7.com` | 官方技术库与规范文档检索 | 选配（开发文档增强） | `search-context7` |
-| **Exa** | `https://api.exa.ai` | AI 神经搜索引擎，精准事实调研 | 选配（技术事实调研） | `search-exa` |
-| **Tavily** | `https://api.tavily.com` | 事实类 AI 搜索引擎，时效资讯检索 | 选配（时效资讯查证） | `search-tavily` |
-| **Firecrawl** | `https://api.firecrawl.dev` | 动态网页清洗抓取，提取干净 Markdown | 选配（正文分析抓取） | `search-firecrawl` |
-
-常用 CLI 命令与维护速查：
-
-```bash
-# 查看已配置扩展
-pi list
-
-# 交互式向导配置 (自动以已有凭据或 bw 条目为默认值，支持回车确认)
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --config-only
-
-# Bitwarden CLI 自动化静默配置 (需预先执行 export BW_SESSION=$(bw unlock --raw))
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --config-only -y
-
-# 全局更新扩展套件至最新版
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --update
-
-# 卸载扩展套件
-curl -fsSL https://raw.githubusercontent.com/Lokyael/vpsbase/main/scripts/pi-addons.sh | bash -s -- --uninstall
-```
+1. **系统设定追加（`.pi/APPEND_SYSTEM.md`）**：受信任项目向顶层 System Prompt 追加的硬性规则；
+2. **用户全局规则（`~/.pi/agent/AGENTS.md`）**：跨项目生效的个人通用开发习惯与基线；
+3. **项目工程规则（`./AGENTS.md`）**：从当前目录向上寻访父级目录，按由外至内的顺序层叠载入。

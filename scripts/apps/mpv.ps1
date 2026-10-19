@@ -8,39 +8,48 @@
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 基于 Scoop 纳管的二进制本体 (D:\prog\scoop\apps\mpv\current\mpv.exe)。
     3. 系统级关联与默认程序注册：直接调用 mpv 原生 --register 注册系统播放器协议、ProgID (io.mpv.file) 与 RegisteredApplications（在 Win11 默认应用中点亮）。
-    4. 现代化画质与硬解黄金基线：注入 portable_config\mpv.conf，固化 auto-safe GPU 硬解、新一代高质量渲染器 (vo=gpu-next/d3d11)、断点记忆、窗口居中自适应、字幕/音频模糊匹配、微软雅黑中文字体与无损 PNG 截图。
+    4. 现代化画质与硬解工程基线：注入 portable_config\mpv.conf，固化 auto-safe GPU 硬解、新一代高质量渲染器 (vo=gpu-next/d3d11)、断点记忆、窗口居中自适应、字幕/音频模糊匹配、微软雅黑中文字体与无损 PNG 截图。
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
-    - Sync        : 增量对齐黄金基线 (默认，缺失则装、偏离则修)
-    - Check       : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
-    - ResetConfig : 仅执行系统文件关联注册与 mpv.conf 黄金基线注入
-    - Uninstall   : 彻底清洁卸载与注销系统媒体关联，抹除软件与配置
-    - Upgrade     : 覆盖升级客户端本体 (调用 Scoop update)
+    - Sync      : 增量对齐受控基线 (默认，缺失则装、偏离则修)
+    - Check     : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
+    - Uninstall : 清洁卸载与注销系统媒体关联 (默认保留用户持久化配置)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
+
+.PARAMETER Force
+    配合 Sync 使用，强制调用 Scoop 重新安装/更新本体并全量重写配置。
+
+.PARAMETER Purge
+    配合 Uninstall 使用，连带深度物理粉碎配置与持久化目录 (包含 persist)。
 
 .EXAMPLE
     # 只查不改体检巡检
     pwsh -File .\scripts\apps\mpv.ps1 -Action Check
 
-    # 交互式检查并应用黄金基线
+    # 交互式检查并应用工程基线
     pwsh -File .\scripts\apps\mpv.ps1
 
-    # 仅修复系统关联与硬解基线配置
-    pwsh -File .\scripts\apps\mpv.ps1 -Action ResetConfig
+    # 强制重新部署覆盖本体并对齐基线
+    pwsh -File .\scripts\apps\mpv.ps1 -Force
 
-    # 彻底清洁卸载
+    # 安全清洁卸载 (保留配置)
     pwsh -File .\scripts\apps\mpv.ps1 -Action Uninstall
+
+    # 深度粉碎卸载 (全抹除)
+    pwsh -File .\scripts\apps\mpv.ps1 -Action Uninstall -Purge
 #>
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Sync", "Check", "ResetConfig", "Uninstall", "Upgrade")]
+    [ValidateSet("Sync", "Check", "Uninstall")]
     [string]$Action = "Sync",
 
-    [switch]$Yes
+    [switch]$Yes,
+    [switch]$Force,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
@@ -68,7 +77,7 @@ if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
 }
 
 # ==============================================================================
-# 2. 应用元数据与部署基准路径锁定 (Golden Baseline Paths)
+# 2. 应用元数据与部署基准路径锁定 (Managed Baseline Paths)
 # ==============================================================================
 $AppId        = "mpv"
 $AppName      = "mpv 极简现代播放器"
@@ -88,6 +97,32 @@ $HighValueUserData = @(
     "视频断点记忆与观看历史: $ConfDir\watch_later\",
     "持久化目录: $PersistDir"
 )
+
+function Ensure-ScoopBucket {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BucketName,
+        [string]$BucketRepo = ""
+    )
+    $bucketDir = Join-Path $scoopRoot "buckets\$BucketName"
+    if (Test-Path $bucketDir) {
+        return
+    }
+
+    $installedBuckets = @(& scoop bucket list 2>$null 3>$null | ForEach-Object {
+        if ($_.Name) { $_.Name } else { ($_ -split '\s+')[0] }
+    })
+    if ($installedBuckets -contains $BucketName) {
+        return
+    }
+
+    Write-Host "📦 正在添加 Scoop '$BucketName' bucket..." -ForegroundColor Cyan
+    if ($BucketRepo) {
+        & scoop bucket add $BucketName $BucketRepo
+    } else {
+        & scoop bucket add $BucketName
+    }
+}
 
 function Update-ManagedConfigFile {
     param(
@@ -206,7 +241,7 @@ $ManagedSpecs = @(
         Property = "智能同名字幕模糊匹配 (sub-auto = fuzzy)"
         Expected = "fuzzy"
         Purpose  = "自动加载同目录下名称相近的外挂字幕文件"
-        Impact   = "看剧无需手动拖拽字幕文件，自动识别并加载"
+        Impact   = "自动识别并加载同目录下外挂字幕文件"
         Type     = "Config"
     },
     @{
@@ -215,7 +250,7 @@ $ManagedSpecs = @(
         Property = "字幕字体渲染固化 (sub-font = `"Microsoft YaHei`")"
         Expected = '"Microsoft YaHei"'
         Purpose  = "强制字幕文本采用系统内置微软雅黑字体渲染"
-        Impact   = "彻底避免特殊汉字、标点与日文字符缺字乱码"
+        Impact   = "避免汉字、标点与扩展字符缺字乱码"
         Type     = "Config"
     },
     @{
@@ -230,18 +265,31 @@ $ManagedSpecs = @(
 )
 
 # ==============================================================================
-# 3. 独立流转分支：彻底清洁卸载 (-Action Uninstall)
+# 3. 独立流转分支：清洁卸载 (-Action Uninstall)
 # ==============================================================================
 if ($Action -eq "Uninstall") {
     if (-not $Yes) {
-        Write-Host "`n⚠️  [清洁卸载警示] 即将注销系统媒体关联并彻底清理 mpv 播放器！" -ForegroundColor Yellow
-        Write-Host "📌 【即将被物理抹除的高价值用户数据清单】:" -ForegroundColor Cyan
-        foreach ($d in $HighValueUserData) {
-            Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
+        Write-Host "`n⚠️  [清洁卸载警示] 即将注销系统媒体关联并清理 mpv 播放器！" -ForegroundColor Yellow
+        if ($Purge) {
+            Write-Host "🔥 【检测到 -Purge 参数：以下高价值用户数据将被深度物理粉碎】:" -ForegroundColor Red
+            foreach ($d in $HighValueUserData) {
+                Write-Host ("   - {0}" -f $d) -ForegroundColor DarkRed
+            }
+            Write-Host "👉 该操作不可逆，用户持久化配置将被彻底抹除！`n" -ForegroundColor Red
+        } else {
+            Write-Host "🛡️  【数据安全保护：以下高价值用户数据将默认保留在实机】:" -ForegroundColor Green
+            foreach ($d in $HighValueUserData) {
+                Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
+            }
+            Write-Host "👉 默认卸载仅移除程序本体与系统注册项。若需连带粉碎配置，请指定 -Purge 开关。`n" -ForegroundColor Cyan
         }
-        Write-Host "👉 执行清洁卸载将彻底清理配置目录。若需保留客制配置，请先手动备份。`n" -ForegroundColor Yellow
 
-        $confirm = (Read-Host "确认注销系统媒体关联并彻底清理 mpv 及其配置? [y/N]").Trim()
+        $promptText = if ($Purge) {
+            "确认注销系统关联并彻底清理 mpv 及其全部配置? [y/N]"
+        } else {
+            "确认注销系统媒体关联并移除 mpv 本体（保留用户配置）? [y/N]"
+        }
+        $confirm = (Read-Host $promptText).Trim()
         if ($confirm -notmatch '^(y|yes)$') {
             Write-Host "[-] 用户已取消卸载操作，安全退出。`n" -ForegroundColor DarkGray
             return
@@ -252,16 +300,12 @@ if ($Action -eq "Uninstall") {
 
     Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Stop-Process -Force
 
-    if (Test-Path $AppExe) {
-        Write-Host "   - 正在调用 mpv --unregister 注销系统级文件类型关联..." -ForegroundColor Gray
-        Start-Process -FilePath $AppExe -ArgumentList "--unregister" -Wait -NoNewWindow -ErrorAction SilentlyContinue
-    }
-
     @(
         "HKCU:\Software\Classes\io.mpv.file",
         "HKLM:\SOFTWARE\Classes\io.mpv.file",
         "HKCU:\Software\Classes\Applications\mpv.exe",
-        "HKLM:\SOFTWARE\Classes\Applications\mpv.exe"
+        "HKLM:\SOFTWARE\Classes\Applications\mpv.exe",
+        "HKLM:\SOFTWARE\Clients\Media\mpv"
     ) | ForEach-Object {
         if (Test-Path $_) { Remove-Item -Path $_ -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -283,23 +327,30 @@ if ($Action -eq "Uninstall") {
         if (Test-Path $sc) { Remove-Item -Path $sc -Force -ErrorAction SilentlyContinue }
     }
 
-    if (Test-Path $ConfDir) {
-        Remove-Item -Path $ConfDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path $PersistDir) {
-        Remove-Item -Path $PersistDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($Purge) {
+        if (Test-Path $ConfDir) { Remove-Item -Path $ConfDir -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $PersistDir) { Remove-Item -Path $PersistDir -Recurse -Force -ErrorAction SilentlyContinue }
+        Write-Host "   - [已粉碎] 用户持久化配置与缓存数据。" -ForegroundColor Red
+    } else {
+        if (Test-Path $PersistDir) {
+            Write-Host "   - [数据安全保护] 用户配置已安全保留在: $PersistDir" -ForegroundColor Green
+        }
     }
 
     if (Get-Command "scoop" -ErrorAction SilentlyContinue) {
         if (Test-Path (Join-Path $scoopRoot "apps\mpv")) {
-            & scoop uninstall -p mpv
+            if ($Purge) {
+                & scoop uninstall -p mpv
+            } else {
+                & scoop uninstall mpv
+            }
         }
     }
     if (Test-Path $InstallDir) {
         Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "`n✅ [清洁卸载完成] mpv 系统注册与本体已彻底清除。`n" -ForegroundColor Green
+    Write-Host "`n✅ [清洁卸载完成] mpv 系统注册与本体已清除。`n" -ForegroundColor Green
     return
 }
 
@@ -357,7 +408,7 @@ foreach ($spec in $ManagedSpecs) {
         状态判定 = if ($isMatch) { "✔ 匹配" } else { "✘ 偏离" }
     })
 
-    if (-not $isMatch -and $Action -ne "Upgrade") {
+    if (-not $isMatch) {
         $PendingItems.Add([PSCustomObject]@{
             Spec     = $spec
             Actual   = $actualStr
@@ -372,15 +423,15 @@ $AuditBoard | Format-Table -AutoSize | Out-String | Write-Host
 $driftCount = $PendingItems.Count
 if ($Action -eq "Check") {
     if ($driftCount -eq 0) {
-        Write-Host "✨ [状态合规] 所有受控属性均与工程黄金基线完全一致，无需调整。`n" -ForegroundColor Green
+        Write-Host "✨ [状态合规] 所有受控属性均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
         Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $driftCount) -ForegroundColor Yellow
     }
     return
 }
 
-if ($driftCount -eq 0 -and $Action -ne "Upgrade") {
-    Write-Host "✨ [状态合规] 所有受控属性均已符合工程黄金基线，无需执行写入变更。`n" -ForegroundColor Green
+if ($driftCount -eq 0 -and -not $Force) {
+    Write-Host "✨ [状态合规] 所有受控属性均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
@@ -403,14 +454,16 @@ if ($runningMpv) {
     Start-Sleep -Milliseconds 500
 }
 
-# 5.2 未安装审查门禁
-if (-not $isInstalled) {
-    if ($Action -eq "ResetConfig") {
-        throw "未检测到 mpv 客户端安装！请先执行 -Action Sync 安装后再执行配置重置。"
-    }
-
+# 5.2 未安装或强制重装审查门禁
+$needBinaryDeploy = (-not $isInstalled) -or $Force
+if ($needBinaryDeploy) {
     if (-not $Yes) {
-        $shouldInstall = (Read-Host "未检测到 mpv 播放器，是否立即调用 'scoop install extras/mpv' 进行安装？[Y/n]").Trim()
+        $promptMsg = if (-not $isInstalled) {
+            "未检测到 mpv 播放器，是否立即调用 'scoop install extras/mpv' 进行安装？[Y/n]"
+        } else {
+            "已开启强制重新部署 (-Force)，是否重新安装/更新 mpv 播放器本体？[Y/n]"
+        }
+        $shouldInstall = (Read-Host $promptMsg).Trim()
         if ($shouldInstall -match '^(n|no)$') {
             Write-Host "[-] 操作已由用户取消，安全退出。`n" -ForegroundColor DarkGray
             return
@@ -431,7 +484,7 @@ if (-not $Yes) {
         $idx++
     }
 
-    $gateChoice = (Read-Host "`n确认应用上述黄金基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
+    $gateChoice = (Read-Host "`n确认应用上述工程基线配置? [Y] 确认执行 / [Q] 退出 (默认 Y)").Trim()
     if ($gateChoice -match '^(q|quit|n|no)$') {
         Write-Host "[-] 用户取消操作，安全退出。`n" -ForegroundColor DarkGray
         return
@@ -442,43 +495,70 @@ if (-not $Yes) {
 # 6. 阶段 3: 单向原子落盘 (Apply)
 # ==============================================================================
 
-# 6.1 程序本体安装或覆盖升级
-if (-not $isInstalled -or $Action -eq "Upgrade") {
+# 6.1 程序本体安装或强制重装
+if ($needBinaryDeploy) {
     if (-not (Get-Command "scoop" -ErrorAction SilentlyContinue)) {
         throw "未检测到 scoop 命令，请先就绪 Scoop 包管理器环境。"
     }
 
-    if ($Action -eq "Upgrade") {
-        Write-Host "`n📦 [覆盖升级] 正在调用 Scoop 升级 mpv 本体..." -ForegroundColor Cyan
-        & scoop update mpv
-        Write-Host "✅ [升级完成] mpv 客户端本体已完成升级。`n" -ForegroundColor Green
-        return
+    Ensure-ScoopBucket $ScoopBucket
+    if ($Force -and $isInstalled) {
+        Write-Host "`n📦 [强制重新部署] 正在重新安装/更新 mpv 本体..." -ForegroundColor Cyan
+        & scoop install extras/mpv --force
     } else {
         Write-Host "`n🚀 正在通过 Scoop 安装 mpv..." -ForegroundColor Cyan
-        & scoop bucket add extras 2>$null | Out-Null
         & scoop install extras/mpv
+    }
 
-        if (Test-Path (Join-Path $InstallDir "mpv.exe")) {
-            $AppExe = Join-Path $InstallDir "mpv.exe"
-            $isInstalled = $true
-        }
-        if (-not $isInstalled) {
-            throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
-        }
+    if (Test-Path (Join-Path $InstallDir "mpv.exe")) {
+        $AppExe = Join-Path $InstallDir "mpv.exe"
+        $isInstalled = $true
+    }
+    if (-not $isInstalled) {
+        throw "Scoop 安装完成，但未能定位到 $AppExe，请检查 Scoop 安装状态。"
     }
 }
 
-# 6.2 注册系统关联与 RegisteredApplications
-Write-Host "`n⚙️  正在调用原生 mpv --register 注册系统媒体协议与关联..." -ForegroundColor Cyan
-try {
-    Start-Process -FilePath $AppExe -ArgumentList "--register" -Wait -NoNewWindow
-    Write-Host "✅ 系统文件类型关联与 RegisteredApplications 注册完成。" -ForegroundColor Green
-} catch {
-    Write-Warning "调用 mpv --register 注册遇到异常: $($_.Exception.Message)"
+# 6.2 声明式注册系统媒体协议与关联 (原生写入注册表，避免调用 --register 在开始菜单根目录创建快捷方式)
+Write-Host "`n⚙️  正在声明式注册系统媒体协议与关联 (ProgID + Capabilities)..." -ForegroundColor Cyan
+
+$progIdKey = "HKLM:\SOFTWARE\Classes\io.mpv.file"
+if (-not (Test-Path $progIdKey)) { New-Item -Path $progIdKey -Force | Out-Null }
+Set-ItemProperty -Path $progIdKey -Name "(default)" -Value "mpv Media File" -Force
+
+$iconKey = "$progIdKey\DefaultIcon"
+if (-not (Test-Path $iconKey)) { New-Item -Path $iconKey -Force | Out-Null }
+Set-ItemProperty -Path $iconKey -Name "(default)" -Value "`"$AppExe`",0" -Force
+
+$cmdKey = "$progIdKey\shell\open\command"
+if (-not (Test-Path $cmdKey)) { New-Item -Path $cmdKey -Force | Out-Null }
+Set-ItemProperty -Path $cmdKey -Name "(default)" -Value "`"$AppExe`" `"%1`"" -Force
+
+$capKey = "HKLM:\SOFTWARE\Clients\Media\mpv\Capabilities"
+if (-not (Test-Path $capKey)) { New-Item -Path $capKey -Force | Out-Null }
+Set-ItemProperty -Path $capKey -Name "ApplicationName" -Value "mpv" -Force
+Set-ItemProperty -Path $capKey -Name "ApplicationDescription" -Value "mpv media player" -Force
+
+$faKey = "$capKey\FileAssociations"
+if (-not (Test-Path $faKey)) { New-Item -Path $faKey -Force | Out-Null }
+$mediaExts = @(
+    ".aac", ".ac3", ".aiff", ".ape", ".au", ".dts", ".eac3", ".flac", ".m4a", ".mka",
+    ".mp3", ".oga", ".ogg", ".ogm", ".opus", ".thd", ".wav", ".wma", ".wv", ".3g2",
+    ".3gp", ".avi", ".flv", ".m2ts", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg",
+    ".rmvb", ".ts", ".webm", ".wmv"
+)
+foreach ($ext in $mediaExts) {
+    Set-ItemProperty -Path $faKey -Name $ext -Value "io.mpv.file" -Force
 }
 
+$regAppKey = "HKLM:\SOFTWARE\RegisteredApplications"
+if (-not (Test-Path $regAppKey)) { New-Item -Path $regAppKey -Force | Out-Null }
+Set-ItemProperty -Path $regAppKey -Name "mpv" -Value "SOFTWARE\Clients\Media\mpv\Capabilities" -Force
+
+Write-Host "✅ 系统文件类型关联与 RegisteredApplications 注册完成。" -ForegroundColor Green
+
 # 6.3 注入 mpv.conf 体验基线偏好
-Write-Host "⚙️  正在对齐 mpv.conf 黄金画质与体验基线..." -ForegroundColor Cyan
+Write-Host "⚙️  正在对齐 mpv.conf 画质与体验基线..." -ForegroundColor Cyan
 Update-ManagedConfigFile -FilePath $ConfigFile -Tag "mpv-baseline" -NewContent $mpvBaseline
 Write-Host "✅ mpv.conf 体验基线配置已原子落盘至: $ConfigFile" -ForegroundColor Green
 
