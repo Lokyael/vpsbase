@@ -12,7 +12,7 @@
     5. 阻断大版本更新全屏推销 (SCOOBE)、满意度调查 (SIUF) 与开始菜单推广建议。
     6. 启用本地多项剪贴板历史并阻断云端上传，停用 DPS/WDI 诊断策略服务，切断 Edge 后台常驻。
     7. 阻断外设厂商推广套件与驱动协同安装器静默注入 (Razer 等驱动全家桶，仅 Full)。
-    8. 组策略底层阻断 Windows 定位系统、物理传感器与位置脚本，停用 lfsvc 服务杜绝权限弹窗。
+    8. 组策略底层阻断 Windows 定位系统、物理传感器与位置脚本，强制应用位置权限拒绝 (LetAppsAccessLocation = 2)，停用 lfsvc 服务杜绝权限弹窗。
     9. 深度切断键入文本分析、墨迹笔迹识别与通讯录人脉挖掘遥测通道，撤销键入个性化授权。
 
 .PARAMETER Action
@@ -445,6 +445,34 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "cdm-disable-tips-and-welcome-experience"
+        Name    = "Windows 欢迎体验与技巧提示推广切断 (SubscribedContent = 0)"
+        Profile = "General"
+        Purpose = "彻底切断 ContentDeliveryManager 在设置应用、更新后全屏欢迎页以及日常操作中弹出的使用技巧与功能推广气泡"
+        Impact  = "系统不会在更新后弹出「让我们完成设备设置」或「Windows 欢迎体验」建议页面，设置界面不展示推荐广告"
+        Check   = {
+            $cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+            $keys = @("SubscribedContent-338388Enabled", "SubscribedContent-338389Enabled", "SubscribedContent-310093Enabled", "SubscribedContent-353694Enabled", "SubscribedContent-353696Enabled")
+            $isPass = $true
+            $nonZero = [System.Collections.Generic.List[string]]::new()
+            foreach ($k in $keys) {
+                $v = Get-RegVal $cdm $k
+                if ($v -ne "0") { $isPass = $false; $nonZero.Add("$k=$v") }
+            }
+            return @{
+                Actual      = if ($isPass) { "已全部切断 (0)" } else { "未关闭: $($nonZero -join ', ')" }
+                Expected    = "已全部切断 (0)"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+            @("SubscribedContent-338388Enabled", "SubscribedContent-338389Enabled", "SubscribedContent-310093Enabled", "SubscribedContent-353694Enabled", "SubscribedContent-353696Enabled") | ForEach-Object {
+                Set-RegDword $cdm $_ 0
+            }
+        }
+    },
+    [PSCustomObject]@{
         Id      = "scoobe-disable-system-setting"
         Name    = "大版本更新 SCOOBE 全屏推销页面 (ScoobeSystemSettingEnabled = 0)"
         Profile = "General"
@@ -530,6 +558,38 @@ $Rules = @(
         Apply   = {
             Stop-Service -Name WdiServiceHost -Force -ErrorAction SilentlyContinue
             Set-Service -Name WdiServiceHost -StartupType Disabled -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "service-disable-wdisystemhost"
+        Name    = "诊断系统主机停用 (WdiSystemHost = Disabled)"
+        Profile = "General"
+        Purpose = "停用底层诊断系统宿主服务，彻底切断本地诊断策略对系统状态的后台定时刺探与轮询"
+        Impact  = "依赖系统级 Wdi 诊断跟踪的硬件分析工具将无法收集故障日志"
+        Check   = {
+            $s = Get-Service -Name WdiSystemHost -ErrorAction SilentlyContinue
+            $act = if ($s) { "$($s.StartType)" } else { "未安装" }
+            return @{ Actual = $act; Expected = "Disabled"; IsCompliant = ($s -and $s.StartType -eq 'Disabled') }
+        }
+        Apply   = {
+            Stop-Service -Name WdiSystemHost -Force -ErrorAction SilentlyContinue
+            Set-Service -Name WdiSystemHost -StartupType Disabled -ErrorAction SilentlyContinue
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "task-disable-windows-diagnosis"
+        Name    = "系统诊断后台计划任务禁用 (\Microsoft\Windows\Diagnosis\)"
+        Profile = "General"
+        Purpose = "禁用 Windows 诊断框架下属的后台自启扫描计划任务，释放 CPU 周期与磁盘 I/O 资源"
+        Impact  = "系统不再在空闲时段自动执行诊断健康度分析任务"
+        Check   = {
+            $tasks = @(Get-ScheduledTask -TaskPath "\Microsoft\Windows\Diagnosis\" -ErrorAction SilentlyContinue)
+            if ($tasks.Count -eq 0) { return @{ Actual = "无诊断任务"; Expected = "全部禁用"; IsCompliant = $true } }
+            $activeCount = ($tasks | Where-Object State -ne 'Disabled').Count
+            return @{ Actual = if ($activeCount -eq 0) { "已全部禁用" } else { "$activeCount 项活跃" }; Expected = "全部禁用"; IsCompliant = ($activeCount -eq 0) }
+        }
+        Apply   = {
+            Get-ScheduledTask -TaskPath "\Microsoft\Windows\Diagnosis\" -ErrorAction SilentlyContinue | Disable-ScheduledTask -ErrorAction SilentlyContinue | Out-Null
         }
     },
     [PSCustomObject]@{
@@ -658,6 +718,20 @@ $Rules = @(
         }
         Apply   = {
             Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" "DisableWindowsLocationProvider" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "appprivacy-deny-location"
+        Name    = "应用位置权限策略强制静默拒绝 (LetAppsAccessLocation = 2)"
+        Profile = "General"
+        Purpose = "通过企业组策略强制将所有应用的位置访问权限置为拒绝，从根源杜绝系统弹出位置权限请求或访问通知横幅"
+        Impact  = "应用请求位置权限时底层直接静默返回拒绝，系统外壳绝不再弹出位置授权提示或通知"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessLocation"
+            return @{ Actual = $val; Expected = "2"; IsCompliant = ($val -eq "2") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" "LetAppsAccessLocation" 2
         }
     },
     [PSCustomObject]@{

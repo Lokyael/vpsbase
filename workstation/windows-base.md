@@ -87,10 +87,11 @@ Set-ItemProperty -Path $wuKey -Name "ProductVersion" -Type String -Value "Window
 
 | 领域 | 受控基准 | 技术目的与防指纹意图 |
 | :--- | :--- | :--- |
-| **地理位置与传感器** | 组策略阻断 `DisableLocation=1`，停用 `lfsvc` 服务 | 物理切断 Wi-Fi BSSID 与 IP 定位探测，API 调用直接拒绝且永不弹窗打扰 |
+| **地理位置与传感器** | 组策略阻断 `DisableLocation=1` / `LetAppsAccessLocation=2`，停用 `lfsvc` 服务 | 物理切断 Wi-Fi BSSID 与 IP 定位探测，应用权限硬拒绝且永不弹窗打扰 |
 | **键入与墨迹隐私** | 阻断 `TabletPC` / `InputPersonalization` / 撤销隐私协议 | 切断笔迹样本与击键文本云端上传，禁止通讯录人脉挖掘与键入画像分析 |
 | **时间同步协议 (NTP)** | `time.cloudflare.com,0x9 pool.ntp.org,0x9 time.apple.com,0x9` | 替换微软官方节点为 Anycast 高可用集群，消除握手超时与存活心跳遥测 |
 | **系统时区与自更新** | 锁定 `Singapore Standard Time` (UTC+8)，禁用 `tzautoupdate` | 通用低熵东八区画像（无夏令时干扰），消除位置轮询且避免与出站网络冲突 |
+| **时间格式与制式** | 锁定标准 24 小时制 (`sShortTime = HH:mm`, `sTimeFormat = HH:mm:ss`) | 杜绝上下午 (AM/PM) 语义歧义，净化任务栏与时钟显示，保留标准 Locale 定义 |
 | **编码与底层代码页** | 全局启用 Unicode UTF-8 (`ACP/OEMCP/MACCP = 65001`) | 彻底解决终端与现代开发工具链中文乱码（重启系统后生效） |
 | **国家、格式与键盘** | 国家设为 United States (GeoID 244)，格式 `en-US`，纯 US 键盘 | 契合全球基数最大基准画像，切断特定营销组件与输入法焦点抢占 |
 

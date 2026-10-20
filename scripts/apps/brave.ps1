@@ -4,10 +4,10 @@
     Brave Browser
 
 .DESCRIPTION
-    Brave 浏览器 (Windows) 自动化部署、防火墙静默阻断与 Chromium 企业策略基线管理工具。
+    Brave 浏览器 (Windows) 自动化部署与 Chromium 企业策略基线管理工具。
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 基于 Scoop 纳管的二进制本体 (D:\prog\scoop\apps\brave\current\brave.exe)。
-    3. 网络安全零信任模型：下发全网段入站阻断规则 (Silent Inbound Block)，静默封堵 CEF 监听端口，杜绝 Windows 拦截弹窗并消除端口暴露面。
+    3. 网络安全零规则模型 (Zero-Rule)：纯出站客户端，通过企业组策略彻底禁用 Media Router (EnableMediaRouter = 0) 与 IPFS P2P，从源头消灭入站端口监听与 mDNS 广播，杜绝 Windows 拦截弹窗，依托全局基线天然兜底。
     4. 企业组策略顶层覆盖 (HKLM:\SOFTWARE\Policies\BraveSoftware\Brave):
        - 激活 Brave Shields 严格防指纹模式 (Farbling 动态伪随机加噪，彻底粉碎 Canvas/Audio/WebGL 唯一特征)；
        - 裁剪 Brave 专属商业与网络开销组件 (禁用 Rewards、Wallet 钱包、内置 VPN、Leo AI 助手与 IPFS P2P 节点)；
@@ -23,7 +23,7 @@
     指定生命周期操作模式，可选值:
     - Sync      : 增量对齐受控基线 (默认，缺失则装、偏离则修)
     - Check     : 只查不改体检巡检 (100% 只读比对受控属性 Diff)
-    - Uninstall : 清洁卸载、注销防火墙规则并移除安装目录 (默认保留用户持久化配置)
+    - Uninstall : 清洁卸载、注销企业策略并移除安装目录 (默认保留用户持久化配置)
 
 .PARAMETER Yes
     免交互全量确认放行开关。跳过审查门禁交互，直接执行流水线。
@@ -73,7 +73,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(544)
 if (-not $isAdmin -and $Action -ne "Check") {
-    throw "【权限错误】Brave 浏览器下发企业策略与配置防火墙规则需管理员特权，请在提升的 pwsh 会话中重新执行！"
+    throw "【权限错误】Brave 浏览器下发企业策略需管理员特权，请在提升的 pwsh 会话中重新执行！"
 }
 
 $currentUser = [Environment]::UserName
@@ -98,8 +98,8 @@ $AppExe    = Join-Path $AppDir "brave.exe"
 $ShimExe   = Join-Path $scoopRoot "shims\brave.exe"
 
 $HighValueUserData = @(
-    "浏览器用户数据与书签: %LOCALAPPDATA%\BraveSoftware\Brave-Browser\User Data",
-    "Scoop 持久化配置数据: $scoopRoot\persist\brave"
+    "Scoop 持久化用户数据目录: $scoopRoot\persist\brave\User Data",
+    "持久化配置目录: $scoopRoot\persist\brave"
 )
 
 $consoleHelper = Join-Path $PSScriptRoot "_console.ps1"
@@ -130,11 +130,7 @@ if ($Action -eq "Uninstall") {
     Get-Process -Name $ProcessName -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 600
 
-    # 2. 注销防火墙静默阻断规则
-    Get-NetFirewallRule -Name "Brave-Browser-Block-In-*" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    Write-Host "   - 已移除防火墙入站阻断规则" -ForegroundColor Gray
-
-    # 3. 清理企业策略注册表
+    # 2. 清理企业策略注册表
     @(
         "HKLM:\SOFTWARE\Policies\BraveSoftware\Brave",
         "HKLM:\SOFTWARE\Policies\BraveSoftware"
@@ -145,18 +141,18 @@ if ($Action -eq "Uninstall") {
         }
     }
 
-    # 4. 委托 Scoop 卸载二进制
+    # 3. 委托 Scoop 卸载二进制
     $scoopCmd = Get-Command scoop -ErrorAction SilentlyContinue
     if ($scoopCmd) {
         Write-Host "   - 正在调用 Scoop 原生管道卸载应用本体..." -ForegroundColor Gray
         & scoop uninstall brave 2>&1 | Out-Null
     }
 
-    # 5. 若指定 -Purge，深度物理粉碎持久化数据
+    # 4. 若指定 -Purge，深度物理粉碎持久化数据
     if ($Purge) {
         $userDataPaths = @(
-            "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser",
-            (Join-Path $scoopRoot "persist\brave")
+            (Join-Path $scoopRoot "persist\brave"),
+            "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser"
         )
         foreach ($p in $userDataPaths) {
             if (Test-Path $p) {
@@ -188,23 +184,7 @@ $ManagedSpecs.Add([PSCustomObject]@{
     Impact   = "若缺失则自动通过 Scoop 管道进行部署或修复"
 })
 
-# 4.2 系统网络安全层 (Zero-Trust Inbound Block)
-$inboundTcpRule = Get-NetFirewallRule -Name "Brave-Browser-Block-In-TCP" -ErrorAction SilentlyContinue
-$inboundUdpRule = Get-NetFirewallRule -Name "Brave-Browser-Block-In-UDP" -ErrorAction SilentlyContinue
-$isFwOk = ($null -ne $inboundTcpRule -and $inboundTcpRule.Action -eq "Block" -and
-           $null -ne $inboundUdpRule -and $inboundUdpRule.Action -eq "Block")
-
-$ManagedSpecs.Add([PSCustomObject]@{
-    Module   = "网络安全"
-    Property = "防火墙全网段入站静默阻断 (Brave-Browser-Block-In-*)"
-    Expected = "TCP/UDP 双协议全阻断 (Profile=Any, Action=Block)"
-    Actual   = if ($isFwOk) { "全阻断已就绪" } else { "未完全配置" }
-    IsMatch  = $isFwOk
-    Purpose  = "静默阻断外部网络主动入站探测，杜绝 Windows Defender 拦截弹窗打扰"
-    Impact   = "消除本地端口暴露面，不影响浏览器发起的一切互联网出站与本地环回请求"
-})
-
-# 4.3 企业策略与防指纹基线层 (Policies Priority - GPO)
+# 4.2 企业策略与防指纹基线层 (Policies Priority - GPO)
 $policyKey = "HKLM:\SOFTWARE\Policies\BraveSoftware\Brave"
 $currentPolicies = if (Test-Path $policyKey) { Get-ItemProperty -Path $policyKey -ErrorAction SilentlyContinue } else { $null }
 
@@ -249,7 +229,7 @@ $expectedPolicies = @(
     @{ Name = "DefaultLocalFontsSetting"; Type = "DWord"; Expected = "2";
        Desc = "本地字体枚举 API 硬阻断 (BlockLocalFonts)";
        Purpose = "彻底禁用 window.queryLocalFonts() API，严禁网页刺探系统已安装字体";
-       Impact = "网页无法通过直接枚举获知本地字体列表，彻底隐蔽工作站等宽字体" },
+       Impact = "网页无法通过直接枚举获知本地字体列表，彻底阻断基于字体特征的跨站指纹画像" },
 
     @{ Name = "DefaultGeolocationSetting"; Type = "DWord"; Expected = "2";
        Desc = "地理位置 API 全局静默阻断 (BlockGeolocation)";
@@ -277,6 +257,11 @@ $expectedPolicies = @(
        Impact = "消除基于蓝牙 MAC 与广播名称的近场追踪" },
 
     # --- 3. 网络协议、DNS 与连接抢跑阻断 ---
+    @{ Name = "EnableMediaRouter"; Type = "DWord"; Expected = "0";
+       Desc = "Chromecast 局域网投屏与媒体路由彻底禁用";
+       Purpose = "彻底关闭 Media Router 局域网设备探测与 mDNS 广播，消除入站端口监听";
+       Impact = "无法使用 Chrome Cast 投屏功能，从根源杜绝 Windows 防火墙拦截弹窗" },
+
     @{ Name = "WebRtcIPHandlingPolicy"; Type = "String"; Expected = "disable_non_proxied_udp";
        Desc = "WebRTC 私网 IP 与非代理 UDP 泄露阻断";
        Purpose = "禁止 WebRTC 通过非代理接口发起 UDP 探测，杜绝泄漏物理网卡 IP 与局域网拓扑";
@@ -451,32 +436,7 @@ if (-not $isExeExist -or $Force) {
     Write-Host "✅ Brave 浏览器本体部署完成: $AppExe" -ForegroundColor Green
 }
 
-# 6.2 配置防火墙全网段入站静默阻断 (Zero-Trust Inbound Block)
-if (-not $isFwOk) {
-    Write-Host "🔒 正在配置 Windows Defender 防火墙全网段入站静默阻断规则..." -ForegroundColor Yellow
-    @(
-        @{ Name = "Brave-Browser-Block-In-TCP"; Protocol = "TCP" },
-        @{ Name = "Brave-Browser-Block-In-UDP"; Protocol = "UDP" }
-    ) | ForEach-Object {
-        $ruleName = $_.Name
-        $proto = $_.Protocol
-        Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        New-NetFirewallRule -Name $ruleName `
-                            -DisplayName "Brave Browser Inbound Block ($proto)" `
-                            -Description "Brave 浏览器全网段入站静默阻断规则，杜绝 CEF 监听弹窗与端口暴露" `
-                            -Group "Brave Browser" `
-                            -Direction Inbound `
-                            -Action Block `
-                            -Profile Any `
-                            -Program $AppExe `
-                            -Protocol $proto `
-                            -Enabled True -ErrorAction SilentlyContinue | Out-Null
-    }
-    $appliedCount++
-    Write-Host "✅ 防火墙静默入站阻断规则已注册 (TCP/UDP, Profile=Any)" -ForegroundColor Green
-}
-
-# 6.3 注入企业组策略 (HKLM:\SOFTWARE\Policies\BraveSoftware\Brave)
+# 6.2 注入企业组策略 (HKLM:\SOFTWARE\Policies\BraveSoftware\Brave)
 Write-Host "⚙️  正在向系统注册表注入 Brave 企业级防指纹与隐私组策略..." -ForegroundColor Yellow
 if (-not (Test-Path $policyKey)) { New-Item -Path $policyKey -Force | Out-Null }
 
@@ -524,16 +484,18 @@ Invoke-Console -Task "Summary" -Params @{
 
 Write-Host "   - 部署模式: Scoop 托管本体 ($AppDir)" -ForegroundColor Gray
 Write-Host "   - 防指纹策略: 已强制开启 Farbling 严格模式、LocalFonts 阻断与 WebRTC 防泄露" -ForegroundColor Gray
-Write-Host "   - 网络安全: 已配置 TCP/UDP 入站全阻断 (零信任预先堵嘴)" -ForegroundColor Gray
+Write-Host "   - 网络安全: 零规则纯出站客户端，Media Router 局域网监听已从底层物理切断" -ForegroundColor Gray
 
 Write-Host "`n--------------------------------------------------------------------" -ForegroundColor DarkGray
 Write-Host "📋 [手动收尾清单 (Actionable Handoff)]" -ForegroundColor Cyan
 Write-Host "  1. uBlacklist 搜索净化订阅 (扩展图标 → 选项 → 添加订阅，粘贴后每日自动更新):" -ForegroundColor Cyan
-Write-Host "     - 中文内容农场与机翻站 (必备核心，全面屏蔽 CSDN/脚本之家/51CTO/百家号):" -ForegroundColor Gray
-Write-Host "       https://raw.githubusercontent.com/danny0838/uBlacklist-China-AdminList/master/uBlacklist.txt" -ForegroundColor DarkCyan
-Write-Host "     - 技术问答爬虫与机翻镜像 (屏蔽 StackOverflow/GitHub 劣质机翻镜像站):" -ForegroundColor Gray
-Write-Host "       https://raw.githubusercontent.com/cobaltdisco/Google-Search-Blacklist/master/Google-Search-Blacklist.txt" -ForegroundColor DarkCyan
+Write-Host "     - 中文技术社区与采集站 (屏蔽 CSDN/脚本之家/代码抄袭/机翻站):" -ForegroundColor Gray
+Write-Host "       https://raw.githubusercontent.com/cobaltdisco/Google-Chinese-Results-Blocklist/master/uBlacklist_subscription.txt" -ForegroundColor DarkCyan
+Write-Host "     - 中文泛生活与内容农场 (大体量清洗生活/健康/娱乐类内容农场):" -ForegroundColor Gray
+Write-Host "       https://raw.githubusercontent.com/dallaslu/penzai-list/main/uBlacklist.txt" -ForegroundColor DarkCyan
 Write-Host "     - 全球 AI/SEO 垃圾农场 (屏蔽自动化 AI 生成垃圾文章与点击诱饵站):" -ForegroundColor Gray
-Write-Host "       https://raw.githubusercontent.com/laylavish/uBlacklist-SEO-Spam/main/uBlacklist.txt" -ForegroundColor DarkCyan
+Write-Host "       https://raw.githubusercontent.com/laylavish/uBlockOrigin-HUGE-AI-Blocklist/main/list_uBlacklist.txt" -ForegroundColor DarkCyan
+Write-Host "     - 技术问答机翻镜像专杀 (精准抹除 StackOverflow 中文机翻倒卖站):" -ForegroundColor Gray
+Write-Host "       https://raw.githubusercontent.com/arosh/ublacklist-stackoverflow-translation/master/uBlacklist.txt" -ForegroundColor DarkCyan
 Write-Host "--------------------------------------------------------------------`n" -ForegroundColor DarkGray
 return

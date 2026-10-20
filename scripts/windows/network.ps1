@@ -285,10 +285,16 @@ $Rules = @(
             return @{ Actual = $actualStr; Expected = "全部为 2 (已禁用)"; IsCompliant = $isPass }
         }
         Apply   = {
-            $nics = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object IPEnabled -eq $true
+            $nics = @(Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue | Where-Object IPEnabled -eq $true)
             foreach ($nic in $nics) {
                 if ($nic.TcpipNetbiosOptions -ne 2) {
-                    $nic.SetTcpipNetbios(2) | Out-Null
+                    Invoke-CimMethod -InputObject $nic -MethodName "SetTcpipNetbios" -Arguments @{ TcpipNetbiosOptions = [uint32]2 } -ErrorAction SilentlyContinue | Out-Null
+                }
+            }
+            $btInterfaces = "HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces"
+            if (Test-Path $btInterfaces) {
+                Get-ChildItem -Path $btInterfaces -ErrorAction SilentlyContinue | ForEach-Object {
+                    Set-ItemProperty -Path $_.PSPath -Name "NetbiosOptions" -Value 2 -Type DWord -Force -ErrorAction SilentlyContinue | Out-Null
                 }
             }
         }
@@ -499,6 +505,54 @@ $Rules = @(
             $key = "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient"
             Ensure-RegKey $key
             Set-RegDword $key "SpecialPollInterval" 3600
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "dns-disable-smart-name-resolution"
+        Name    = "智能多宿主名称解析禁用 (DisableSmartNameResolution = 1)"
+        Profile = "General"
+        Purpose = "策略级切断 Windows 在存在多网卡或代理/VPN/TUN 虚拟网卡时向所有物理接口并发广播明文 DNS 查询的机制，彻底消除 DNS 旁路泄漏"
+        Impact  = "多网络适配器环境下 DNS 查询将严格按接口跃点优先级顺序发出，不再向物理网卡泄露访问域名"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" "DisableSmartNameResolution"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" "DisableSmartNameResolution" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "wu-target-release-version-lock"
+        Name    = "操作系统分支版本锁定 (TargetReleaseVersion = 1)"
+        Profile = "Full"
+        Purpose = "企业策略级将 Windows 11 锚定在当前稳定分支，正常接收每月安全累积更新 (B类补丁)，硬性阻断跨年度大版本静默强升"
+        Impact  = "系统不会在后台自动下载并升级至下一个未经验证的年度大版本；需跨大版本升级时只需清空该策略（仅 Full 生效）"
+        Check   = {
+            $curVer = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue).DisplayVersion
+            if (-not $curVer) {
+                $curVer = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue).ReleaseId
+            }
+            $wuKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+            $trv = Get-RegVal $wuKey "TargetReleaseVersion"
+            $trvi = Get-RegVal $wuKey "TargetReleaseVersionInfo"
+            $pv = Get-RegVal $wuKey "ProductVersion"
+            $isPass = ($trv -eq "1" -and $trvi -eq "$curVer" -and $pv -eq "Windows 11")
+            return @{
+                Actual      = "TargetReleaseVersion=$trv, VersionInfo=$trvi, Product=$pv"
+                Expected    = "TargetReleaseVersion=1, VersionInfo=$curVer, Product=Windows 11"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $curVer = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue).DisplayVersion
+            if (-not $curVer) {
+                $curVer = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -ErrorAction SilentlyContinue).ReleaseId
+            }
+            $wuKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+            Ensure-RegKey $wuKey
+            Set-RegDword $wuKey "TargetReleaseVersion" 1
+            Set-ItemProperty -Path $wuKey -Name "TargetReleaseVersionInfo" -Type String -Value "$curVer" -Force
+            Set-ItemProperty -Path $wuKey -Name "ProductVersion" -Type String -Value "Windows 11" -Force
         }
     }
 )

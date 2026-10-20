@@ -13,7 +13,7 @@
        - 彻底禁用局域网对等传输 (PeerContentServerMode=0)，消除后台上传、端口监听及组播泛洪；
        - 禁用后台着色器预编译 (bShaderCacheBGProcessingEnabled=0)，避免电脑闲置时后台编译占用 CPU 资源；
        - 禁止游戏运行时后台下载 (AllowDownloadsDuringGameplay=0)，保障竞技网络低延迟与磁盘 IO 稳定。
-    6. 用户偏好规范化：修正各登录账号下载速率单位为直观的标准字节/秒 (MB/s)。
+    6. 用户偏好规范化：将 Steam 客户端默认界面语言锁定为简体中文 (schinese)，并修正各登录账号下载速率单位为直观的标准字节/秒 (MB/s)。
     7. 防火墙安全基线主动纳管：预置全网段入站阻断规则 (Profile=Any)，消除 Windows 防火墙拦截弹窗与端口暴露面。
 
 .PARAMETER Action
@@ -122,6 +122,15 @@ $ManagedSpecs = @(
         Purpose  = "彻底从注册表 Run 项中剥离 Steam 开机自启"
         Impact   = "开机冷启动阶段不再常驻 Steam 及其多个 WebHelper 进程，释放 500MB+ 内存"
         Type     = "RunKey"
+    },
+    @{
+        Module   = "界面偏好"
+        Key      = "Language"
+        Property = "客户端默认语言 (Language = schinese)"
+        Expected = "schinese"
+        Purpose  = "将 Steam 客户端界面语言固定为简体中文"
+        Impact   = "Steam 重启后以简体中文显示；游戏本身的语言设置不受影响"
+        Type     = "Vdf"
     },
     @{
         Module   = "性能基线"
@@ -508,6 +517,7 @@ function Set-VdfBlockKey([string]$text, [string]$key, [string]$val) {
 }
 
 $vdfItems = @(
+    @{ Key = "Language"; Val = "schinese" },
     @{ Key = "PeerContentServerMode"; Val = "0" },
     @{ Key = "bShaderCacheBGProcessingEnabled"; Val = "0" },
     @{ Key = "AllowDownloadsDuringGameplay"; Val = "0" }
@@ -575,6 +585,7 @@ Write-Host "`n==================================================================
 Write-Host "  ✅ [$AppName] 基线与系统管控对齐完成！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 Write-Host "   - 开机管理: 已从注册表彻底拔除 Steam 常驻自启" -ForegroundColor Gray
+Write-Host "   - 界面偏好: Steam 默认语言已锁定为简体中文 (schinese)" -ForegroundColor Gray
 Write-Host "   - 性能基线: 已禁用后台着色器预编译 (保 CPU)、禁用局域网 P2P 上传与游戏期间下载" -ForegroundColor Gray
 Write-Host "   - 网络安全: 防火墙已预置全网段入站阻断，首次启动零弹窗且 0 暴露面" -ForegroundColor Gray
 

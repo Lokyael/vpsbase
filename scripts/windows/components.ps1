@@ -166,16 +166,17 @@ $Rules = @(
     },
     [PSCustomObject]@{
         Id      = "fod-legacy-capabilities"
-        Name    = "淘汰按需功能剥离 (经典WMP/写字板/步骤记录器/XPS等8项)"
+        Name    = "淘汰按需功能剥离 (经典WMP/写字板/步骤记录器/XPS等10项)"
         Profile = "General"
-        Purpose = "卸载经典 Media Player、写字板、步骤记录器、XPS 查看器等已被现代化方案取代的过时 FOD 组件"
+        Purpose = "卸载经典 Media Player、写字板、步骤记录器、XPS 查看器、IE 引擎与旧版快速助手等已被现代化方案取代的过时 FOD 组件"
         Impact  = "双击 .rtf 文档或 .xps 文档时将不再自动由写字板或 XPS 查看器打开（推荐使用 Office Word 或现代 PDF 阅读器）"
         Check   = {
             $fodList = @(
                 "Media.WindowsMediaPlayer~~~~0.0.12.0", "Microsoft.Windows.WordPad~~~~0.0.1.0",
                 "App.StepsRecorder~~~~0.0.1.0", "XPS.Viewer~~~~0.0.1.0",
                 "MathRecognizer~~~~0.0.1.0", "OpenSSH.Server~~~~0.0.1.0",
-                "OneCoreUAP.OneSync~~~~0.0.1.0", "Print.Fax.Scan~~~~0.0.1.0"
+                "OneCoreUAP.OneSync~~~~0.0.1.0", "Print.Fax.Scan~~~~0.0.1.0",
+                "Browser.InternetExplorer~~~~0.0.11.0", "App.Support.QuickAssist~~~~0.0.1.0"
             )
             $installed = @(Get-WindowsCapability -Online -ErrorAction SilentlyContinue | Where-Object { ($fodList -contains $_.Name) -and ($_.State -eq 'Installed') })
             $isPass = ($installed.Count -eq 0)
@@ -191,7 +192,8 @@ $Rules = @(
                 "Media.WindowsMediaPlayer~~~~0.0.12.0", "Microsoft.Windows.WordPad~~~~0.0.1.0",
                 "App.StepsRecorder~~~~0.0.1.0", "XPS.Viewer~~~~0.0.1.0",
                 "MathRecognizer~~~~0.0.1.0", "OpenSSH.Server~~~~0.0.1.0",
-                "OneCoreUAP.OneSync~~~~0.0.1.0", "Print.Fax.Scan~~~~0.0.1.0"
+                "OneCoreUAP.OneSync~~~~0.0.1.0", "Print.Fax.Scan~~~~0.0.1.0",
+                "Browser.InternetExplorer~~~~0.0.11.0", "App.Support.QuickAssist~~~~0.0.1.0"
             )
             foreach ($f in $fodList) {
                 $cap = Get-WindowsCapability -Online -Name $f -ErrorAction SilentlyContinue

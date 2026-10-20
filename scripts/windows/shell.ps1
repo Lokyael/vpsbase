@@ -15,10 +15,12 @@
     8. 禁用 USB 移动介质自动播放 (AutoPlay) 阻断蠕虫自启传播。
     9. 解除耳机音量 37% 限制警告弹窗 (VolumeLimiter)。
     10. 彻底卸载 OneDrive、清理用户目录并剥离资源管理器侧边栏驻留 (仅 Full)。
-    11. 剥离资源管理器图库 (Gallery) 驻留与遗留已知文件夹沙盒化 (仅 Full)。
+    11. 剥离资源管理器图库 (Gallery) 侧边栏树节点驻留 (仅 Full)。
     12. 从左侧导航窗格隐藏网络 (Network) 网上邻居图标 (仅 Full)。
     13. 从左侧导航窗格隐藏小房子主页与用户个人主文件夹，直达此电脑 (仅 Full)。
-    14. 锁定国家/地区归属为 United States (GeoID 244) 并固化 en-US 区域格式与纯 US 键盘，构建全球通用低熵画像 (仅 Full)。
+    14. 用户主目录媒体与遗留已知文件夹沙盒化受保护隐藏 (Searches/Links/Contacts 等 +h +s，仅 Full)。
+    15. 锁定国家/地区归属为 United States (GeoID 244) 并固化 en-US 区域格式与纯 US 键盘，构建全球通用低熵画像 (仅 Full)。
+    16. 系统短时间与长时间格式锁定为标准 24 小时制 (HH:mm / HH:mm:ss)，根治上下午 (AM/PM) 语义歧义并净化时钟显示。
 
 .PARAMETER Action
     操作模式:
@@ -278,6 +280,10 @@ $Rules = @(
             Set-RegDword $exp "ShowFrequent" 0
             Set-RegDword $exp "ShowRecent" 0
             Set-RegDword $exp "ShowCloudFilesInQuickAccess" 0
+
+            Get-ChildItem -Path "$env:APPDATA\Microsoft\Windows\Recent" -Exclude "AutomaticDestinations" -ErrorAction SilentlyContinue |
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Recent\CustomDestinations\*" -Recurse -Force -ErrorAction SilentlyContinue
         }
     },
     [PSCustomObject]@{
@@ -510,36 +516,58 @@ $Rules = @(
                         Set-Content -Path $themePath -Value $tContent -Force -ErrorAction SilentlyContinue
                     }
                 }
+                Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers" "BackgroundType" 0
             }
         }
     },
     [PSCustomObject]@{
         Id      = "lockscreen-bypass-to-pin-entry"
-        Name    = "开机与唤醒跳过锁屏壁纸直达登录框 (NoLockScreen = 1)"
+        Name    = "开机与唤醒跳过锁屏壁纸直达登录框并切断未解锁硬件调用 (NoLockScreen = 1)"
         Profile = "General"
-        Purpose = "开机或按 Win+L 锁屏后，跳过冗余的向上滑动壁纸过渡层，直接呼出密码或 PIN 码键入界面"
-        Impact  = "锁屏状态下不再呈现全屏壁纸与时钟气泡，轻触任意键直接进入凭据输入界面"
+        Purpose = "开机或按 Win+L 锁屏后，跳过冗余的向上滑动壁纸过渡层，直接呼出密码或 PIN 码键入界面；硬性阻断在未解锁状态下直接调用物理摄像头 (NoLockScreenCamera=1)，并切断后台相册幻灯片扫描轮播 (NoLockScreenSlideshow=1)"
+        Impact  = "轻触任意键直接进入凭据输入界面；彻底杜绝未授权物理人员在锁屏界面调出相机拍摄，消除闲置时的相册索引与磁盘 I/O 唤醒开销"
         Check   = {
-            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" "NoLockScreen"
-            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+            $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
+            $nls = Get-RegVal $pol "NoLockScreen"
+            $cam = Get-RegVal $pol "NoLockScreenCamera"
+            $slide = Get-RegVal $pol "NoLockScreenSlideshow"
+            $isPass = ($nls -eq "1" -and $cam -eq "1" -and $slide -eq "1")
+            return @{
+                Actual      = "NoLockScreen=$nls, NoCamera=$cam, NoSlideshow=$slide"
+                Expected    = "NoLockScreen=1, NoCamera=1, NoSlideshow=1"
+                IsCompliant = $isPass
+            }
         }
         Apply   = {
-            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" "NoLockScreen" 1
+            $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization"
+            Set-RegDword $pol "NoLockScreen" 1
+            Set-RegDword $pol "NoLockScreenCamera" 1
+            Set-RegDword $pol "NoLockScreenSlideshow" 1
         }
     },
     [PSCustomObject]@{
         Id      = "lockscreen-disable-spotlight-overlay"
-        Name    = "锁屏 Windows 聚焦热点提示切断 (RotatingLockScreenOverlayEnabled = 0)"
+        Name    = "锁屏 Windows 聚焦轮换与热点提示切断 (RotatingLockScreen = 0)"
         Profile = "General"
-        Purpose = "锁屏界面切断热点推介与微软商业气泡，保持桌面壁纸纯净"
-        Impact  = "锁屏时不再显示「喜欢当前图片吗？」或壁纸地理位置的交互热点小图标"
+        Purpose = "关闭锁屏界面后台静默轮换必应聚焦壁纸通道，切断锁屏交互热点推介与商业气泡，保持桌面壁纸纯净"
+        Impact  = "锁屏时不再从必应下载动态新图片，不再显示「喜欢当前图片吗？」或壁纸地理位置的交互热点小图标"
         Check   = {
-            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenOverlayEnabled"
-            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+            $cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+            $r1 = Get-RegVal $cdm "RotatingLockScreenEnabled"
+            $r2 = Get-RegVal $cdm "RotatingLockScreenOverlayEnabled"
+            $r3 = Get-RegVal $cdm "SubscribedContent-338387Enabled"
+            $isPass = ($r1 -eq "0" -and $r2 -eq "0" -and $r3 -eq "0")
+            return @{
+                Actual      = "RotatingEnabled=$r1, OverlayEnabled=$r2, Subscribed338387=$r3"
+                Expected    = "RotatingEnabled=0, OverlayEnabled=0, Subscribed338387=0"
+                IsCompliant = $isPass
+            }
         }
         Apply   = {
-            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenOverlayEnabled" 0
-            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338387Enabled" 0
+            $cdm = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+            Set-RegDword $cdm "RotatingLockScreenEnabled" 0
+            Set-RegDword $cdm "RotatingLockScreenOverlayEnabled" 0
+            Set-RegDword $cdm "SubscribedContent-338387Enabled" 0
         }
     },
     [PSCustomObject]@{
@@ -557,6 +585,20 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "start-layout-more-pins"
+        Name    = "开始菜单布局收缩推荐并展示更多固定项 (Start_Layout = 1)"
+        Profile = "General"
+        Purpose = "将 Windows 11 开始菜单布局调整为「更多固定项」，大幅压缩下半部分无用的推荐项目区域，增加应用固定格位"
+        Impact  = "开始菜单顶部展示更多图标，下半部「推荐的项目」高度压缩至仅留单行"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_Layout"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_Layout" 1
+        }
+    },
+    [PSCustomObject]@{
         Id      = "start-disable-track-progs"
         Name    = "开始菜单常用程序列表跟踪切断 (Start_TrackProgs = 0)"
         Profile = "General"
@@ -571,17 +613,79 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "start-disable-account-notifications"
+        Name    = "开始菜单账户通知徽章与推销红点切断 (Start_AccountNotifications = 0)"
+        Profile = "General"
+        Purpose = "切断开始菜单左下角用户头像上弹出的微软账户设置、OneDrive 备份与 Microsoft 365 营销红点气泡"
+        Impact  = "用户头像不再展示推销性质的提示小圆点，保持开始菜单纯净无干扰"
+        Check   = {
+            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_AccountNotifications"
+            return @{ Actual = $val; Expected = "0"; IsCompliant = ($val -eq "0") }
+        }
+        Apply   = {
+            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_AccountNotifications" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "start-hide-recently-added-apps"
+        Name    = "开始菜单最近添加应用列表隐藏 (HideRecentlyAddedApps = 1)"
+        Profile = "General"
+        Purpose = "组策略级移除开始菜单所有应用列表顶部的「最近添加」临时分组，消除装机与工具升级后的列表抖动"
+        Impact  = "新安装的应用程序直接按字母排序并入应用列表，不再在顶栏生成额外的高亮推介区域"
+        Check   = {
+            $val = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "HideRecentlyAddedApps"
+            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "HideRecentlyAddedApps" 1
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "start-disable-recommended-sites-and-section"
+        Name    = "开始菜单推荐区个性化网页与云端推荐阻断 (HideRecommendedPersonalizedSites = 1)"
+        Profile = "General"
+        Purpose = "组策略切断微软依据 Edge 浏览记录向开始菜单推荐区注入的推广网址，协同关闭 Iris 云端推荐引擎与抹除推荐区块"
+        Impact  = "开始菜单彻底切断个性化商业网页分发通道，消除云端推荐卡片"
+        Check   = {
+            $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+            $adv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+            $pSites = Get-RegVal $pol "HideRecommendedPersonalizedSites"
+            $pSec = Get-RegVal $pol "HideRecommendedSection"
+            $iris = Get-RegVal $adv "Start_IrisRecommendations"
+            $isPass = ($pSites -eq "1" -and $pSec -eq "1" -and $iris -eq "0")
+            return @{
+                Actual      = "Sites=$pSites, Section=$pSec, Iris=$iris"
+                Expected    = "Sites=1, Section=1, Iris=0"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+            $adv = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+            Set-RegDword $pol "HideRecommendedPersonalizedSites" 1
+            Set-RegDword $pol "HideRecommendedSection" 1
+            Set-RegDword $adv "Start_IrisRecommendations" 0
+        }
+    },
+    [PSCustomObject]@{
         Id      = "autoplay-disable-removable-media"
         Name    = "移动介质自动播放禁用 (AutoPlay DisableAutoplay = 1)"
         Profile = "General"
         Purpose = "插入 U 盘与移动硬盘时不再静默弹出自动执行对话框，防范 U 盘蠕虫自动运行"
         Impact  = "插入 U 盘后需要手动点击打开文件资源管理器查看文件，系统不会主动弹窗询问操作"
         Check   = {
-            $val = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" "DisableAutoplay"
-            return @{ Actual = $val; Expected = "1"; IsCompliant = ($val -eq "1") }
+            $a = Get-RegVal "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" "DisableAutoplay"
+            $b = Get-RegVal "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" "NoDriveTypeAutoRun"
+            $isPass = ($a -eq "1" -and $b -eq "255")
+            return @{
+                Actual      = "DisableAutoplay=$a, NoDriveTypeAutoRun=$b"
+                Expected    = "DisableAutoplay=1, NoDriveTypeAutoRun=255"
+                IsCompliant = $isPass
+            }
         }
         Apply   = {
             Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers" "DisableAutoplay" 1
+            Set-RegDword "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" "NoDriveTypeAutoRun" 255
         }
     },
     [PSCustomObject]@{
@@ -739,6 +843,173 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "userprofile-sandbox-known-folders"
+        Name    = "用户目录媒体与遗留已知文件夹沙盒化隐藏 (+h +s)"
+        Profile = "Full"
+        Purpose = "将用户主目录下系统出厂预置的遗留/僵尸已知文件夹 (Searches, Links, Contacts, Favorites, Saved Games, 3D Objects) 与空媒体目录 (Music, Videos, Pictures) 标记为受保护的系统级隐藏 (+h +s)，自动物理清理微软出厂生成的死链接 (Bing.url, Desktop.lnk, *.search-ms)，在开启 Hidden=1 全景查看代码配置的前提下彻底纯化资源管理器视野"
+        Impact  = "用户主目录仅保留 Desktop、Downloads、Documents 等必要工作区；多媒体资产统一归口至 D:\res\media\；清除微软出厂捆绑的废弃快捷方式；原有物理目录与应用 API 读写完全兼容"
+        Check   = {
+            $targetFolders = @("3D Objects", "Contacts", "Links", "Searches", "Favorites", "Saved Games", "Music", "Videos", "Pictures")
+            $unhidden = [System.Collections.Generic.List[string]]::new()
+            foreach ($f in $targetFolders) {
+                $p = Join-Path $env:USERPROFILE $f
+                if (Test-Path -LiteralPath $p) {
+                    $item = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+                    $isSuperHidden = ($item.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and
+                                      $item.Attributes.HasFlag([System.IO.FileAttributes]::System))
+                    if (-not $isSuperHidden) { $unhidden.Add($f) }
+                }
+            }
+            $isPass = ($unhidden.Count -eq 0)
+            return @{
+                Actual      = if ($isPass) { "全部已受保护隐藏 (+h +s)" } else { "未受保护隐藏: $($unhidden -join ', ')" }
+                Expected    = "全部已受保护隐藏 (+h +s)"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $targetFolders = @("3D Objects", "Contacts", "Links", "Searches", "Favorites", "Saved Games", "Music", "Videos", "Pictures")
+
+            # 1. 物理清扫指定出厂废弃死链接
+            $purgeTargets = @(
+                (Join-Path $env:USERPROFILE "Favorites\Bing.url"),
+                (Join-Path $env:USERPROFILE "Favorites\Links"),
+                (Join-Path $env:USERPROFILE "Links\Desktop.lnk"),
+                (Join-Path $env:USERPROFILE "Links\Downloads.lnk")
+            )
+            foreach ($pt in $purgeTargets) {
+                if (Test-Path -LiteralPath $pt) {
+                    Remove-Item -LiteralPath $pt -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+
+            $searchDir = Join-Path $env:USERPROFILE "Searches"
+            if (Test-Path -LiteralPath $searchDir) {
+                Get-ChildItem -LiteralPath $searchDir -Filter "*.search-ms" -Force -ErrorAction SilentlyContinue |
+                    Remove-Item -Force -ErrorAction SilentlyContinue
+            }
+
+            # 2. 施加受保护的系统级隐藏 (+h +s)
+            foreach ($f in $targetFolders) {
+                $p = Join-Path $env:USERPROFILE $f
+                if (Test-Path -LiteralPath $p) {
+                    try {
+                        $item = Get-Item -LiteralPath $p -Force -ErrorAction Stop
+                        $newAttrs = $item.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
+                        [System.IO.File]::SetAttributes($p, $newAttrs)
+                    } catch {
+                        & attrib.exe +h +s "$p" *>$null
+                    }
+                }
+            }
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "explorer-unpin-stock-quickaccess-folders"
+        Name    = "快速访问出厂预置文件夹穿透取消固定 (Unpin Documents/Pictures等)"
+        Profile = "Full"
+        Purpose = "从文件资源管理器主页/快速访问中穿透取消固定系统出厂强塞的文档、图片、音乐、视频等大图标，仅保留桌面与下载等核心生产力工作区"
+        Impact  = "资源管理器「主页」顶部不再陈列庞大的出厂媒体文件夹图标，界面彻底回归紧凑极简"
+        Check   = {
+            $shell = New-Object -ComObject Shell.Application
+            try {
+                $qa = $shell.Namespace("shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}")
+                if (-not $qa -or $qa.Items().Count -eq 0) {
+                    $qa = $shell.Namespace("shell:Quick Access")
+                }
+                if (-not $qa) {
+                    return @{ Actual = "无主页命名空间"; Expected = "无出厂媒体项固定"; IsCompliant = $true }
+                }
+
+                $stockNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                @("Documents", "文档", "Pictures", "图片", "Music", "音乐", "Videos", "视频", "3D Objects", "3D 对象") | ForEach-Object {
+                    [void]$stockNames.Add($_)
+                }
+
+                $pinnedStock = [System.Collections.Generic.List[string]]::new()
+                foreach ($item in $qa.Items()) {
+                    if ($stockNames.Contains($item.Name)) {
+                        $pinnedStock.Add($item.Name)
+                    }
+                }
+
+                $isPass = ($pinnedStock.Count -eq 0)
+                return @{
+                    Actual      = if ($isPass) { "已纯净化 (无预置项)" } else { "仍固定: $($pinnedStock -join ', ')" }
+                    Expected    = "无出厂媒体项固定"
+                    IsCompliant = $isPass
+                }
+            } finally {
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+            }
+        }
+        Apply   = {
+            $shell = New-Object -ComObject Shell.Application
+            try {
+                $qa = $shell.Namespace("shell:::{f874310e-b6b7-47dc-bc84-b9e6b38f5903}")
+                if (-not $qa -or $qa.Items().Count -eq 0) {
+                    $qa = $shell.Namespace("shell:Quick Access")
+                }
+                if ($qa) {
+                    $stockNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    @("Documents", "文档", "Pictures", "图片", "Music", "音乐", "Videos", "视频", "3D Objects", "3D 对象") | ForEach-Object {
+                        [void]$stockNames.Add($_)
+                    }
+
+                    foreach ($item in $qa.Items()) {
+                        if ($stockNames.Contains($item.Name)) {
+                            $verbs = $item.Verbs()
+                            for ($i = 0; $i -lt $verbs.Count(); $i++) {
+                                $v = $verbs.Item($i)
+                                $cleanVerb = $v.Name -replace '[&()]', ''
+                                if ($cleanVerb -match 'Unpin from Quick access|Unpin from Home|从快速访问取消固定|从主页取消固定') {
+                                    $v.DoIt()
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+            } finally {
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
+            }
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "input-method-ms-pinyin-tuning"
+        Name    = "微软拼音输入法避坑调优 (禁用Shift+Space/默认英文/切断云候选)"
+        Profile = "General"
+        Purpose = "彻底禁用连招与敲代码时极易误触的 Shift+Space 全半角切换热键，新窗口初始默认切换为英文状态，切断云端候选词联想、自学习与动态表情上传"
+        Impact  = "消除敲代码时意外切出全角字符（如导致语法报错的空格与标点）；系统自带输入法不再向微软上传键入词频"
+        Check   = {
+            $chs = "HKCU:\Software\Microsoft\InputMethod\Settings\CHS"
+            $m = Get-RegVal $chs "Mode"
+            $c = Get-RegVal $chs "Enable Cloud Candidate"
+            $l = Get-RegVal $chs "Enable LiveSticker"
+            $hotKey = (Get-ItemProperty "HKCU:\Control Panel\Input Method\Hot Keys\00000011" -Name "Key Modifiers" -ErrorAction SilentlyContinue).'Key Modifiers'
+            $isHotKeyDisabled = ($null -ne $hotKey -and $hotKey.Length -ge 2 -and $hotKey[0] -eq 0 -and $hotKey[1] -eq 192)
+            $isPass = ($m -eq "0" -and $c -eq "0" -and $l -eq "0" -and $isHotKeyDisabled)
+            return @{
+                Actual      = if ($isPass) { "已调优 (Mode=0, Cloud=0, Shift+Space已禁用)" } else { "未调优/默认状态" }
+                Expected    = "已调优 (Mode=0, Cloud=0, Shift+Space已禁用)"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $hotKeyPath = "HKCU:\Control Panel\Input Method\Hot Keys\00000011"
+            Ensure-RegKey $hotKeyPath
+            Set-ItemProperty -Path $hotKeyPath -Name "Key Modifiers" -Type Binary -Value ([byte[]](0, 192, 0, 0)) -Force
+            Set-ItemProperty -Path $hotKeyPath -Name "Virtual Key" -Type Binary -Value ([byte[]](0, 0, 0, 0)) -Force
+
+            $chsPath = "HKCU:\Software\Microsoft\InputMethod\Settings\CHS"
+            Ensure-RegKey $chsPath
+            Set-RegDword $chsPath "Mode" 0
+            Set-RegDword $chsPath "Enable Cloud Candidate" 0
+            Set-RegDword $chsPath "Enable Self Learning" 0
+            Set-RegDword $chsPath "Enable LiveSticker" 0
+        }
+    },
+    [PSCustomObject]@{
         Id      = "locale-user-geo-united-states"
         Name    = "国家与地理区域归属锁定 (GeoID = 244 / United States)"
         Profile = "Full"
@@ -759,7 +1030,7 @@ $Rules = @(
         Name    = "区域格式与文化设定锁定 (LocaleName = en-US)"
         Profile = "Full"
         Purpose = "将日期、时间与数字格式严格锁定为全球通用 en-US 标准，杜绝自定义格式产生高熵 Web 指纹"
-        Impact  = "短日期呈现为 M/d/yyyy 格式，12 小时制，符合全球 en-US 企业基线标准（仅 Full 生效）"
+        Impact  = "短日期呈现为 M/d/yyyy 格式，符合全球 en-US 企业基线标准；时间格式由 24 小时制基准接管（仅 Full 生效）"
         Check   = {
             $loc = (Get-ItemProperty -Path "HKCU:\Control Panel\International" -ErrorAction SilentlyContinue).LocaleName
             return @{ Actual = "$loc"; Expected = "en-US"; IsCompliant = ("$loc" -eq "en-US") }
@@ -768,6 +1039,32 @@ $Rules = @(
             Set-Culture -CultureInfo "en-US" -ErrorAction SilentlyContinue
             Ensure-RegKey "HKCU:\Control Panel\International"
             Set-ItemProperty -Path "HKCU:\Control Panel\International" -Name "LocaleName" -Value "en-US" -Force
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "locale-time-format-24h"
+        Name    = "系统时间格式锁定为标准 24 小时制 (sShortTime = HH:mm, sTimeFormat = HH:mm:ss)"
+        Profile = "General"
+        Purpose = "将系统短时间与长时间格式锁定为 ISO/国际标准 24 小时制，消除上下午 (AM/PM) 语义歧义并净化时钟显示"
+        Impact  = "系统与任务栏以 24 小时制 (HH:mm / HH:mm:ss) 呈现，保留底层标准 Locale 语义，不产生非标注册表离群指纹"
+        Check   = {
+            $intl = "HKCU:\Control Panel\International"
+            $short = (Get-ItemProperty -Path $intl -ErrorAction SilentlyContinue).sShortTime
+            $time  = (Get-ItemProperty -Path $intl -ErrorAction SilentlyContinue).sTimeFormat
+            $isPass = ($short -eq "HH:mm" -and $time -eq "HH:mm:ss")
+            return @{
+                Actual      = "sShortTime=$short, sTimeFormat=$time"
+                Expected    = "sShortTime=HH:mm, sTimeFormat=HH:mm:ss"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $intl = "HKCU:\Control Panel\International"
+            Ensure-RegKey $intl
+            Set-ItemProperty -Path $intl -Name "sShortTime" -Value "HH:mm" -Force
+            Set-ItemProperty -Path $intl -Name "sTimeFormat" -Value "HH:mm:ss" -Force
+            Set-ItemProperty -Path $intl -Name "iTime" -Value "1" -Force
+            Set-ItemProperty -Path $intl -Name "iTLZero" -Value "1" -Force
         }
     },
     [PSCustomObject]@{

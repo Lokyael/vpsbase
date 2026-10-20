@@ -374,18 +374,15 @@ if (shouldSetDef) {
 
 // Windows 环境下自动探测绑定 Git Bash 路径
 if (process.platform === "win32" && !settings.shellPath) {
-  try {
-    const { execSync } = require("child_process");
-    let bp = "";
-    try {
-      const sp = execSync("scoop prefix git 2>/dev/null", { encoding: "utf8" }).trim();
-      if (sp && fs.existsSync(`${sp}/bin/bash.exe`)) {
-        bp = `${execSync(`cygpath -m "${sp}"`, { encoding: "utf8" }).trim()}/bin/bash.exe`;
-      }
-    } catch (_) {}
-    if (!bp) bp = execSync("cygpath -m $(which bash)", { encoding: "utf8" }).trim();
-    if (bp && fs.existsSync(bp)) settings.shellPath = bp;
-  } catch (_) {}
+  const path = require("path");
+  const scoopRoot = process.env.SCOOP || "D:\\prog\\scoop";
+  const bp = path.join(scoopRoot, "apps", "git", "current", "bin", "bash.exe");
+  if (fs.existsSync(bp)) {
+    settings.shellPath = bp.replace(/\\/g, "/");
+  } else {
+    process.stderr.write(`❌ Git Bash 未找到: ${bp}\n   请先执行 scoop install git\n`);
+    process.exit(1);
+  }
 }
 
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
