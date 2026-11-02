@@ -5,7 +5,8 @@ on:
     branches:
       - main
     paths:
-      - 'scripts/fonts/maple-mono/config.json'
+      - 'tools/fonts/maple-mono/config.json'
+      - 'tools/fonts/maple-mono/README.md'
       - '.github/workflows/build-font.yml'
   workflow_dispatch:
 
@@ -41,7 +42,7 @@ jobs:
       - name: Compile Fonts
         working-directory: _build_maple
         run: |
-          cp ../scripts/fonts/maple-mono/config.json ./config.json
+          cp ../tools/fonts/maple-mono/config.json ./config.json
           python build.py --cn --cn-wenyuan --nf --nf-mono --no-liga --no-hinted --ttf-only --least-styles
 
       - name: Assemble & Package Artifacts
@@ -58,8 +59,8 @@ jobs:
           fi
 
           # 打入配置源文件与说明
-          cp scripts/fonts/maple-mono/config.json _dist_pkg/
-          cp scripts/fonts/maple-mono/README.md _dist_pkg/
+          cp tools/fonts/maple-mono/config.json _dist_pkg/
+          cp tools/fonts/maple-mono/README.md _dist_pkg/
 
           # 子 shell 隔离打包为高压缩 zip
           (cd _dist_pkg && zip -9 -r ../latest-maple-mono-nl.zip .)
