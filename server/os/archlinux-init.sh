@@ -639,17 +639,37 @@ opt_paru() {
     command -v paru >/dev/null 2>&1 && action="覆盖重新构建"
     printf '==> [%s] paru (AUR 助手)...\n' "$action"
 
-    # 1. 安装官方基础构建依赖
-    printf '  📦 安装官方基础构建依赖 (git, base-devel)...\n'
+    printf '  📦 安装构建依赖 (git, base-devel)...\n'
     sudo pacman -S --needed --noconfirm git base-devel || return 1
 
-    # 2. 获取物理内存 (MiB)
-    local total_mem_mib
-    total_mem_mib=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
-    printf '  💾 检测到物理内存: %d MiB\n' "$total_mem_mib"
+    # 内存 / 交换空间检测
+    local mem_total_mib mem_available_mib swap_free_mib zram_total_mib avail_mib
+    read -r mem_total_mib mem_available_mib <<< "$(
+        awk '/MemTotal/ {t=$2} /MemAvailable/ {a=$2} END {printf "%.0f %.0f", t/1024, a/1024}' /proc/meminfo
+    )"
+    swap_free_mib=$(awk '/SwapFree/ {printf "%.0f", $2/1024}' /proc/meminfo)
+    zram_total_mib=$(cat /sys/block/zram*/disksize 2>/dev/null | awk '{s+=$1} END {printf "%.0f", s/1024/1024}') || zram_total_mib=0
+    # zram 按 disksize 一半保守估算可利用量
+    avail_mib=$(( mem_available_mib + swap_free_mib + zram_total_mib / 2 ))
 
-    # 3. 在磁盘（非 tmpfs）上创建受控临时构建目录
-    # 使用 $HOME/.cache 作为父目录，确保不在 tmpfs 中
+    printf '  💾 物理内存 %d MiB（可用 %d MiB），swap 空闲 %d MiB，zram %d MiB\n' \
+        "$mem_total_mib" "$mem_available_mib" "$swap_free_mib" "$zram_total_mib"
+    printf '  📊 可用缓冲合计 %d MiB\n' "$avail_mib"
+
+    local install_mode compile_profile
+    if (( mem_total_mib <= 1024 )); then
+        install_mode="prebuilt"
+        printf '  🎯 ≤1024 MiB：预编译（libalpm 升级后需要维护者发布新版本适配新 libalpm 才能使用）\n'
+    elif (( mem_total_mib <= 2048 )); then
+        install_mode="source"; compile_profile="low-memory"
+        printf '  🎯 ≤2048 MiB：限制内存编译\n'
+        (( avail_mib < 1536 )) && printf '  ⚠️  可用缓冲 %d MiB < 1536 MiB，编译可能失败\n' "$avail_mib" >&2
+    else
+        install_mode="source"; compile_profile="default"
+        printf '  🎯 >2048 MiB：默认编译\n'
+        (( avail_mib < 3584 )) && printf '  ⚠️  可用缓冲 %d MiB < 3584 MiB，有 OOM 风险\n' "$avail_mib" >&2
+    fi
+
     local build_parent="${XDG_CACHE_HOME:-$HOME/.cache}"
     mkdir -p "$build_parent"
     local build_dir
@@ -657,70 +677,55 @@ opt_paru() {
         printf '❌ 无法创建临时构建目录\n' >&2
         return 1
     }
-    printf '  📂 构建目录: %s\n' "$build_dir"
 
-    # 4. 从 AUR 拉取源码
-    printf '  📥 拉取 AUR 源码仓库: https://aur.archlinux.org/paru.git ...\n'
-    if ! git clone --depth=1 https://aur.archlinux.org/paru.git "$build_dir"; then
-        printf '❌ 从 AUR 拉取 paru 源码仓库失败，请检查网络\n' >&2
+    local repo="paru"
+    [[ "$install_mode" == "prebuilt" ]] && repo="paru-bin"
+    printf '  📥 拉取 %s 仓库...\n' "$repo"
+    if ! git clone --depth=1 "https://aur.archlinux.org/$repo.git" "$build_dir"; then
+        printf '❌ 拉取 %s 失败\n' "$repo" >&2
         rm -rf "$build_dir"
         return 1
     fi
 
-    # 5. 通过 makepkg 编译安装
-    printf '  🔨 开始通过 makepkg 编译并安装 paru...\n'
     local build_err=0
     (
         cd "$build_dir" || exit 1
-
-        # 限制 make 并行度
-        export MAKEFLAGS="-j1"
-
-        if (( total_mem_mib <= 2048 )); then
-            printf '  ⚙️ 低内存模式：单任务编译，通过 makepkg 配置强制关闭 LTO 和 debug\n'
-
-            # 关键：创建仅对本次构建生效的 makepkg 配置覆盖
-            # 官方要求用 !lto !debug 来禁用默认开启的选项
+        if [[ "$compile_profile" == "low-memory" ]]; then
+            export MAKEFLAGS="-j1"
+            export CARGO_PROFILE_RELEASE_LTO=off
             local _tmp_conf
             _tmp_conf=$(mktemp) || exit 1
-cat > "$_tmp_conf" <<EOF
-# 继承系统默认配置，获取所有必需的变量
+            cat > "$_tmp_conf" <<EOF
 source /etc/makepkg.conf
-
-# 低内存覆盖：仅调整必要的几个变量
 MAKEFLAGS="-j1"
 OPTIONS+=(!lto !debug)
 EOF
-
-            # 通过 --config 参数让 makepkg 使用该覆盖配置
-            # 注意：--config 会替换而非合并默认配置，因此需要保留必要的 OPTIONS
+            printf '  ⚙️  低内存：-j1，!lto !debug，CARGO_LTO=off\n'
             makepkg --config "$_tmp_conf" -si --noconfirm
             local _ret=$?
             rm -f "$_tmp_conf"
             exit $_ret
         else
+            printf '  🔨 makepkg %s\n' "$([[ "$install_mode" == "prebuilt" ]] && echo "安装预编译" || echo "默认编译")"
             makepkg -si --noconfirm
         fi
     ) || build_err=1
 
-    # 6. 无论成败，清理本次构建的临时目录
     rm -rf "$build_dir"
-
     if [[ $build_err -ne 0 ]]; then
-        printf '❌ paru 编译或安装失败\n' >&2
+        printf '❌ paru 安装失败\n' >&2
         return 1
     fi
 
-    # 7. 清理孤立包
     local orphans
     orphans=$(pacman -Qtdq 2>/dev/null || true)
     if [[ -n "$orphans" ]]; then
-        printf '  🧹 清理系统孤立依赖包...\n'
+        printf '  🧹 清理孤立包...\n'
         # shellcheck disable=SC2086
         sudo pacman -Rns --noconfirm $orphans >/dev/null 2>&1 || true
     fi
 
-    printf '  ✅ paru (AUR 助手) 已就绪: %s\n' "$(paru --version | head -n1)"
+    printf '  ✅ paru 已就绪: %s\n' "$(paru --version | head -n1)"
 }
 
 # 7. Node.js (fnm)
