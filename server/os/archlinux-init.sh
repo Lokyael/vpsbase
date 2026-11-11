@@ -686,6 +686,8 @@ opt_paru() {
             cat > "$_tmp_conf" <<'EOF'
 OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug !lto)
 MAKEFLAGS="-j1"
+PKGEXT='.pkg.tar.gz'
+SRCEXT='.src.tar.gz'
 EOF
 
             # 通过 --config 参数让 makepkg 使用该覆盖配置
