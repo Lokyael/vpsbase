@@ -683,11 +683,12 @@ opt_paru() {
             # 官方要求用 !lto !debug 来禁用默认开启的选项
             local _tmp_conf
             _tmp_conf=$(mktemp) || exit 1
-            cat > "$_tmp_conf" <<'EOF'
+cat > "$_tmp_conf" <<EOF
 OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug !lto)
 MAKEFLAGS="-j1"
 PKGEXT='.pkg.tar.gz'
 SRCEXT='.src.tar.gz'
+CARCH="$(uname -m)"
 EOF
 
             # 通过 --config 参数让 makepkg 使用该覆盖配置
