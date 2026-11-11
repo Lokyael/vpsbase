@@ -689,6 +689,7 @@ MAKEFLAGS="-j1"
 PKGEXT='.pkg.tar.gz'
 SRCEXT='.src.tar.gz'
 CARCH="$(uname -m)"
+DLAGENTS=('file::/usr/bin/curl -gqC - -o %o %u' 'ftp::/usr/bin/curl -gqC - -o %o %u' 'http::/usr/bin/curl -gqC - -o %o %u' 'https::/usr/bin/curl -gqC - -o %o %u')
 EOF
 
             # 通过 --config 参数让 makepkg 使用该覆盖配置
