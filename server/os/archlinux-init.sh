@@ -641,11 +641,25 @@ opt_paru() {
 
     # 1. 安装官方基础构建依赖
     printf '  📦 安装官方基础构建依赖 (git, base-devel)...\n'
-    sudo pacman -S --needed --noconfirm git base-devel
+    sudo pacman -S --needed --noconfirm git base-devel || return 1
 
-    # 2. 在受控临时沙盒中从 AUR 拉取源码
+    # 2. 获取物理内存 (MiB)
+    local total_mem_mib
+    total_mem_mib=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
+    printf '  💾 检测到物理内存: %d MiB\n' "$total_mem_mib"
+
+    # 3. 在磁盘（非 tmpfs）上创建受控临时构建目录
+    # 使用 $HOME/.cache 作为父目录，确保不在 tmpfs 中
+    local build_parent="${XDG_CACHE_HOME:-$HOME/.cache}"
+    mkdir -p "$build_parent"
     local build_dir
-    build_dir=$(mktemp -d /tmp/paru-build.XXXXXX)
+    build_dir=$(mktemp -d "$build_parent/paru-build.XXXXXX") || {
+        printf '❌ 无法创建临时构建目录\n' >&2
+        return 1
+    }
+    printf '  📂 构建目录: %s\n' "$build_dir"
+
+    # 4. 从 AUR 拉取源码
     printf '  📥 拉取 AUR 源码仓库: https://aur.archlinux.org/paru.git ...\n'
     if ! git clone --depth=1 https://aur.archlinux.org/paru.git "$build_dir"; then
         printf '❌ 从 AUR 拉取 paru 源码仓库失败，请检查网络\n' >&2
@@ -653,12 +667,39 @@ opt_paru() {
         return 1
     fi
 
-    # 3. 通过 makepkg -sric 一步到位编译安装并自动移除构建依赖 (如 cargo 等)
-    printf '  🔨 开始通过 makepkg -sric 编译并安装 paru (构建完成后自动卸载 cargo 等临时依赖)...\n'
+    # 5. 通过 makepkg 编译安装
+    printf '  🔨 开始通过 makepkg 编译并安装 paru...\n'
     local build_err=0
-    ( cd "$build_dir" && makepkg -sric --noconfirm ) || build_err=1
+    (
+        cd "$build_dir" || exit 1
 
-    # 4. 手动粉碎临时源码目录与工作区
+        # 限制 make 并行度
+        export MAKEFLAGS="-j1"
+
+        if (( total_mem_mib <= 2048 )); then
+            printf '  ⚙️ 低内存模式：单任务编译，通过 makepkg 配置强制关闭 LTO 和 debug\n'
+
+            # 关键：创建仅对本次构建生效的 makepkg 配置覆盖
+            # 官方要求用 !lto !debug 来禁用默认开启的选项
+            local _tmp_conf
+            _tmp_conf=$(mktemp) || exit 1
+            cat > "$_tmp_conf" <<'EOF'
+OPTIONS=(strip docs !libtool !staticlibs emptydirs zipman purge !debug !lto)
+MAKEFLAGS="-j1"
+EOF
+
+            # 通过 --config 参数让 makepkg 使用该覆盖配置
+            # 注意：--config 会替换而非合并默认配置，因此需要保留必要的 OPTIONS
+            makepkg --config "$_tmp_conf" -si --noconfirm
+            local _ret=$?
+            rm -f "$_tmp_conf"
+            exit $_ret
+        else
+            makepkg -si --noconfirm
+        fi
+    ) || build_err=1
+
+    # 6. 无论成败，清理本次构建的临时目录
     rm -rf "$build_dir"
 
     if [[ $build_err -ne 0 ]]; then
@@ -666,21 +707,16 @@ opt_paru() {
         return 1
     fi
 
-    # 5. 检查并清理可能遗留的孤立包
+    # 7. 清理孤立包
     local orphans
     orphans=$(pacman -Qtdq 2>/dev/null || true)
     if [[ -n "$orphans" ]]; then
         printf '  🧹 清理系统孤立依赖包...\n'
+        # shellcheck disable=SC2086
         sudo pacman -Rns --noconfirm $orphans >/dev/null 2>&1 || true
     fi
 
-    # 6. 固化 paru 配置开启 CleanAfter (日常使用自动清理克隆构建临时缓存)
-    if [[ -f /etc/paru.conf ]]; then
-        sudo sed -i 's/^#[[:space:]]*\(CleanAfter\)/\1/' /etc/paru.conf
-        grep -q '^CleanAfter' /etc/paru.conf || echo 'CleanAfter' | sudo tee -a /etc/paru.conf >/dev/null
-    fi
-
-    printf '  ✅ paru (AUR 助手) 已清洁就绪: %s (已启用 CleanAfter)\n' "$(paru --version | head -n1)"
+    printf '  ✅ paru (AUR 助手) 已就绪: %s\n' "$(paru --version | head -n1)"
 }
 
 # 7. Node.js (fnm)

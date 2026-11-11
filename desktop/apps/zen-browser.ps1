@@ -598,10 +598,18 @@ function Get-DefaultsPrefContent {
     return ($lines -join "`n") + "`n"
 }
 
+function Assert-AppStopped {
+    if (Get-Process -ErrorAction Stop | Where-Object ProcessName -in @('zen')) {
+        throw 'Zen Browser 仍在运行，请保存工作并自行退出后重新执行。'
+    }
+}
+
 # ==============================================================================
 # 3. 独立流转分支：清洁卸载 (-Action Uninstall)
 # ==============================================================================
 if ($Action -eq "Uninstall") {
+    Assert-AppStopped
+
     if (-not $Yes) {
         Write-Host "`n⚠️  [清洁卸载警示] 即将卸载 Zen Browser 并清理系统关联！" -ForegroundColor Yellow
         if ($Purge) {
@@ -632,9 +640,8 @@ if ($Action -eq "Uninstall") {
 
     Write-Host "`n🧹 [清洁卸载模式] 正在执行系统反注册与环境清理..." -ForegroundColor Yellow
 
-    # 1. 终止进程
-    Get-Process -Name "zen" -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Milliseconds 600
+    # 1. 运行态并发防覆写硬门禁
+    Assert-AppStopped
 
     # 2. 清理当前安装路径绑定的防火墙、计划任务、通知注册与 App Paths。
     Write-Host "   - 正在清理当前安装路径绑定的系统残留..." -ForegroundColor Gray
@@ -819,13 +826,19 @@ Write-Host "====================================================================
 $AuditBoard = [System.Collections.Generic.List[PSCustomObject]]::new()
 $DiffList   = [System.Collections.Generic.List[PSCustomObject]]::new()
 
-# 4.1 程序本体与架构校验
-$isInstalled = Test-Path -LiteralPath $AppExe -PathType Leaf
-$actualArch = if ($isInstalled) { Get-PeArchitecture $AppExe } else { $null }
+# 4.1 程序本体、核心运行时载荷与架构校验
+$hasAppExe = Test-Path -LiteralPath $AppExe -PathType Leaf
+$xulDll = Join-Path $InstallDir "xul.dll"
+$omniJa = Join-Path $InstallDir "browser\omni.ja"
+$isPayloadIntact = ($hasAppExe -and (Test-Path -LiteralPath $xulDll -PathType Leaf) -and (Test-Path -LiteralPath $omniJa -PathType Leaf))
+$isInstalled = $isPayloadIntact
+$actualArch = if ($hasAppExe) { Get-PeArchitecture $AppExe } else { $null }
 $isArchMatch = ($actualArch -eq $osArch)
 
-$exeStatusText = if (-not $isInstalled) {
+$exeStatusText = if (-not $hasAppExe) {
     "未安装"
+} elseif (-not $isPayloadIntact) {
+    "载荷残缺 (缺少核心运行时)"
 } elseif (-not $isArchMatch) {
     "架构冲突 (实机: $actualArch / 系统: $osArch)"
 } else {
@@ -1099,8 +1112,10 @@ if (-not $isDefaultsPrefReady) {
     })
 }
 
-Write-Host "`n📊 [巡检看板] Zen Browser 受控属性基线审计清单:" -ForegroundColor Cyan
-$AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+if (-not $Yes) {
+    Write-Host "`n📊 [巡检看板] Zen Browser 受控属性基线审计清单:" -ForegroundColor Cyan
+    $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+}
 
 if ($DiffList.Count -gt 0) {
     Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
@@ -1126,11 +1141,6 @@ if ($DiffList.Count -eq 0 -and $isInstalled -and -not $Force) {
 # ==============================================================================
 
 # 5.1 运行态并发防覆写硬门禁
-function Assert-AppStopped {
-    if (Get-Process -ErrorAction Stop | Where-Object ProcessName -in @('zen')) {
-        throw 'Zen Browser 仍在运行，请保存工作并自行退出后重新执行。'
-    }
-}
 Assert-AppStopped
 
 # 5.2 未安装或架构冲突审查门禁
@@ -1239,8 +1249,14 @@ if ($needBinaryDeploy) {
         Assert-AppStopped
         Copy-Item -Path "$coreDir\*" -Destination $InstallDir -Recurse -Force
 
-        # 终态物理存在与二进制架构双重硬门禁
-        if (-not (Test-Path $AppExe)) { throw "解包完成但未能定位到 $AppExe！" }
+        # 终态物理存在、核心载荷与二进制架构三重硬门禁
+        $cleanXul = Join-Path $InstallDir "xul.dll"
+        $cleanOmni = Join-Path $InstallDir "browser\omni.ja"
+        if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $cleanXul -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $cleanOmni -PathType Leaf)) {
+            throw "解包完成但未能定位核心执行文件 ($AppExe) 或核心运行时载荷 (xul.dll, browser\omni.ja)；请检查安装包完整性。"
+        }
         $installedArch = Get-PeArchitecture $AppExe
         if ($installedArch -ne $osArch) {
             throw "【终态校验失败】部署完成的 $AppExe 机器架构为 [$installedArch]，与当前操作系统架构 [$osArch] 不匹配！"

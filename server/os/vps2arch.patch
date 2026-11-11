@@ -1,5 +1,5 @@
 # ==============================================================================
-# AUDIT PATCH: Functional and security changes against upstream commit 01e1e259968c3b9c5ee5d6aea7253392b5eafe92
+# AUDIT PATCH: Functional and security changes against upstream commit 8ac9db68f9bca0b26c4143b2f3e206f2aa342d6b
 # (Excludes dead-branch pruning diffs; focuses on wizard & Arch security hardening)
 # Generated automatically by server/os/build-vps2arch.sh.
 # ==============================================================================
@@ -11,12 +11,12 @@
  set -eE
 -confhome=https://raw.githubusercontent.com/bin456789/reinstall/main
 -confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/main
-+confhome=https://raw.githubusercontent.com/bin456789/reinstall/01e1e259968c3b9c5ee5d6aea7253392b5eafe92
-+confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/01e1e259968c3b9c5ee5d6aea7253392b5eafe92
++confhome=https://raw.githubusercontent.com/bin456789/reinstall/8ac9db68f9bca0b26c4143b2f3e206f2aa342d6b
++confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/8ac9db68f9bca0b26c4143b2f3e206f2aa342d6b
  # confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
  
  # 用于判断 reinstall.sh 和 trans.sh 是否兼容
-@@ -1622,7 +1622,7 @@
+@@ -1634,7 +1634,7 @@
  
      # 不能同时使用证书和密码
      if [ -n "$password" ] && [ -n "$ssh_keys" ]; then
@@ -25,7 +25,7 @@
      fi
  }
  
-@@ -2015,23 +2015,19 @@
+@@ -2027,23 +2027,19 @@
  }
  
  assert_username_valid() {
@@ -60,11 +60,12 @@
  }
  
  # trans.sh 有同名方法
-@@ -2056,25 +2052,6 @@
+@@ -2068,27 +2064,6 @@
      return 1
  }
  
 -prompt_username() {
+-    echo >&2
 -    info "prompt username"
 -
 -    if [ "$distro" = windows ]; then
@@ -73,8 +74,9 @@
 -        default_username=root
 -    fi
 -
--    warn false "Set username, leave blank to use $default_username"
 -    warn false "设置用户名，不填写则使用 $default_username"
+-    warn false "Set username, leave blank will use $default_username"
+-
 -    IFS= read -r -p "Username: " username
 -    username="$(printf "%s" "$username" | trim)"
 -
@@ -85,8 +87,8 @@
 -}
  
  prompt_password() {
-     info "prompt password"
-@@ -3757,7 +3734,8 @@
+     echo >&2
+@@ -3780,7 +3755,8 @@
      mkdir -p $initrd_dir/configs
      if [ -n "$ssh_keys" ]; then
          cat <<<"$ssh_keys" >$initrd_dir/configs/ssh_keys
@@ -96,7 +98,7 @@
          save_password $initrd_dir/configs
      fi
      if [ -n "$frpc_config" ]; then
-@@ -4245,6 +4223,79 @@
+@@ -4269,6 +4245,79 @@
      long_opts+=$o
  done
  
@@ -178,7 +180,7 @@
      exit 1
 --- upstream/trans.sh
 +++ vps2arch/trans.sh
-@@ -427,9 +427,29 @@
+@@ -473,9 +473,29 @@
  }
  
  get_ttys() {
@@ -211,7 +213,7 @@
  }
  
  find_xda() {
-@@ -1568,11 +1588,361 @@
+@@ -1654,11 +1674,361 @@
  
  add_fix_eth_name_systemd_service() {
      local os_dir=$1
@@ -577,7 +579,7 @@
  }
  
  get_frpc_url() {
-@@ -1676,14 +2046,64 @@
+@@ -1762,14 +2132,64 @@
          change_ssh_port $os_dir $ssh_port
      fi
  

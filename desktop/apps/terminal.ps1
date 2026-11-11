@@ -640,8 +640,10 @@ if (-not $pwshHasBlock) {
     })
 }
 
-Write-Host "`n📊 [巡检看板] Windows Terminal 与 PowerShell 7 基线审计清单:" -ForegroundColor Cyan
-$chkList | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+if (-not $Yes) {
+    Write-Host "`n📊 [巡检看板] Windows Terminal 与 PowerShell 7 基线审计清单:" -ForegroundColor Cyan
+    $chkList | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+}
 
 if ($Action -eq "Check") {
     if ($diffList.Count -eq 0) {

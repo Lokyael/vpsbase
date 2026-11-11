@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # WARNING: THIS IS AN AUTO-GENERATED STATIC ARTIFACT. DO NOT EDIT DIRECTLY.
-# Source: Built by server/os/build-vps2arch.sh from upstream commit 01e1e259968c3b9c5ee5d6aea7253392b5eafe92.
+# Source: Built by server/os/build-vps2arch.sh from upstream commit 8ac9db68f9bca0b26c4143b2f3e206f2aa342d6b.
 # Audit: See server/os/vps2arch.patch for exact diff against upstream.
 # ==============================================================================
 # shellcheck shell=bash
@@ -11,8 +11,8 @@
 # alpine 默认没有 bash，因此 shebang 用 sh，再 exec 切换到 bash
 
 set -eE
-confhome=https://raw.githubusercontent.com/bin456789/reinstall/01e1e259968c3b9c5ee5d6aea7253392b5eafe92
-confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/01e1e259968c3b9c5ee5d6aea7253392b5eafe92
+confhome=https://raw.githubusercontent.com/bin456789/reinstall/8ac9db68f9bca0b26c4143b2f3e206f2aa342d6b
+confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/8ac9db68f9bca0b26c4143b2f3e206f2aa342d6b
 # confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
 
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
@@ -92,10 +92,10 @@ Usage: $reinstall_____ anolis      7|8|23
                        fnos        1
                        fygoos      1
                        nixos       26.05
-                       fedora      43|44
+                       fedora      44|45
                        debian      9|10|11|12|13
-                       opensuse    16.0|tumbleweed
                        alpine      3.21|3.22|3.23|3.24
+                       opensuse    16.0|16.1|tumbleweed
                        kali        last-snapshot|rolling
                        openeuler   20.03|22.03|24.03|26.09
                        ubuntu      18.04|20.04|22.04|24.04|26.04|26.10 [--minimal]
@@ -124,7 +124,7 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--no-auto-drivers]         (only for iso installation)
 
                        For Linux Only:
-                       [--no-cloud-kernel]         (only for Debian/Ubuntu/Alpine)
+                       [--no-cloud-kernel]         (only for Debian/Ubuntu/Alpine/openSUSE)
 
        Manual:         https://github.com/bin456789/reinstall
 
@@ -171,14 +171,26 @@ error_and_exit() {
     exit 1
 }
 
-show_dd_password_tips() {
-    warn false "
-This password is only used for SSH access to view logs during the installation.
-Password of the image will NOT modify.
+show_dd_tips() {
+    warn false '********** 提醒 Info **********'
+    warn false '用户名/密码/公钥仅用于安装时登录 SSH 查看日志/救砖，不会应用到新系统。'
+    warn false '镜像的用户名/密码/公钥不会被修改。'
+    warn false
+    warn false 'The Username/Password/Public Key is only for SSH login to view logs or rescue the system during installation, it will not be applied to the new system.'
+    warn false 'The Username/Password/Public Key inside the image will NOT be modified.'
+    warn false '**********************************'
+}
 
-密码仅用于安装过程中通过 SSH 查看日志。
-镜像的密码不会被修改。
-"
+show_fnos_tips() {
+    warn false '********** 提醒 Info **********'
+    warn false '用户名/密码/公钥仅用于安装时登录 SSH 查看日志/救砖，不会应用到新系统。'
+    warn false '安装完成后，你需要尽快到 http://IP:5666 配置账号密码。'
+    warn false '安装完成后，SSH 服务不会开启，你需要到 http://IP:5666 自行开启。'
+    warn false
+    warn false 'The Username/Password/Public Key is only for SSH login to view logs or rescue the system during installation, it will not be applied to the new system.'
+    warn false 'After installation, you need to config the username and password on http://IP:5666 as soon as possible.'
+    warn false 'After installation, SSH Service is disabled. You need to enable it from http://IP:5666.'
+    warn false '**********************************'
 }
 
 show_url_in_args() {
@@ -226,12 +238,12 @@ is_in_china() {
 
     if [ -z "$_loc" ]; then
         # www.cloudflare.com/dash.cloudflare.com 国内访问的是美国服务器，而且部分地区被墙
-        # 没有ipv6 www.visa.cn
-        # 没有ipv6 www.bose.cn
-        # 没有ipv6 www.garmin.com.cn
-        # 备用 www.prologis.cn
-        # 备用 www.autodesk.com.cn
-        # 备用 www.keysight.com.cn
+        # 以下这些都是用 cf cdn 且开通了国内 cdn 节点
+        # www.visa.com.cn
+        # www.garmin.com.cn
+        # www.prologis.cn
+        # www.autodesk.com.cn
+        # www.keysight.com.cn
         if ! _loc=$(curl -L http://www.qualcomm.cn/cdn-cgi/trace | grep '^loc=' | cut -d= -f2 | grep .); then
             error_and_exit "Can not get location."
         fi
@@ -1567,10 +1579,10 @@ verify_os_name() {
         'oracle      8|9|10' \
         'fnos        1' \
         'fygoos      1' \
-        'fedora      43|44' \
+        'fedora      44|45' \
         'nixos       26.05' \
         'debian      9|10|11|12|13' \
-        'opensuse    16.0|tumbleweed' \
+        'opensuse    16.0|16.1|tumbleweed' \
         'alpine      3.21|3.22|3.23|3.24' \
         'openeuler   20.03|22.03|24.03|26.09' \
         'ubuntu      18.04|20.04|22.04|24.04|26.04|26.10' \
@@ -2059,9 +2071,12 @@ is_administrator_username() {
 
 
 prompt_password() {
+    echo >&2
     info "prompt password"
-    warn false "Set password, leave blank to use a random password."
+
     warn false "设置密码，不填写则使用随机密码"
+    warn false "Set password, leave blank will use a random password"
+
     while true; do
         IFS= read -r -p "Password: " password
         if [ -n "$password" ]; then
@@ -2872,7 +2887,8 @@ build_extra_cmdline() {
     # 会将 extra.xxx=yyy 写入新系统的 /etc/modprobe.d/local.conf
     # https://answers.launchpad.net/ubuntu/+question/249456
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
-    for key in confhome hold force_boot_mode force_cn force_old_windows_setup cloud_image no_cloud_kernel no_auto_drivers main_disk \
+    for key in confhome hold force_boot_mode force_cn cloud_image no_cloud_kernel main_disk \
+        force_old_windows_setup no_auto_drivers no_lockout_threshold \
         elts deb_mirror \
         username ssh_port rdp_port web_port web_path allow_ping; do
         value=${!key}
@@ -3698,6 +3714,11 @@ EOF
 done < <(cat "\$ROOT"/sys/class/tty/"\$1"/active | xargs -n 1)
 EOF
     fi
+
+    # 无法进入 alpine 时显示网络配置
+    insert_into_file init after 'Launching initramfs emergency recovery shell' -F <<EOF
+(cd /dev/netconf && grep -r . . >&2 || true)
+EOF
 }
 
 mod_initrd() {
@@ -4023,10 +4044,21 @@ download_via_browser() {
     remove_alpine_rootfs "$os_dir"
 }
 
+get_daocloud_url() {
+    local url=$1
+    echo "https://files.m.daocloud.io/$(echo "$url" | sed -E 's,^https?://,,i')"
+}
+
+is_anubis() {
+    [ -f "$1" ] &&
+        head -c 10240 "$1" | grep -Fiq anubis
+}
+
 download() {
     local url=$1
     local path=$2
     local can_use_cn_mirror=${3:-false}
+    local grace=${4:-false}
 
     # 有ipv4地址无ipv4网关的情况下，aria2可能会用ipv4下载，而不是ipv6
     # axel 在 lightsail 上会占用大量cpu
@@ -4071,19 +4103,50 @@ download() {
         -O "1=$(basename "$path")" \
         -U curl/7.54.1
 
-    if ! aria2c "$url" "$@" &&
-        ! { $can_use_cn_mirror && is_in_china && is_any_ipv4_has_internet &&
-            url_cn=https://files.m.daocloud.io/$(echo "$url" | sed -E 's,^https?://,,i') &&
-            aria2c "$url_cn" "$@"; }; then
-        error_and_exit "Failed to download $url"
+    local download_success=false
+    local is_in_anubis_blacklist=false
+
+    # 直接下载
+    if aria2c "$url" "$@"; then
+        # 被挡住时，下载了 anubis html 页面
+        if is_anubis "$path"; then
+            # 完全屏蔽，例如华为云
+            if grep -iq 'Access Denied' "$path"; then
+                is_in_anubis_blacklist=true
+                warn "IP in anubis blacklist"
+            fi
+            rm -rf "$path"
+        else
+            download_success=true
+        fi
     fi
 
-    # opensuse 官方镜像支持 metalink
-    # aria2 无法重命名用 metalink 下载的文件
-    # 需用以下方法重命名
-    if head -c 1024 "$path" | grep -Fq 'urn:ietf:params:xml:ns:metalink'; then
-        real_file=$(tr -d '\n' <"$path" | sed -E 's|.*<file[[:space:]]+name="([^"]*)".*|\1|')
-        mv "$(dirname "$path")/$real_file" "$path"
+    # daocloud 镜像
+    if ! $download_success && $can_use_cn_mirror &&
+        aria2c "$(get_daocloud_url "$url")" "$@" &&
+        ! is_anubis "$path"; then
+        download_success=true
+    fi
+
+    if $download_success; then
+        # opensuse 官方镜像支持 metalink
+        # aria2 无法重命名用 metalink 下载的文件
+        # 需用以下方法重命名
+        if head -c 1024 "$path" | grep -Fq 'urn:ietf:params:xml:ns:metalink'; then
+            real_file=$(tr -d '\n' <"$path" | sed -E 's|.*<file[[:space:]]+name="([^"]*)".*|\1|')
+            mv "$(dirname "$path")/$real_file" "$path"
+        fi
+    else
+        rm -f "$path"
+        if $grace; then
+            if $is_in_anubis_blacklist; then
+                return 10
+            else
+                return 1
+            fi
+        else
+            error_and_exit "Failed to download $url"
+        fi
     fi
 }
 
@@ -4091,6 +4154,10 @@ update_part() {
     sleep 1
     sync
     sleep 1
+
+    # mkfs.ntfs 有坑，在同一秒 mkfs.ntfs 生成的 uuid 一样
+    # lsblk 也有坑，格式化后立即查看分区 uuid ，可能显示格式化前的 uuid
+    # mkfs.ntfs -f -F /dev/vda1; mkfs.ntfs -f -F /dev/vda2; lsblk -f; sleep 3; lsblk -f
 
     # partprobe
     # 有分区挂载中会报 Resource busy 错误
@@ -4525,6 +4592,18 @@ is_dhcpv6_or_slaac() {
     [ "$dhcpv6_or_slaac" = 1 ]
 }
 
+_should_add_ipv4_static_dns() {
+    get_netconf_to should_add_ipv4_static_dns
+    # shellcheck disable=SC2154
+    [ "$should_add_ipv4_static_dns" = 1 ]
+}
+
+_should_add_ipv6_static_dns() {
+    get_netconf_to should_add_ipv6_static_dns
+    # shellcheck disable=SC2154
+    [ "$should_add_ipv6_static_dns" = 1 ]
+}
+
 is_ipv4_has_internet() {
     get_netconf_to ipv4_has_internet
     # shellcheck disable=SC2154
@@ -4589,15 +4668,11 @@ is_dhcpv6() {
     # 部分系统开机需要等 DHCPv6 超时
     # 这种情况需要禁用 DHCPv6
     if [ "$dhcpv6" = 1 ] && ! ip -6 -o addr show scope global dev "$ethx" | grep -q .; then
-        echo 'DHCPv6 flag is on, but DHCPv6 is not working.'
+        echo 'DHCPv6 flag is on, but DHCPv6 is not working.' >&2
         return 1
     fi
 
     [ "$dhcpv6" = 1 ]
-}
-
-is_have_ipv6() {
-    is_slaac || is_dhcpv6 || is_staticv6
 }
 
 is_enable_other_flag() {
@@ -4689,12 +4764,41 @@ is_need_change_rdp_port() {
     [ -n "$rdp_port" ] && ! [ "$rdp_port" = 3389 ]
 }
 
-is_need_manual_set_dnsv6() {
-    # 有没有可能是静态但是有 rdnss？
-    ! is_have_ipv6 && return $FALSE
-    is_dhcpv6 && return $FALSE
+should_add_ipv4_static_dns() {
+    # 无 ip 直接返回 FALSE
+    if ! { is_dhcpv4 || is_staticv4; }; then
+        return $FALSE
+    fi
+
+    # initrd-network 检测到需要手动设置 dns
+    if _should_add_ipv4_static_dns; then
+        return $TRUE
+    fi
+
+    # 正常情况
+    is_dhcpv4 && return $FALSE
+    is_staticv4 && return $TRUE
+}
+
+should_add_ipv6_static_dns() {
+    # 无 ip 直接返回 FALSE
+    if ! { is_slaac || is_dhcpv6 || is_staticv6; }; then
+        return $FALSE
+    fi
+
+    # initrd-network 检测到需要手动设置 dns
+    if _should_add_ipv6_static_dns; then
+        return $TRUE
+    fi
+
+    # 静态 ipv6 也可能有 rdnss？而且要配置客户端 dhcpv6 软件只获取 dns，目前没处理这种
     is_staticv6 && return $TRUE
-    is_slaac && ! is_enable_other_flag &&
+
+    # 有 slaac/dhcpv6 不代表有 rdnss 或 other flag，例如甲骨文
+
+    # dhcpv6 dns (other flag) 和 rdnss 都不能使用时才返回 $TRUE
+    { is_slaac || is_dhcpv6; } &&
+        ! is_enable_other_flag &&
         { ! is_have_rdnss || { is_have_rdnss && is_windows && ! is_windows_support_rdnss; }; }
 }
 
@@ -4947,19 +5051,22 @@ EOF
         } >>$conf_file
 
         # ipv4
-        if is_dhcpv4; then
-            echo "iface $ethx inet dhcp" >>$conf_file
-
-        elif is_staticv4; then
-            get_netconf_to ipv4_addr
-            get_netconf_to ipv4_gateway
-            cat <<EOF >>$conf_file
+        if is_dhcpv4 || is_staticv4; then
+            # ip
+            if is_dhcpv4; then
+                echo "iface $ethx inet dhcp" >>$conf_file
+            elif is_staticv4; then
+                get_netconf_to ipv4_addr
+                get_netconf_to ipv4_gateway
+                cat <<EOF >>$conf_file
 iface $ethx inet static
     address $ipv4_addr
     gateway $ipv4_gateway
 EOF
+            fi
             # dns
-            if list=$(get_current_dns 4); then
+            if should_add_ipv4_static_dns &&
+                list=$(get_current_dns 4); then
                 for dns in $list; do
                     cat <<EOF >>$conf_file
     dns-nameservers $dns
@@ -5031,7 +5138,7 @@ EOF
         fi
         # dns
         # 有 ipv6 但需设置 dns 的情况
-        if is_need_manual_set_dnsv6; then
+        if should_add_ipv6_static_dns; then
             for dns in $(get_current_dns 6); do
                 cat <<EOF >>$conf_file
     dns-nameserver $dns
@@ -5171,7 +5278,7 @@ EOF
     # 全局 dns
     need_set_dns=false
     for ethx in $(get_eths); do
-        if is_staticv4 || is_staticv6 || is_need_manual_set_dnsv6; then
+        if should_add_ipv4_static_dns || should_add_ipv6_static_dns; then
             need_set_dns=true
             break
         fi
@@ -5737,15 +5844,15 @@ basic_init() {
     local os_dir=$1
 
     # 此时不能用
-    # chroot $os_dir timedatectl set-timezone Asia/Shanghai
+    # chroot $os_dir timedatectl set-timezone Etc/UTC
     # Failed to create bus connection: No such file or directory
 
     # debian 11 没有 systemd-firstboot
     if is_have_cmd_on_disk $os_dir systemd-firstboot; then
         if chroot $os_dir systemd-firstboot --help | grep -wq '\--force'; then
-            chroot $os_dir systemd-firstboot --timezone=Asia/Shanghai --force
+            chroot $os_dir systemd-firstboot --timezone=Etc/UTC --force
         else
-            chroot $os_dir systemd-firstboot --timezone=Asia/Shanghai
+            chroot $os_dir systemd-firstboot --timezone=Etc/UTC
         fi
     fi
 
@@ -6028,12 +6135,14 @@ EOF
         chroot $os_dir systemctl enable systemd-resolved
 
         apk add cloud-init
-        # 第二次运行会报错
-        useradd systemd-network || true
         create_cloud_init_network_config net.cfg
         cat -n net.cfg
-        # 正常应该是 -D gentoo，但 alpine 的 cloud-init 包缺少 gentoo 配置
+
+        # cloud-init 渲染 networkd 配置时，系统要有 systemd-network 用户，不然会报错
+        # 加 || true 防止第二次运行报错
+        useradd --system systemd-network || true
         cloud-init devel net-convert -p net.cfg -k yaml -d out -D alpine -O networkd
+        userdel -r systemd-network
 
         # 注意名字是 10-cloud-init-eth*.network，fix-eth-name.sh 会此文件名查找配置文件
         cp out/etc/systemd/network/10-cloud-init-eth*.network $os_dir/etc/systemd/network/
@@ -6285,7 +6394,11 @@ is_ends_with_digit() {
     [[ "$1" =~ [0-9]$ ]]
 }
 
-xda() {
+is_digit() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+_xda() {
     if [ -n "$1" ]; then
         if is_ends_with_digit "$xda"; then
             echo "${xda}p$1"
@@ -6295,6 +6408,29 @@ xda() {
     else
         echo "$xda"
     fi
+}
+
+xda() {
+    # 传进来的是空值或 1 2 3 等
+    if [ -z "$1" ] || is_digit "$1"; then
+        _xda "$1"
+    else
+        # 传进来的是 efi os installer 等
+        local dev_num
+        if dev_num=$(eval echo "\$dev_$1" | grep -Eo '[0-9]+$'); then
+            _xda "$dev_num"
+        else
+            error_and_exit "Cannot find device number for $1"
+        fi
+    fi
+}
+
+fill_zero() {
+    local dev=$1
+
+    local bytes
+    bytes=$(blockdev --getsize64 "$dev")
+    head -c "$bytes" /dev/zero >"$dev"
 }
 
 create_part() {
@@ -6350,10 +6486,10 @@ create_part() {
                 set 3 msftdata on
             update_part
 
-            mkfs.fat -n efi "/dev/$(xda 1)"                   #1 efi
-            dd if=/dev/zero of="/dev/$(xda 2)" bs=1M count=16 #2 msr
-            mkfs.ntfs -f -F -L os "/dev/$(xda 3)"             #3 os
-            mkfs.ntfs -f -F -L installer "/dev/$(xda 4)"      #4 installer
+            dev_efi="/dev/$(xda 1)"       #1 efi
+            dev_msr="/dev/$(xda 2)"       #2 msr
+            dev_os="/dev/$(xda 3)"        #3 os
+            dev_installer="/dev/$(xda 4)" #4 installer
         else
             # bios + mbr 启动盘最大可用 2t
             if is_xda_gt_2t; then
@@ -6368,11 +6504,20 @@ create_part() {
                 mkpart primary ntfs 1MiB ${border} \
                 mkpart primary ntfs ${border} ${max_usable_size} \
                 set 1 boot on
-            update_part
 
-            mkfs.ntfs -f -F -L os "/dev/$(xda 1)"        #1 os
-            mkfs.ntfs -f -F -L installer "/dev/$(xda 2)" #2 installer
+            dev_os="/dev/$(xda 1)"        #1 os
+            dev_installer="/dev/$(xda 2)" #2 installer
         fi
+
+        # diskpart 分区名称只可以显示 11 个字符
+        INSTALLER_PART_LABEL="inst_$(tr -dc "a-z0-9" </dev/urandom | head -c4)"
+
+        update_part
+        [ -n "$dev_efi" ] && mkfs.fat "$dev_efi"                    # efi
+        [ -n "$dev_msr" ] && fill_zero "$dev_msr"                   # msr
+        mkfs.ntfs -f -F "$dev_os"                                   # os
+        sleep 1                                                     # 在同一秒 mkfs.ntfs 生成的 uuid 一样
+        mkfs.ntfs -f -F -L "$INSTALLER_PART_LABEL" "$dev_installer" # installer
     elif [ "$distro" = fnos ]; then
         # 1. 官方安装器对系统盘大小的定义包含引导分区大小
         # 2. 官方 efi 用的是 1MiB-100M，但我们用 1MiB-101MiB
@@ -6425,10 +6570,10 @@ create_part() {
                 mkpart BOOT fat32 1MiB 101MiB \
                 mkpart SYSTEM ext4 101MiB 100% \
                 set 1 esp on
-            update_part
 
-            mkfs.fat "/dev/$(xda 1)"                #1 efi
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 2)" #2 os + installer
+            dev_efi="/dev/$(xda 1)" #1 efi
+            dev_os="/dev/$(xda 2)"  #2 os + installer
+
         elif is_xda_gt_2t; then
             # bios > 2t
             # 官方安装器是 mkpart BOOT 1M 100M，无论 esp 或者 bios_grub 都用这个分区和大小
@@ -6437,10 +6582,10 @@ create_part() {
                 mkpart BOOT ext4 1MiB 101MiB \
                 mkpart SYSTEM ext4 101MiB 100% \
                 set 1 bios_grub on
-            update_part
 
-            dd if=/dev/zero of="/dev/$(xda 1)" bs=1M count=100 #1 bios_grub
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 2)"            #2 os + installer
+            dev_grub="/dev/$(xda 1)" #1 bios_grub
+            dev_os="/dev/$(xda 2)"   #2 os + installer
+
         else
             # bios
             parted /dev/$xda -s -- \
@@ -6448,11 +6593,16 @@ create_part() {
                 mkpart primary 1MiB 101MiB \
                 mkpart primary 101MiB 100% \
                 set 2 boot on
-            update_part
 
-            dd if=/dev/zero of="/dev/$(xda 1)" bs=1M count=100 #1 官方安装有这个分区
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 2)"            #2 os + installer
+            dev_empty="/dev/$(xda 1)" #1 官方安装有这个分区
+            dev_os="/dev/$(xda 2)"    #2 os + installer
         fi
+
+        update_part
+        [ -n "$dev_efi" ] && mkfs.fat "$dev_efi"      # efi
+        [ -n "$dev_grub" ] && fill_zero "$dev_grub"   # bios_grub
+        [ -n "$dev_empty" ] && fill_zero "$dev_empty" # 官方安装有这个分区
+        mkfs.ext4 -F $ext4_opts "$dev_os"             # os + installer
     elif is_use_cloud_image; then
         installer_part_size="$(get_cloud_image_part_size)"
         # 这几个系统不使用dd，而是复制文件
@@ -6469,11 +6619,11 @@ create_part() {
                     mkpart '" "' $fs 101MiB -$installer_part_size \
                     mkpart '" "' ext4 -$installer_part_size 100% \
                     set 1 esp on
-                update_part
 
-                mkfs.fat -n efi "/dev/$(xda 1)"           #1 efi
-                echo                                      #2 os 用目标系统的格式化工具
-                mkfs.ext4 -F -L installer "/dev/$(xda 3)" #3 installer
+                dev_efi="/dev/$(xda 1)"       #1 efi
+                dev_os="/dev/$(xda 2)"        #2 os 用目标系统的格式化工具
+                dev_installer="/dev/$(xda 3)" #3 installer
+
             else
                 parted /dev/$xda -s -- \
                     mklabel gpt \
@@ -6481,12 +6631,17 @@ create_part() {
                     mkpart '" "' $fs 2MiB -$installer_part_size \
                     mkpart '" "' ext4 -$installer_part_size 100% \
                     set 1 bios_grub on
-                update_part
 
-                dd if=/dev/zero of="/dev/$(xda 1)" bs=1M count=1 #1 bios_grub
-                echo                                             #2 os 用目标系统的格式化工具
-                mkfs.ext4 -F -L installer "/dev/$(xda 3)"        #3 installer
+                dev_grub="/dev/$(xda 1)"      #1 bios_grub
+                dev_os="/dev/$(xda 2)"        #2 os 用目标系统的格式化工具
+                dev_installer="/dev/$(xda 3)" #3 installer
             fi
+
+            update_part
+            [ -n "$dev_efi" ] && mkfs.fat "$dev_efi"    # efi
+            [ -n "$dev_grub" ] && fill_zero "$dev_grub" # bios_grub
+            :                                           # os 用目标系统的格式化工具
+            mkfs.ext4 -F "$dev_installer"               # installer
         else
             # 使用 dd qcow2
             # fedora debian opensuse arch gentoo
@@ -6494,10 +6649,13 @@ create_part() {
                 mklabel gpt \
                 mkpart '" "' ext4 1MiB -$installer_part_size \
                 mkpart '" "' ext4 -$installer_part_size 100%
-            update_part
 
-            mkfs.ext4 -F -L os "/dev/$(xda 1)"        #1 os
-            mkfs.ext4 -F -L installer "/dev/$(xda 2)" #2 installer
+            dev_os="/dev/$(xda 1)"        #1 os
+            dev_installer="/dev/$(xda 2)" #2 installer
+
+            update_part
+            :                             # os 不需要格式化，dd 镜像会覆盖此分区
+            mkfs.ext4 -F "$dev_installer" # installer
         fi
     elif [ "$distro" = alpine ] || [ "$distro" = arch ] || [ "$distro" = gentoo ] ||
         [ "$distro" = nixos ] || [ "$distro" = aosc ]; then
@@ -6512,10 +6670,10 @@ create_part() {
                 mkpart '" "' fat32 1MiB 101MiB \
                 mkpart '" "' ext4 101MiB 100% \
                 set 1 boot on
-            update_part
 
-            mkfs.fat "/dev/$(xda 1)"                #1 efi
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 2)" #2 os
+            dev_efi="/dev/$(xda 1)" #1 efi
+            dev_os="/dev/$(xda 2)"  #2 os
+
         elif is_xda_gt_2t; then
             # bios > 2t
             parted /dev/$xda -s -- \
@@ -6523,20 +6681,24 @@ create_part() {
                 mkpart '" "' ext4 1MiB 2MiB \
                 mkpart '" "' ext4 2MiB 100% \
                 set 1 bios_grub on
-            update_part
 
-            dd if=/dev/zero of="/dev/$(xda 1)" bs=1M count=1 #1 bios_grub
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 2)"          #2 os
+            dev_grub="/dev/$(xda 1)" #1 bios_grub
+            dev_os="/dev/$(xda 2)"   #2 os
+
         else
             # bios
             parted /dev/$xda -s -- \
                 mklabel msdos \
                 mkpart primary ext4 1MiB 100% \
                 set 1 boot on
-            update_part
 
-            mkfs.ext4 -F $ext4_opts "/dev/$(xda 1)" #1 os
+            dev_os="/dev/$(xda 1)" #1 os
         fi
+
+        update_part
+        [ -n "$dev_efi" ] && mkfs.fat "$dev_efi"    # efi
+        [ -n "$dev_grub" ] && fill_zero "$dev_grub" # bios_grub
+        mkfs.ext4 -F $ext4_opts "$dev_os"           # os
     else
         # iso 安装红帽系或ubuntu
         # 对于红帽系是临时分区表，安装时除了 installer 分区，其他分区会重建为默认的大小
@@ -6566,11 +6728,11 @@ create_part() {
                 mkpart '" "' ext4 1025MiB -$installer_part_size \
                 mkpart '" "' ext4 -$installer_part_size 100% \
                 set 1 boot on
-            update_part
 
-            mkfs.fat -n efi "/dev/$(xda 1)"                      #1 efi
-            mkfs.ext4 -F -L os "/dev/$(xda 2)"                   #2 os
-            mkfs.ext4 -F -L installer $ext4_opts "/dev/$(xda 3)" #2 installer
+            dev_efi="/dev/$(xda 1)"       #1 efi
+            dev_os="/dev/$(xda 2)"        #2 os
+            dev_installer="/dev/$(xda 3)" #3 installer
+
         elif is_xda_gt_2t; then
             # bios > 2t
             parted /dev/$xda -s -- \
@@ -6579,11 +6741,10 @@ create_part() {
                 mkpart '" "' ext4 2MiB -$installer_part_size \
                 mkpart '" "' ext4 -$installer_part_size 100% \
                 set 1 bios_grub on
-            update_part
 
-            dd if=/dev/zero of="/dev/$(xda 1)" bs=1M count=1     #1 bios_grub
-            mkfs.ext4 -F -L os "/dev/$(xda 2)"                   #2 os
-            mkfs.ext4 -F -L installer $ext4_opts "/dev/$(xda 3)" #3 installer
+            dev_grub="/dev/$(xda 1)"      #1 bios_grub
+            dev_os="/dev/$(xda 2)"        #2 os
+            dev_installer="/dev/$(xda 3)" #3 installer
         else
             # bios
             parted /dev/$xda -s -- \
@@ -6591,12 +6752,17 @@ create_part() {
                 mkpart primary ext4 1MiB -$installer_part_size \
                 mkpart primary ext4 -$installer_part_size 100% \
                 set 1 boot on
-            update_part
 
-            mkfs.ext4 -F -L os "/dev/$(xda 1)"                   #1 os
-            mkfs.ext4 -F -L installer $ext4_opts "/dev/$(xda 2)" #2 installer
+            dev_os="/dev/$(xda 1)"        #1 os
+            dev_installer="/dev/$(xda 2)" #2 installer
         fi
         update_part
+
+        [ -n "$dev_efi" ] && mkfs.fat "$dev_efi"              # efi
+        [ -n "$dev_grub" ] && fill_zero "$dev_grub"           # bios_grub
+        mkfs.ext4 -F -L os "$dev_os"                          # os
+        mkfs.ext4 -F -L installer $ext4_opts "$dev_installer" # installer
+        # 保留分区名，因为 redhat/ubuntu iso 安装模式依赖分区名
     fi
 
     update_part
@@ -6650,6 +6816,7 @@ create_cloud_init_network_config() {
 
     apk add yq-go
 
+    # 全局，不分网卡
     need_set_dns4=false
     need_set_dns6=false
 
@@ -6667,26 +6834,28 @@ create_cloud_init_network_config() {
         subnet_id=0
 
         # ipv4
-        if is_dhcpv4; then
-            yq -i ".network.config[$config_id].subnets[$subnet_id] = {\"type\": \"dhcp4\"}" $ci_file
-            subnet_id=$((subnet_id + 1))
-        elif is_staticv4; then
-            need_set_dns4=true
-            get_netconf_to ipv4_addr
-            get_netconf_to ipv4_gateway
-            yq -i ".network.config[$config_id].subnets[$subnet_id] = {
+        if is_dhcpv4 || is_staticv4; then
+            if is_dhcpv4; then
+                yq -i ".network.config[$config_id].subnets[$subnet_id] = {\"type\": \"dhcp4\"}" $ci_file
+            elif is_staticv4; then
+                get_netconf_to ipv4_addr
+                get_netconf_to ipv4_gateway
+                yq -i ".network.config[$config_id].subnets[$subnet_id] = {
                     \"type\": \"static\",
                     \"address\": \"$ipv4_addr\",
                     \"gateway\": \"$ipv4_gateway\" }
                     " $ci_file
-
-            # 旧版 cloud-init 有 bug
-            # 有的版本会只从第一种配置中读取 dns，有的从第二种读取
-            # 因此写两种配置
-            # https://github.com/canonical/cloud-init/commit/1b8030e0c7fd6fbff7e38ad1e3e6266ae50c83a5
-            for cur in $(get_current_dns 4); do
-                yq -i ".network.config[$config_id].subnets[$subnet_id].dns_nameservers += [\"$cur\"]" $ci_file
-            done
+            fi
+            if should_add_ipv4_static_dns; then
+                # 旧版 cloud-init 有 bug
+                # 有的版本会只从第一种配置中读取 dns，有的从第二种读取
+                # 因此写两种配置
+                # https://github.com/canonical/cloud-init/commit/1b8030e0c7fd6fbff7e38ad1e3e6266ae50c83a5
+                for cur in $(get_current_dns 4); do
+                    yq -i ".network.config[$config_id].subnets[$subnet_id].dns_nameservers += [\"$cur\"]" $ci_file
+                done
+                need_set_dns4=true
+            fi
             subnet_id=$((subnet_id + 1))
         fi
 
@@ -6736,7 +6905,7 @@ create_cloud_init_network_config() {
         fi
 
         # 有 ipv6 但需设置 dns 的情况
-        if is_need_manual_set_dnsv6; then
+        if should_add_ipv6_static_dns; then
             need_set_dns6=true
             for cur in $(get_current_dns 6); do
                 yq -i ".network.config[$config_id].subnets[$subnet_id].dns_nameservers += [\"$cur\"]" $ci_file
@@ -7133,19 +7302,6 @@ EOF
         create_network_manager_config /net.cfg "$os_dir"
         rm /net.cfg
 
-        # TODO: fedora 43 eol 后删除
-        # 删除 cloud-init 会删除依赖包 netcat
-        # 但是删除 netcat 时会报错
-        # 因此保留 netcat 包
-        # >>> Running %preun scriptlet: netcat-0:1.229-3.fc43.x86_64
-        # >>> Error in %preun scriptlet: netcat-0:1.229-3.fc43.x86_64
-        # >>> Scriptlet output:
-        # >>> failed to create admindir: No such file or directory
-        # >>> [RPM] %preun(netcat-1.229-3.fc43.x86_64) scriptlet failed, exit status 2
-        # >>> [RPM] netcat-1.229-3.fc43.x86_64: erase failed
-        if [ "$distro" = fedora ] && [ "$releasever" = 43 ]; then
-            chroot $os_dir dnf mark user netcat -y
-        fi
         remove_or_disable_cloud_init $os_dir
 
         disable_selinux $os_dir
@@ -8075,7 +8231,7 @@ download_qcow() {
     info "Download qcow2 image"
 
     mkdir -p /installer
-    mount /dev/disk/by-label/installer /installer
+    mount "/dev/$(xda installer)" /installer
 
     qcow_file=/installer/cloud_image.qcow2
     if [ -n "$img_type_warp" ]; then
@@ -8403,7 +8559,7 @@ dd_qcow() {
     else
         # 将前1M dd到内存，将1M之后 dd到硬盘
         qemu-img dd if=$qcow_file of=/first-1M bs=1M count=1
-        qemu-img dd if=$qcow_file of=/dev/disk/by-label/os bs=1M skip=1
+        qemu-img dd if=$qcow_file of=/dev/$xda bs=1M skip=1
     fi
 
     # 已 dd 并断开连接 qcow，可删除 qemu-img
@@ -8551,21 +8707,23 @@ resize_after_install_cloud_image() {
 mount_part_basic_layout() {
     local os_dir=$1
     local efi_dir=$2
+    local os_fs=$3
 
-    if is_efi || is_xda_gt_2t; then
-        os_part_num=2
-    else
-        os_part_num=1
-    fi
+    # 注意 busybox mount 不支持 -m 自动创建挂载点
 
     # 挂载系统分区
-    mkdir -p $os_dir
-    mount -t ext4 "/dev/$(xda $os_part_num)" $os_dir
+    # 如果安装了 util-linux，可以自动识别文件系统类型
+    local t_opts=
+    if [ -n "$os_fs" ]; then
+        t_opts="-t $os_fs"
+    fi
+    mkdir -p "$os_dir"
+    mount $t_opts "/dev/$(xda os)" "$os_dir"
 
     # 挂载 efi 分区
     if is_efi; then
-        mkdir -p $efi_dir
-        mount -t vfat -o umask=077 "/dev/$(xda 1)" $efi_dir
+        mkdir -p "$efi_dir"
+        mount -t vfat -o umask=077 "/dev/$(xda efi)" "$efi_dir"
     fi
 }
 
@@ -8578,17 +8736,19 @@ mount_part_for_iso_installer() {
         mount_args=
     fi
 
+    # 注意 busybox mount 不支持 -m 自动创建挂载点
+
     # 挂载主分区
     mkdir -p /os
-    mount $mount_args /dev/disk/by-label/os /os
+    mount $mount_args "/dev/$(xda os)" /os
 
     # 挂载其他分区
     if is_efi; then
         mkdir -p /os/boot/efi
-        mount /dev/disk/by-label/efi /os/boot/efi
+        mount "/dev/$(xda efi)" /os/boot/efi
     fi
     mkdir -p /os/installer
-    mount $mount_args /dev/disk/by-label/installer /os/installer
+    mount $mount_args "/dev/$(xda installer)" /os/installer
 }
 
 get_dns_list_for_win() {
@@ -8605,7 +8765,7 @@ create_win_set_netconf_script() {
     target=$1
     info "Create win netconf script"
 
-    if is_staticv4 || is_staticv6 || is_need_manual_set_dnsv6; then
+    if is_staticv4 || is_staticv6 || should_add_ipv4_static_dns || should_add_ipv6_static_dns; then
         get_netconf_to mac_addr
         echo "set mac_addr=$mac_addr" >$target
 
@@ -8616,7 +8776,6 @@ create_win_set_netconf_script() {
             cat <<EOF >>$target
 set ipv4_addr=$ipv4_addr
 set ipv4_gateway=$ipv4_gateway
-$(get_dns_list_for_win 4)
 EOF
         fi
 
@@ -8630,8 +8789,15 @@ set ipv6_gateway=$ipv6_gateway
 EOF
         fi
 
+        # 有 ipv4 但需设置 dns 的情况
+        if should_add_ipv4_static_dns; then
+            cat <<EOF >>$target
+$(get_dns_list_for_win 4)
+EOF
+        fi
+
         # 有 ipv6 但需设置 dns 的情况
-        if is_need_manual_set_dnsv6; then
+        if should_add_ipv6_static_dns; then
             cat <<EOF >>$target
 $(get_dns_list_for_win 6)
 EOF
@@ -8912,6 +9078,40 @@ apk_add_from_edge() {
 
 apk_del_edge() {
     apk del edge
+}
+
+download_from_fedorapeople() {
+    local url=$1
+    local file=$2
+    local can_use_cn_mirror=${3:-false}
+    local grace=${4:-false}
+
+    local skip_browser_download=false
+
+    # aria2 下载，包括用 daocloud 镜像
+    local aria2c_grace=true
+    if download "$url" "$file" $can_use_cn_mirror $aria2c_grace; then
+        return
+    else
+        # anubis 屏蔽了华为云
+        # 此时跳过用浏览器下载
+        if [ $? -eq 10 ]; then
+            skip_browser_download=true
+        fi
+    fi
+
+    # 用浏览器下载
+    if ! $skip_browser_download &&
+        download_via_browser "$url" "$file" &&
+        ! is_anubis "$file"; then
+        return
+    fi
+
+    if $grace; then
+        return 1
+    else
+        error_and_exit "Failed to download $url"
+    fi
 }
 
 install_windows() {
@@ -9367,6 +9567,7 @@ EOF_INLINED_TRANS
     cat <<'EOF_INLINED_NETWORK' > "$initrd_dir/initrd-network.sh"
 #!/bin/ash
 # shellcheck shell=dash
+# shellcheck disable=SC2034
 # alpine/debian initrd 共用此脚本
 
 # accept_ra 接收 RA + 自动配置网关
@@ -9401,6 +9602,17 @@ else
     ipv6_dns1='2606:4700:4700::1111'
     ipv6_dns2='2001:4860:4860::8888' # 不开放 80
 fi
+
+log() {
+    log_with_uptime="[$(printf '%6s' "$(cut -d ' ' -f1 /proc/uptime)")] $*"
+    echo "$log_with_uptime" >&2
+
+    # 写入文件
+    if [ -n "$ethx" ]; then
+        mkdir -p "/dev/netconf/$ethx"
+        echo "$log_with_uptime" >>"/dev/netconf/$ethx/logs"
+    fi
+}
 
 # 找到主网卡
 # debian 11 initrd 没有 xargs awk
@@ -9557,11 +9769,23 @@ add_missing_ipv6_config() {
 }
 
 is_need_test_ipv4() {
-    is_have_ipv4 && ! $ipv4_has_internet
+    mode=$1
+
+    if [ "$mode" = ip ]; then
+        is_have_ipv4 && ! $ipv4_has_internet
+    else
+        is_have_ipv4 && ! $ipv4_has_internet_with_dns
+    fi
 }
 
 is_need_test_ipv6() {
-    is_have_ipv6 && ! $ipv6_has_internet
+    mode=$1
+
+    if [ "$mode" = ip ]; then
+        is_have_ipv6 && ! $ipv6_has_internet
+    else
+        is_have_ipv6 && { ! $ipv6_has_internet || ! $ipv6_has_internet_with_dns; }
+    fi
 }
 
 # 测试方法：
@@ -9578,14 +9802,23 @@ test_by_wget() {
     src=$1
     dst=$2
 
-    # ipv6 需要添加 []
-    if echo "$dst" | grep -q ':'; then
-        url="https://[$dst]"
+    if echo "$dst" | grep -Eiq '^https?://'; then
+        url="$dst"
     else
-        url="https://$dst"
+        # 输入的是 ip，检测 443 (doh)
+        if echo "$dst" | grep -Fq ':'; then
+            # ipv6 需要添加 []
+            url="https://[$dst]"
+        elif echo "$dst" | grep -Fq '.'; then
+            # ipv4
+            url="https://$dst"
+        else
+            # ip 没有 : 或者 .
+            return 1
+        fi
     fi
 
-    # tcp 443 通了就算成功，不管 http 是不是 404
+    # tcp 通了就算成功，不管 http 是不是 404
     # grep -m1 快速返回
     wget -T "$TEST_TIMEOUT" \
         --bind-address="$src" \
@@ -9600,54 +9833,166 @@ test_by_nc() {
     src=$1
     dst=$2
 
-    # tcp 443 通了就算成功
-    nc -z -v \
-        -w "$TEST_TIMEOUT" \
-        -s "$src" \
-        "$dst" 443
+    if echo "$dst" | grep -Eiq '^https?://'; then
+        # 取出 domain 或者 domain:port
+        domain_colon_port=$(echo "$dst" | cut -d/ -f3)
+        if echo "$domain_colon_port" | grep -Eq ':[0-9]+'; then
+            host=$(echo "$domain_colon_port" | cut -d: -f1)
+            port=$(echo "$domain_colon_port" | cut -d: -f2)
+        else
+            host=$domain_colon_port
+            if echo "$dst" | grep -iq '^http://'; then
+                port=80
+            elif echo "$dst" | grep -iq '^https://'; then
+                port=443
+            fi
+        fi
+
+        # nc 的顺序是先解析 dns，再用指定 ip 连接
+        # 因此即使指定了 ipv4 源 IP，也有时会尝试连接 ipv6 地址，导致连接失败
+        # localhost:~# nc -z -v -s 10.0.0.208 www.qualcomm.cn 443
+        # nc: www.qualcomm.cn ([2606:4700:440d::6812:2bdb]:443): Address family not supported by protocol
+        # 因此先手动解析
+
+        if echo "$src" | grep -Fq ':'; then
+            type=AAAA
+        else
+            type=A
+        fi
+
+        if res=$(nslookup -type="$type" "$host" | grep -Ex 'Address: .+' | awk "{print \$2, \"$host\"}" | grep .); then
+            echo "$res" >/tmp/hosts
+        else
+            return 1
+        fi
+    else
+        # 输入的是 ip，检测 443 (doh)
+        host=$dst
+        port=443
+    fi
+
+    # tcp 通了就算成功
+    set -- nc -z -v -w "$TEST_TIMEOUT" -s "$src" "$host" "$port"
+    if [ -f /tmp/hosts ]; then
+        if unshare -m sh -c "
+            touch /etc/hosts &&
+            mount --bind /tmp/hosts /etc/hosts &&
+            $*
+            "; then
+            ret=0
+        else
+            ret=1
+        fi
+        rm -f /tmp/hosts
+        return $ret
+    else
+        "$@"
+    fi
 }
 
 is_debian_kali() {
     [ -f /etc/lsb-release ] && grep -Eiq 'Debian|Kali' /etc/lsb-release
 }
 
-test_connect() {
+test_internet_inner() {
     if is_debian_kali; then
-        test_by_wget "$1" "$2"
+        test_by_wget "$1" "$2" && return
     else
-        test_by_nc "$1" "$2"
+        test_by_nc "$1" "$2" && return
+    fi
+
+    # dst 是裸 IP 时（ip 模式检测公共 DNS），上面测的是 443 (DoH)
+    # 部分商家会拦截到 1.1.1.1/8.8.8.8 等公共 DNS 的 443 端口（封 DoH），
+    # 但 80 端口和其他网站正常，此时改用 80 端口再测一次，避免误判为无法上网
+    if echo "$2" | grep -Eiq '^https?://'; then
+        return 1
+    fi
+    if is_debian_kali; then
+        if echo "$2" | grep -Fq ':'; then
+            test_by_wget "$1" "http://[$2]/"
+        else
+            test_by_wget "$1" "http://$2/"
+        fi
+    else
+        nc -z -v -w "$TEST_TIMEOUT" -s "$1" "$2" 80
     fi
 }
 
 test_internet() {
+    mode=$1
+
+    # 两种检测模式
+    # ip   = 检测 ip 是否有互联网连接
+    # full = 检测 dns 是否正常 + 检测 ip
+
+    if [ "$mode" = "ip" ]; then
+        ipv4_dst1=$ipv4_dns1
+        ipv4_dst2=$ipv4_dns2
+        ipv6_dst1=$ipv6_dns1
+        ipv6_dst2=$ipv6_dns2
+    else
+        # 这些都是用 cf cdn 且开通了国内 cdn 节点
+        ipv4_dst1=https://www.qualcomm.cn/
+        ipv4_dst2=https://www.autodesk.com.cn/
+        ipv6_dst1=https://www.qualcomm.cn/
+        ipv6_dst2=https://www.autodesk.com.cn/
+    fi
+
     for i in $(seq 5); do
-        echo "Testing Internet Connection. Test $i... "
-        if is_need_test_ipv4 &&
+        log "Testing internet. Mode: $mode. Test $i... "
+        if is_need_test_ipv4 "$mode" &&
             current_ipv4_addr="$(get_first_ipv4_addr | remove_netmask)" &&
-            { test_connect "$current_ipv4_addr" "$ipv4_dns1" ||
-                test_connect "$current_ipv4_addr" "$ipv4_dns2"; } >/dev/null 2>&1; then
-            echo "IPv4 has internet."
+            { test_internet_inner "$current_ipv4_addr" "$ipv4_dst1" ||
+                test_internet_inner "$current_ipv4_addr" "$ipv4_dst2"; } >/dev/null 2>&1; then
             ipv4_has_internet=true
+            if [ "$mode" = "full" ]; then
+                ipv4_has_internet_with_dns=true
+            fi
+            log "IPv4 has internet. Mode: $mode"
         fi
-        if is_need_test_ipv6 &&
+        if is_need_test_ipv6 "$mode" &&
             current_ipv6_addr="$(get_first_ipv6_addr | remove_netmask)" &&
-            { test_connect "$current_ipv6_addr" "$ipv6_dns1" ||
-                test_connect "$current_ipv6_addr" "$ipv6_dns2"; } >/dev/null 2>&1; then
-            echo "IPv6 has internet."
+            { test_internet_inner "$current_ipv6_addr" "$ipv6_dst1" ||
+                test_internet_inner "$current_ipv6_addr" "$ipv6_dst2"; } >/dev/null 2>&1; then
             ipv6_has_internet=true
+            if [ "$mode" = "full" ]; then
+                ipv6_has_internet_with_dns=true
+            fi
+            log "IPv6 has internet. Mode: $mode"
         fi
-        if ! is_need_test_ipv4 && ! is_need_test_ipv6; then
+        if ! is_need_test_ipv4 "$mode" && ! is_need_test_ipv6 "$mode"; then
             break
         fi
         sleep 1
     done
 }
 
+flush_ipv4_dns() {
+    sed -i "/\./d" /etc/resolv.conf
+}
+
+flush_ipv6_dns() {
+    sed -i "/:/d" /etc/resolv.conf
+}
+
+should_add_ipv4_static_dns=false
+should_add_ipv6_static_dns=false
+
+add_ipv4_static_dns() {
+    echo "nameserver $ipv4_dns1" >>/etc/resolv.conf
+    echo "nameserver $ipv4_dns2" >>/etc/resolv.conf
+}
+
+add_ipv6_static_dns() {
+    echo "nameserver $ipv6_dns1" >>/etc/resolv.conf
+    echo "nameserver $ipv6_dns2" >>/etc/resolv.conf
+}
+
 flush_ipv4_config() {
     ip -4 addr flush scope global dev "$ethx"
     ip -4 route flush dev "$ethx"
     # DHCP 获取的 IP 不是重装前的 IP 时，一并删除 DHCP 获取的 DNS，以防 DNS 无效
-    sed -i "/\./d" /etc/resolv.conf
+    flush_ipv4_dns
 }
 
 should_disable_dhcpv4=false
@@ -9664,7 +10009,7 @@ flush_ipv6_config() {
     ip -6 addr flush scope global dev "$ethx"
     ip -6 route flush dev "$ethx"
     # DHCP 获取的 IP 不是重装前的 IP 时，一并删除 DHCP 获取的 DNS，以防 DNS 无效
-    sed -i "/:/d" /etc/resolv.conf
+    flush_ipv6_dns
 }
 
 for i in $(seq 20); do
@@ -9675,11 +10020,11 @@ for i in $(seq 20); do
 done
 
 if [ -z "$ethx" ]; then
-    echo "Not found network card: $mac_addr"
+    log "Not found network card: $mac_addr"
     exit
 fi
 
-echo "Configuring $ethx ($mac_addr)..."
+log "Configuring $ethx ($mac_addr)..."
 
 # 不开启 lo 则 frp 无法连接 127.0.0.1 22
 ip link set dev lo up
@@ -9770,9 +10115,9 @@ fi
 # 有ipv6地址就跳过，不管是slaac或者dhcpv6
 # 因为会在trans里判断
 # 这里等待5秒就够了，因为之前尝试获取dhcp6也用了一段时间
+log "Waiting SLAAC..."
 for i in $(seq 5 -1 0); do
     is_have_ipv6 && break
-    echo "waiting slaac for ${i}s"
     sleep 1
 done
 
@@ -9788,13 +10133,13 @@ is_have_ipv6_gateway && ra_has_gateway=true || ra_has_gateway=false
 # 2. openSUSE wicked dhcpv6 是 64 位掩码，aws lightsail 模板上的也是，而其它 dhcpv6 软件都是 128 位掩码
 if $dhcpv4 && [ -n "$ipv4_addr" ] && [ -n "$ipv4_gateway" ] &&
     ! [ "$(echo "$ipv4_addr" | cut -d/ -f1)" = "$(get_first_ipv4_addr | cut -d/ -f1)" ]; then
-    echo "IPv4 address obtained from DHCP is different from old system."
+    log "IPv4 address obtained from DHCP is different from old system."
     should_disable_dhcpv4=true
     flush_ipv4_config
 fi
 if $dhcpv6_or_slaac && [ -n "$ipv6_addr" ] && [ -n "$ipv6_gateway" ] &&
     ! [ "$(echo "$ipv6_addr" | cut -d/ -f1)" = "$(get_first_ipv6_addr | cut -d/ -f1)" ]; then
-    echo "IPv6 address obtained from SLAAC/DHCPv6 is different from old system."
+    log "IPv6 address obtained from SLAAC/DHCPv6 is different from old system."
     should_disable_accept_ra=true
     should_disable_autoconf=true
     flush_ipv6_config
@@ -9807,7 +10152,9 @@ add_missing_ipv6_config
 # 检查 ipv4/ipv6 是否连接联网
 ipv4_has_internet=false
 ipv6_has_internet=false
-test_internet
+ipv4_has_internet_with_dns=false
+ipv6_has_internet_with_dns=false
+test_internet ip
 
 # 如果无法上网，并且自动获取的 掩码/网关 不是重装前的，则改成静态
 # ip_addr 包括 IP/掩码，所以可以用来判断掩码是否不同
@@ -9815,23 +10162,23 @@ test_internet
 if ! $ipv4_has_internet &&
     $dhcpv4 && [ -n "$ipv4_addr" ] && [ -n "$ipv4_gateway" ] &&
     ! { [ "$ipv4_addr" = "$(get_first_ipv4_addr)" ] && [ "$ipv4_gateway" = "$(get_first_ipv4_gateway)" ]; }; then
-    echo "IPv4 netmask/gateway obtained from DHCP is different from old system."
+    log "IPv4 netmask/gateway obtained from DHCP is different from old system."
     should_disable_dhcpv4=true
     flush_ipv4_config
     add_missing_ipv4_config
-    test_internet
+    test_internet ip
 fi
 # 有可能是静态 IPv6 但能从 RA 获取到网关，因此加上 || $ra_has_gateway
 if ! $ipv6_has_internet &&
     { $dhcpv6_or_slaac || $ra_has_gateway; } &&
     [ -n "$ipv6_addr" ] && [ -n "$ipv6_gateway" ] &&
     ! { [ "$ipv6_addr" = "$(get_first_ipv6_addr)" ] && [ "$ipv6_gateway" = "$(get_first_ipv6_gateway)" ]; }; then
-    echo "IPv6 netmask/gateway obtained from SLAAC/DHCPv6 is different from old system."
+    log "IPv6 netmask/gateway obtained from SLAAC/DHCPv6 is different from old system."
     should_disable_accept_ra=true
     should_disable_autoconf=true
     flush_ipv6_config
     add_missing_ipv6_config
-    test_internet
+    test_internet ip
 fi
 
 # 要删除不联网协议的ip，因为
@@ -9858,39 +10205,85 @@ if ! $ipv6_has_internet; then
     flush_ipv6_config
 fi
 
+# 模拟无法获取 DNS
+# : >/etc/resolv.conf
+
+# 模拟自动获取的 DNS 不能用
+# echo 'nameserver 11.11.11.11' >/etc/resolv.conf
+
 # 如果联网了，但没获取到默认 DNS，则添加我们的 DNS
 
 # 有一种情况是，多网卡，且能上网的网卡先完成了这个脚本，不能上网的网卡后完成
 # 无法上网的网卡通过 flush_ipv4_config 删除了不能上网的 IP 和 dns
-# （原计划是删除无法上网的网卡 dhcp4 获取的 dns，但实际上无法区分）
-# 因此这里直接添加 dns，不判断是否联网
-if ! is_have_ipv4_dns; then
-    echo "nameserver $ipv4_dns1" >>/etc/resolv.conf
-    echo "nameserver $ipv4_dns2" >>/etc/resolv.conf
+# （理论上应该是删除无法上网的网卡 dhcp4 获取的 dns，但实际上无法区分）
+if $ipv4_has_internet && ! is_have_ipv4_dns; then
+    should_add_ipv4_static_dns=true
+    log "IPv4 has internet. But no IPv4 DNS. Adding static DNS"
+    add_ipv4_static_dns
 fi
-if ! is_have_ipv6_dns; then
-    echo "nameserver $ipv6_dns1" >>/etc/resolv.conf
-    echo "nameserver $ipv6_dns2" >>/etc/resolv.conf
+if $ipv6_has_internet && ! is_have_ipv6_dns; then
+    should_add_ipv6_static_dns=true
+    log "IPv6 has internet. But no IPv6 DNS. Adding static DNS"
+    add_ipv6_static_dns
 fi
 
+# 测试完整的互联网连接，包括 DNS
+test_internet full
+
+# 需要覆盖自动 DNS 的情况
+if $ipv4_has_internet && ! $ipv4_has_internet_with_dns && $dhcpv4; then
+    should_add_ipv4_static_dns=true
+    log "IPv4 has internet. But DNS failed. Overriding with static DNS"
+    flush_ipv4_dns
+    add_ipv4_static_dns
+
+    # 再次测试完整的互联网连接
+    test_internet full
+fi
+if $ipv6_has_internet && ! $ipv6_has_internet_with_dns && $dhcpv6_or_slaac; then
+    should_add_ipv6_static_dns=true
+    log "IPv6 has internet. But DNS failed. Overriding with static DNS"
+    flush_ipv6_dns
+    add_ipv6_static_dns
+
+    # 再次测试完整的互联网连接
+    test_internet full
+fi
+
+# TODO: 测试这个阶段的 slaac/dhcpv6 能不能自动获取 dns?
+
 # 传参给 trans.start
-netconf="/dev/netconf/$ethx"
-mkdir -p "$netconf"
-$dhcpv4 && echo 1 >"$netconf/dhcpv4" || echo 0 >"$netconf/dhcpv4"
-$dhcpv6_or_slaac && echo 1 >"$netconf/dhcpv6_or_slaac" || echo 0 >"$netconf/dhcpv6_or_slaac"
-$should_disable_dhcpv4 && echo 1 >"$netconf/should_disable_dhcpv4" || echo 0 >"$netconf/should_disable_dhcpv4"
-$should_disable_accept_ra && echo 1 >"$netconf/should_disable_accept_ra" || echo 0 >"$netconf/should_disable_accept_ra"
-$should_disable_autoconf && echo 1 >"$netconf/should_disable_autoconf" || echo 0 >"$netconf/should_disable_autoconf"
-$is_in_china && echo 1 >"$netconf/is_in_china" || echo 0 >"$netconf/is_in_china"
-echo "$ethx" >"$netconf/ethx"
-echo "$mac_addr" >"$netconf/mac_addr"
-echo "$ipv4_addr" >"$netconf/ipv4_addr"
-echo "$ipv4_gateway" >"$netconf/ipv4_gateway"
-echo "$ipv6_addr" >"$netconf/ipv6_addr"
-echo "$ipv6_gateway" >"$netconf/ipv6_gateway"
-echo "$ipv6_extra_addrs" >"$netconf/ipv6_extra_addrs"
-$ipv4_has_internet && echo 1 >"$netconf/ipv4_has_internet" || echo 0 >"$netconf/ipv4_has_internet"
-$ipv6_has_internet && echo 1 >"$netconf/ipv6_has_internet" || echo 0 >"$netconf/ipv6_has_internet"
+mkdir -p "/dev/netconf/$ethx"
+
+for conf in \
+    is_in_china \
+    dhcpv4 \
+    dhcpv6_or_slaac \
+    should_disable_dhcpv4 \
+    should_disable_accept_ra \
+    should_disable_autoconf \
+    should_add_ipv4_static_dns \
+    should_add_ipv6_static_dns \
+    ipv4_has_internet \
+    ipv6_has_internet; do
+    { eval \$$conf && echo 1 || echo 0; } >"/dev/netconf/$ethx/$conf"
+done
+
+for conf in \
+    ethx \
+    mac_addr \
+    ipv4_addr \
+    ipv4_gateway \
+    ipv6_addr \
+    ipv6_gateway \
+    ipv6_extra_addrs; do
+    eval echo \"\$$conf\" >"/dev/netconf/$ethx/$conf"
+done
+
+# 模拟下载失败
+# : >/etc/resolv.conf
+
+# (cd /dev/netconf && grep -r . . >&2)
 EOF_INLINED_NETWORK
     chmod a+x "$initrd_dir/trans.sh" "$initrd_dir/initrd-network.sh"
 
@@ -10362,6 +10755,7 @@ fi
 # 整理参数
 long_opts=
 for o in ci installer debug minimal no-cloud-kernel no-auto-drivers allow-ping force-cn help \
+    no-lockout no-lockout-threshold \
     add-driver: \
     hold: sleep: \
     iso: \
@@ -10537,6 +10931,10 @@ while true; do
         ;;
     --no-auto-drivers)
         no_auto_drivers=1
+        shift
+        ;;
+    --no-lockout | --no-lockout-threshold)
+        no_lockout_threshold=1
         shift
         ;;
     --allow-ping)
@@ -10783,17 +11181,34 @@ done
 # 检查必须的参数
 verify_os_args
 
-# 用户名
-if ! is_netboot_xyz && [ -z "$username" ]; then
-    prompt_username
-fi
-
-# 密码
-if ! is_netboot_xyz && [ -z "$ssh_keys" ] && [ -z "$password" ]; then
-    if is_use_dd; then
-        show_dd_password_tips
+# 用户名密码
+if ! is_netboot_xyz; then
+    need_prompt_username=false
+    need_prompt_password=false
+    if [ -z "$username" ]; then
+        need_prompt_username=true
     fi
-    prompt_password
+    if [ -z "$password" ] && [ -z "$ssh_keys" ]; then
+        need_prompt_password=true
+    fi
+
+    # 提示
+    if $need_prompt_username || $need_prompt_password; then
+        case "$distro" in
+        dd) show_dd_tips ;;
+        fnos) show_fnos_tips ;;
+        esac
+    fi
+
+    # 用户名
+    if $need_prompt_username; then
+        prompt_username
+    fi
+
+    # 密码
+    if $need_prompt_password; then
+        prompt_password
+    fi
 fi
 
 # 强制忽略/强制添加 --ci 参数
@@ -11088,65 +11503,48 @@ elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
     echo "SSH Port: $ssh_port"
 
 elif [ "$distro" = fnos ]; then
-    info "While Install (View Logs)"
-    echo "Username: $username"
+    echo "Username: $username (During installation only)"
     if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
+        echo "Public Key: $ssh_keys (During installation only)"
     else
-        echo "Password: $password"
+        echo "Password: $password (During installation only)"
     fi
-    echo "SSH Port: $ssh_port"
-    echo "WEB: $(get_http_log_url)"
+    echo "SSH Port: $ssh_port (During installation only)"
+    echo "WEB: $(get_http_log_url) (During installation only)"
 
-    info "After Install"
-
-    echo "安装后不会开启 SSH 服务。"
-    echo "你需要尽快到 http://IP:5666 配置账号密码。"
     echo
-    echo "SSH Service is disabled after installation."
-    echo "You need to config the username and password on http://IP:5666 as soon as possible."
+    show_fnos_tips
 
 elif [ "$distro" = windows ]; then
-    info "While Install (View Logs)"
-    echo "Username: $username"
-    echo "Password: $password"
-    echo "SSH Port: $ssh_port"
-    echo "WEB: $(get_http_log_url)"
-
-    info "After Install"
     if is_administrator_username "$username"; then
-        echo "Username: $username (Depends on Windows iso's language)"
+        echo "Username: $username (Might vary on Windows, depends on system language)"
     else
         echo "Username: $username"
     fi
     echo "Password: $password"
     echo "RDP Port: $rdp_port"
+    echo "SSH Port: $ssh_port (During installation only)"
+    echo "WEB: $(get_http_log_url) (During installation only)"
 
 elif [ "$distro" = dd ]; then
-    info "While Install (View Logs)"
-    echo "Username: $username"
+    echo "Username: $username (During installation only)"
     if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
+        echo "Public Key: $ssh_keys (During installation only)"
     else
-        echo "Password: $password"
+        echo "Password: $password (During installation only)"
     fi
-    echo "SSH Port: $ssh_port"
-    echo "WEB: $(get_http_log_url)"
+    echo "SSH Port: $ssh_port (During installation only)"
+    echo "WEB: $(get_http_log_url) (During installation only)"
 
-    info "After Install"
     if [ -n "$cloud_data" ]; then
         echo "Cloud Data: $cloud_data"
         echo "Cloud Data Files: $cloud_data_files"
     else
-        echo "Username: [Depends on image]"
-        echo "Public Key: [Depends on image]"
-        echo "Password: [Depends on image]"
-        echo "SSH Port: [Depends on image]"
+        echo
+        show_dd_tips
     fi
-
 else
     # 普通 linux
-    info "While Install (View Logs)"
     echo "Username: $username"
     if [ -n "$ssh_keys" ]; then
         echo "Public Key: $ssh_keys"
@@ -11154,16 +11552,7 @@ else
         echo "Password: $password"
     fi
     echo "SSH Port: $ssh_port"
-    echo "WEB: $(get_http_log_url)"
-
-    info "After Install"
-    echo "Username: $username"
-    if [ -n "$ssh_keys" ]; then
-        echo "Public Key: $ssh_keys"
-    else
-        echo "Password: $password"
-    fi
-    echo "SSH Port: $ssh_port"
+    echo "WEB: $(get_http_log_url) (During installation only)"
 fi
 
 if is_in_windows; then
@@ -11174,27 +11563,41 @@ fi
 
 echo
 if [ "$distro" = netboot.xyz ]; then
-    echo '重启后进入 netboot.xyz。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以清除该引导项。"
-    echo
-    echo 'Reboot to start netboot.xyz.'
-    echo "Or run \"$reinstall_____ reset\" now to clear this boot entry."
-    echo
+    warn false '********** 警告 Warning **********'
+    warn false '重启后会进入 netboot.xyz。'
+    warn false "如果要取消进入，请在重启前运行 \"$reinstall_____ reset\"。"
+    warn false
+    warn false 'Reboot will start netboot.xyz.'
+    warn false "If you want to cancel entering, run \"$reinstall_____ reset\" before reboot."
+    warn false '**********************************'
 
 elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
-    echo '重启后进入 Alpine Live OS。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以清除该引导项。"
-    echo
-    echo 'Reboot to start Alpine Live OS.'
-    echo "Or run \"$reinstall_____ reset\" now to clear this boot entry."
-    echo
+    warn false '********** 警告 Warning **********'
+    warn false '重启后会进入 Alpine Live OS。'
+    warn false "如果要取消进入，请在重启前运行 \"$reinstall_____ reset\"。"
+    warn false
+    warn false 'Reboot will start Alpine Live OS.'
+    warn false "If you want to cancel entering, run \"$reinstall_____ reset\" before reboot."
+    warn false '**********************************'
+
+elif [ "$hold" = 1 ]; then
+    warn false '********** 警告 Warning **********'
+    warn false '重启后会进入安装环境，不会自动重装。'
+    warn false "如果要取消进入，请在重启前运行 \"$reinstall_____ reset\"。"
+    warn false
+    warn false 'Reboot will start the installation environment, will not automatically reinstall.'
+    warn false "If you want to cancel entering, run \"$reinstall_____ reset\" before reboot."
+    warn false '**********************************'
+
 else
-    warn false '警告：重装会清除主硬盘的所有数据，包括所有分区！'
-    echo '重启后开始重装。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以取消重装。"
-    echo
-    warn false 'Warning: Reinstalling will erase all data on the main disk, including all partitions!'
-    echo 'Reboot to start the reinstallation.'
-    echo "Or run \"$reinstall_____ reset\" now to cancel the reinstallation."
+    warn false '********** 警告 Warning **********'
+    warn false '重启后会自动开始重装。'
+    warn false '这将清除主硬盘的所有数据，包括所有分区！！！'
+    warn false "如果要取消重装，请在重启前运行 \"$reinstall_____ reset\"。"
+    warn false
+    warn false 'Reboot will start the automatic reinstallation.'
+    warn false 'THIS WILL ERASE ALL DATA ON THE MAIN DISK, INCLUDING ALL PARTITIONS!!!'
+    warn false "If you want to cancel the reinstallation, run \"$reinstall_____ reset\" before reboot."
+    warn false '**********************************'
 fi
 echo

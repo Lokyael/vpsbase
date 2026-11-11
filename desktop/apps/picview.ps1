@@ -389,7 +389,7 @@ $Specs = @(
 )
 
 # 委派 _console.ps1 渲染差异矩阵
-& $console -Task RenderDiff -Specs $Specs
+& $console -Task RenderDiff -Specs $Specs -Yes:$Yes
 
 # ==============================================================================
 # 5. 阶段 2: 审查门禁与并发安全 (Gate)

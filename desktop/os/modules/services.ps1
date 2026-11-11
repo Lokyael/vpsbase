@@ -6,10 +6,11 @@
 .DESCRIPTION
     Windows 11 操作系统边缘服务裁剪与 Xbox 生态管理模块。
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
-    2. 彻底剥离 Xbox 生态、GameDVR 录屏常驻与后台联机服务（XblAuthManager, XblGameSave 等）。
+    2. 彻底剥离 Xbox 生态、GameDVR 录屏常驻与后台联机服务（XblAuthManager, XblGameSave 等），阻断 AppCapture 与 GameBar DCOM 超时唤醒。
     3. 禁用跨设备流转连接平台 (CDPSvc)、手机服务 (PhoneSvc) 与离线地图代理 (MapsBroker)。
     4. 停用程序兼容性助手服务 (PcaSvc) 与触摸键盘手写面板服务 (TabletInputService)。
     5. 禁用 AMD 显卡控制台开机常驻与后台服务 (针对 APU/笔记本轻量化)。
+    6. 停用 Nahimic 音效伴生驱动注入服务 (NahimicService)，消除 audiodg.exe 持续异常高负荷与应用冷启动迟滞。
 
 .PARAMETER Action
     操作模式:
@@ -185,6 +186,26 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "disable-appcapture-group-policy"
+        Name    = "AppCapture 游戏捕获与状态汇报全局阻断 (AppCaptureEnabled = 0)"
+        Purpose = "阻断系统级游戏捕获与 GameBar 状态存在 (PresenceWriter) 服务的后台 DCOM 唤起，消除应用启动时的 DCOM 注册超时死等"
+        Impact  = "系统彻底停止游戏活动探测与自动游戏录制捕获组件的后台唤醒"
+        Check   = {
+            $hklm = Get-RegVal "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" "AppCaptureEnabled"
+            $hkcu = Get-RegVal "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR" "AppCaptureEnabled"
+            $isPass = ($hklm -eq "0" -and $hkcu -eq "0")
+            return @{
+                Actual      = "HKLM=$hklm, HKCU=$hkcu"
+                Expected    = "HKLM=0, HKCU=0"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            Set-RegDword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR" "AppCaptureEnabled" 0
+            Set-RegDword "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR" "AppCaptureEnabled" 0
+        }
+    },
+    [PSCustomObject]@{
         Id      = "service-disable-xblauthmanager"
         Name    = "Xbox Live 身份验证管理服务 (XblAuthManager)"
         Purpose = "停用后台 Xbox 登录与令牌维护服务，消除后台静默轮询请求"
@@ -300,17 +321,19 @@ $Rules = @(
         Purpose = "禁用 AMD Radeon 开机崩溃捕获服务与后台自启任务，降低资源开销"
         Impact  = "AMD 显卡底层图形驱动不受影响，但任务栏托盘不再常驻 Radeon Software 图标，不再提供常驻控制台的游戏滤镜快捷入口"
         Check   = {
+            $repo = "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages"
             $base = "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData"
             $appxClean = $true
-            $pkgDirs = @()
+            $installedPkgs = @()
             try {
-                $pkgDirs = @(Get-ChildItem -Path $base -ErrorAction Stop | Where-Object { $_.PSChildName -like "*AMDRadeonSoftware*" })
+                $installedPkgs = @(Get-ChildItem -Path $repo -ErrorAction Stop | Where-Object { $_.PSChildName -like "*AMDRadeonSoftware*" })
             } catch {
                 if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw }
             }
-            if ($pkgDirs.Count -gt 0) {
-                foreach ($pkgDir in $pkgDirs) {
-                    $taskPath = Join-Path $pkgDir.PSPath "launcherrsxruntimeTask"
+            if ($installedPkgs.Count -gt 0) {
+                foreach ($pkg in $installedPkgs) {
+                    $familyName = if ($pkg.PSChildName -match '^([^_]+)_.+_([^_]+)$') { "$($Matches[1])_$($Matches[2])" } else { $pkg.PSChildName }
+                    $taskPath = Join-Path (Join-Path $base $familyName) "launcherrsxruntimeTask"
                     try {
                         $item = Get-ItemProperty -Path $taskPath -Name "State" -ErrorAction Stop
                         if ($null -eq $item -or $item.State -ne 1) { $appxClean = $false; break }
@@ -333,21 +356,35 @@ $Rules = @(
             # 服务查询失败时，不先变更此复合项的 Appx 配置。
             $null = Get-ServiceDisableState -Name 'AMD Crash Defender Service'
             $null = Get-ServiceDisableState -Name 'AMD External Events Utility'
+            $repo = "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages"
             $base = "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData"
-            $pkgDirs = @()
+            $installedPkgs = @()
             try {
-                $pkgDirs = @(Get-ChildItem -Path $base -ErrorAction Stop | Where-Object { $_.PSChildName -like "*AMDRadeonSoftware*" })
+                $installedPkgs = @(Get-ChildItem -Path $repo -ErrorAction Stop | Where-Object { $_.PSChildName -like "*AMDRadeonSoftware*" })
             } catch {
                 if ($_.CategoryInfo.Category -ne 'ObjectNotFound') { throw }
             }
-            foreach ($pkgDir in $pkgDirs) {
-                $taskPath = Join-Path $pkgDir.PSPath "launcherrsxruntimeTask"
+            foreach ($pkg in $installedPkgs) {
+                $familyName = if ($pkg.PSChildName -match '^([^_]+)_.+_([^_]+)$') { "$($Matches[1])_$($Matches[2])" } else { $pkg.PSChildName }
+                $taskPath = Join-Path (Join-Path $base $familyName) "launcherrsxruntimeTask"
                 Ensure-RegKey $taskPath
                 Set-RegDword $taskPath "State" 1
             }
             @("AMD Crash Defender Service", "AMD External Events Utility") | ForEach-Object {
                 Disable-ManagedService -Name $_
             }
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "service-disable-nahimicservice"
+        Name    = "Nahimic 音效伴生服务 (NahimicService)"
+        Purpose = "停用联想等 OEM 预装的 Nahimic 驱动注入服务，根除 audiodg.exe 持续异常高 CPU 负荷与 GUI 进程钩子延迟"
+        Impact  = "Nahimic 专属环绕声效控制台不可用；系统原生立体声、Realtek 高清音频与播放设备正常工作"
+        Check   = {
+            Get-ServiceDisableState -Name NahimicService
+        }
+        Apply   = {
+            Disable-ManagedService -Name NahimicService
         }
     }
 )

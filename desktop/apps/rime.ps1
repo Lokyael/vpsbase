@@ -1017,8 +1017,10 @@ if (-not $hasPrismBin) {
     })
 }
 
-Write-Host "`n📊 [巡检看板] 小狼毫输入法受控属性基线审计清单:" -ForegroundColor Cyan
-$AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+if (-not $Yes) {
+    Write-Host "`n📊 [巡检看板] 小狼毫输入法受控属性基线审计清单:" -ForegroundColor Cyan
+    $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+}
 
 $isInstalled = $isServerMatch -and $isDeployerReady -and $isTsfMatch
 

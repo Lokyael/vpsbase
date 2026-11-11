@@ -7,7 +7,7 @@
     Windows 11 外壳交互纯净化、小组件切断、任务栏轻量化与资源管理器极简基准模块。
     1. 专为 PowerShell 7+ (pwsh) 编写，遵循声明式五阶管线 (Plan -> Diff -> Gate -> Apply -> Report)。
     2. 资源管理器默认打开“此电脑”，全景显示已知文件扩展名、隐藏文件与完整物理路径。
-    3. 恢复 Windows 10 经典完整右键上下文菜单，新建快捷方式免除「- 快捷方式」文本后缀。
+    3. 恢复 Windows 10 经典完整右键上下文菜单并极净化桌面空白处右键项，新建快捷方式免除「- 快捷方式」文本后缀。
     4. 剥离任务栏小组件 (Widgets) 资讯流、Teams 聊天、任务视图与 Copilot 图标，系统时钟显示秒数。
     5. 资源管理器切断服务商横幅广告通知，切断快速访问常用文件夹与最近文件记录。
     6. 禁用连按 5 次 Shift 触发粘滞键与筛选键劫持，关闭鼠标指针加速度并锁定 1:1 纯线性位移。
@@ -19,8 +19,10 @@
     12. 从左侧导航窗格隐藏网络 (Network) 网上邻居图标。
     13. 从左侧导航窗格隐藏小房子主页与用户个人主文件夹，直达此电脑。
     14. 用户主目录媒体与遗留已知文件夹沙盒化受保护隐藏 (Searches/Links/Contacts 等 +h +s)。
-    15. 维护原生 US 键盘输入配置，不添加系统自带输入法。
-    16. 固化短时间与长时间为标准 24 小时制 (HH:mm / HH:mm:ss)。
+    15. 开始菜单辅助功能目录及其快捷方式沙盒化受保护隐藏 (Accessibility +h +s)。
+    16. 开始菜单冗余维护目录与快捷方式沙盒化受保护隐藏 (Weasel/Office 工具/文件资源管理器/Steam 客服/7-Zip 帮助/Git CMD/Git GUI +h +s)。
+    17. 维护原生 US 键盘输入配置，不添加系统自带输入法。
+    18. 固化短时间与长时间为标准 24 小时制 (HH:mm / HH:mm:ss)。
 
 .PARAMETER Action
     操作模式:
@@ -525,6 +527,59 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
+        Id      = "desktop-context-menu-clean"
+        Name    = "桌面空白处右键菜单极简化修剪 (NvCpl / Display / Personalize / Spotlight)"
+        Purpose = "清理桌面背景第三方显卡驱动 (NvCplDesktopContext) 及幻灯片 (DesktopSlideshow) 扩展，并在当前用户类 (HKCU) 屏蔽显示设置、个性化与聚焦切图动词"
+        Impact  = "桌面右键菜单仅保留新建、刷新、查看、排序与终端等核心操作；系统 Display/Personalize 原生权限完好，仍可通过 Win+I 或设置中心正常进入"
+        Check   = {
+            $nvKey = "HKLM:\SOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers\NvCplDesktopContext"
+            $slideKey = "HKLM:\SOFTWARE\Classes\DesktopBackground\shellex\ContextMenuHandlers\DesktopSlideshow"
+            $hasNv = Test-Path -LiteralPath $nvKey
+            $hasSlide = Test-Path -LiteralPath $slideKey
+
+            $verbs = @("Display", "Personalize", ".SpotlightNextImage", ".SpotlightLearnMore")
+            $missingVerbs = @(foreach ($v in $verbs) {
+                $p = "HKCU:\Software\Classes\DesktopBackground\Shell\$v"
+                if ((Get-RegKind $p "ProgrammaticAccessOnly") -ne "String") { $v }
+            })
+
+            $isCompliant = (-not $hasNv) -and (-not $hasSlide) -and ($missingVerbs.Count -eq 0)
+            $actual = if ($isCompliant) {
+                "纯净化修剪 (NvCpl/Slide已移除, 4动词已屏蔽)"
+            } else {
+                $drift = @()
+                if ($hasNv) { $drift += "NvCpl常驻" }
+                if ($hasSlide) { $drift += "DesktopSlideshow常驻" }
+                if ($missingVerbs.Count -gt 0) { $drift += "未屏蔽:($($missingVerbs -join ','))" }
+                "存在偏离 ($($drift -join '; '))"
+            }
+            return @{ Actual = $actual; Expected = "纯净化修剪 (NvCpl/Slide已移除, 4动词已屏蔽)"; IsCompliant = $isCompliant }
+        }
+        Apply   = {
+            $nvKey = "HKLM:\SOFTWARE\Classes\Directory\Background\shellex\ContextMenuHandlers\NvCplDesktopContext"
+            if (Test-Path -LiteralPath $nvKey) {
+                Remove-Item -LiteralPath $nvKey -Recurse -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $nvKey) { throw "清理 NvCplDesktopContext 失败：$nvKey" }
+            }
+
+            $slideKey = "HKLM:\SOFTWARE\Classes\DesktopBackground\shellex\ContextMenuHandlers\DesktopSlideshow"
+            if (Test-Path -LiteralPath $slideKey) {
+                Remove-Item -LiteralPath $slideKey -Recurse -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $slideKey) { throw "清理 DesktopSlideshow 失败：$slideKey" }
+            }
+
+            $verbs = @("Display", "Personalize", ".SpotlightNextImage", ".SpotlightLearnMore")
+            foreach ($v in $verbs) {
+                $p = "HKCU:\Software\Classes\DesktopBackground\Shell\$v"
+                Ensure-RegKey $p
+                Set-ItemProperty -Path $p -Name "ProgrammaticAccessOnly" -Type String -Value "" -Force -ErrorAction Stop
+                if ((Get-RegKind $p "ProgrammaticAccessOnly") -ne "String") {
+                    throw "写入 ProgrammaticAccessOnly 失败：$p"
+                }
+            }
+        }
+    },
+    [PSCustomObject]@{
         Id      = "accessibility-disable-sticky-keys"
         Name    = "粘滞键连按 5 次 Shift 快捷键劫持禁用 (StickyKeys Flags = 506)"
         Purpose = "关闭在游戏或代码编写时连续敲击 5 次 Shift 触发全屏弹出的粘滞键中断对话框"
@@ -630,24 +685,49 @@ $Rules = @(
         }
     },
     [PSCustomObject]@{
-        Id      = "desktop-spotlight-icon-hidden"
-        Name    = "桌面 Windows 聚焦「了解此图片」图标隐藏 (HideDesktopIcons = 1)"
-        Purpose = "把 Windows 聚焦遗留的桌面「了解此图片」入口项标记为隐藏，消除该无法直接删除的 Spotlight 快捷图标"
-        Impact  = "桌面不再显示「了解此图片」图标；不删除 NameSpace 注册项与聚焦图片缓存，重新启用聚焦后该图标仍保持隐藏。需刷新桌面或重启资源管理器后呈现"
+        Id      = "desktop-system-icons-hidden"
+        Name    = "桌面出厂系统图标与聚焦入口隐藏 (HideDesktopIcons = 1)"
+        Purpose = "将 Windows 11 出厂预设的用户主文件夹、此电脑、控制面板、网络、库以及聚焦残留「了解此图片」标记为隐藏，保持桌面仅呈现用户个人文件"
+        Impact  = "桌面不再显示主文件夹 (当前用户名)、此电脑、控制面板、网络、库以及「了解此图片」图标；不删除 NameSpace 注册项或文件本身。需刷新桌面或重启资源管理器后呈现"
         Check   = {
             $path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
-            $clsid = "{2cc5ca98-6485-489a-920e-b3e88a6ccce3}"
-            $val = Get-RegVal $path $clsid
-            $kind = Get-RegKind $path $clsid
-            if ($val -notin @("<未配置>", "0", "1")) { throw "无法确认聚焦桌面图标隐藏状态：$val" }
+            $targetClsids = @(
+                "{2cc5ca98-6485-489a-920e-b3e88a6ccce3}", # 聚焦「了解此图片」
+                "{59031a47-3f72-44a7-89c5-5595fe6b30ee}", # 用户个人主文件夹
+                "{20D04FE0-3AEA-1069-A2D8-08002B30309D}", # 此电脑
+                "{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", # 控制面板
+                "{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", # 网络
+                "{031E4825-7B94-4dc3-B131-E946B44C8DD5}"  # 库
+            )
+            $unhidden = [System.Collections.Generic.List[string]]::new()
+            foreach ($clsid in $targetClsids) {
+                $val = Get-RegVal $path $clsid
+                $kind = Get-RegKind $path $clsid
+                if ($val -notin @("<未配置>", "0", "1")) { throw "无法确认桌面图标隐藏状态：$clsid = $val" }
+                if ($val -ne "1" -or $kind -ne "DWord") {
+                    $unhidden.Add("$clsid ($val, $kind)")
+                }
+            }
+            $isPass = ($unhidden.Count -eq 0)
             return @{
-                Actual      = "HideDesktopIcons=$val ($kind)"
-                Expected    = "HideDesktopIcons=1 (DWord)"
-                IsCompliant = ($val -eq "1" -and $kind -eq "DWord")
+                Actual      = if ($isPass) { "全部已隐藏 (6项 DWord=1)" } else { "未隐藏: $($unhidden.Count) 项" }
+                Expected    = "全部已隐藏 (6项 DWord=1)"
+                IsCompliant = $isPass
             }
         }
         Apply   = {
-            Set-RegDword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel" "{2cc5ca98-6485-489a-920e-b3e88a6ccce3}" 1
+            $path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel"
+            $targetClsids = @(
+                "{2cc5ca98-6485-489a-920e-b3e88a6ccce3}", # 聚焦「了解此图片」
+                "{59031a47-3f72-44a7-89c5-5595fe6b30ee}", # 用户个人主文件夹
+                "{20D04FE0-3AEA-1069-A2D8-08002B30309D}", # 此电脑
+                "{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", # 控制面板
+                "{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", # 网络
+                "{031E4825-7B94-4dc3-B131-E946B44C8DD5}"  # 库
+            )
+            foreach ($clsid in $targetClsids) {
+                Set-RegDword $path $clsid 1
+            }
         }
     },
     [PSCustomObject]@{
@@ -787,6 +867,182 @@ $Rules = @(
             Set-RegDword $pol "HideRecommendedPersonalizedSites" 1
             Set-RegDword $pol "HideRecommendedSection" 1
             Set-RegDword $adv "Start_IrisRecommendations" 0
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "start-accessibility-shortcuts-hidden"
+        Name    = "开始菜单辅助功能快捷方式沙盒化受保护隐藏 (Accessibility +h +s)"
+        Purpose = "将开始菜单当前用户与公用目录下的辅助功能 (Accessibility) 文件夹及其快捷方式标记为 Hidden + System，从开始菜单所有应用列表中消除该目录"
+        Impact  = "开始菜单所有应用列表中不再呈现「辅助功能」分组；不删除快捷方式或系统二进制，系统全局快捷键 (如 Win+Ctrl+Enter、Win++) 与设置面板辅助功能不受影响"
+        Check   = {
+            $targetDirs = @(
+                (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Accessibility'),
+                (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Accessibility')
+            )
+            $unhidden = [System.Collections.Generic.List[string]]::new()
+            foreach ($dir in $targetDirs) {
+                if (Test-Path -LiteralPath $dir) {
+                    $dirItem = Get-Item -LiteralPath $dir -Force -ErrorAction Stop
+                    $isDirHidden = ($dirItem.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and
+                                    $dirItem.Attributes.HasFlag([System.IO.FileAttributes]::System))
+                    if (-not $isDirHidden) { $unhidden.Add($dirItem.Name) }
+
+                    foreach ($child in Get-ChildItem -LiteralPath $dir -Recurse -Force -ErrorAction Stop) {
+                        $isChildHidden = ($child.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and
+                                          $child.Attributes.HasFlag([System.IO.FileAttributes]::System))
+                        if (-not $isChildHidden) { $unhidden.Add($child.Name) }
+                    }
+                }
+            }
+            $isPass = ($unhidden.Count -eq 0)
+            return @{
+                Actual      = if ($isPass) { "全部已受保护隐藏 (+h +s)" } else { "未受保护隐藏: $($unhidden -join ', ')" }
+                Expected    = "全部已受保护隐藏 (+h +s)"
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $targetDirs = @(
+                (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Accessibility'),
+                (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Accessibility')
+            )
+
+            foreach ($dir in $targetDirs) {
+                if (Test-Path -LiteralPath $dir) {
+                    foreach ($child in Get-ChildItem -LiteralPath $dir -Recurse -Force -ErrorAction Stop) {
+                        $newChildAttrs = $child.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
+                        [System.IO.File]::SetAttributes($child.FullName, $newChildAttrs)
+                        $afterChild = Get-Item -LiteralPath $child.FullName -Force -ErrorAction Stop
+                        if (-not ($afterChild.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and $afterChild.Attributes.HasFlag([System.IO.FileAttributes]::System))) {
+                            throw "辅助功能项隐藏属性设置失败：$($child.FullName)"
+                        }
+                    }
+
+                    $dirItem = Get-Item -LiteralPath $dir -Force -ErrorAction Stop
+                    $newDirAttrs = $dirItem.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
+                    [System.IO.File]::SetAttributes($dir, $newDirAttrs)
+                    $afterDir = Get-Item -LiteralPath $dir -Force -ErrorAction Stop
+                    if (-not ($afterDir.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and $afterDir.Attributes.HasFlag([System.IO.FileAttributes]::System))) {
+                        throw "辅助功能目录隐藏属性设置失败：$dir"
+                    }
+                }
+            }
+        }
+    },
+    [PSCustomObject]@{
+        Id      = "start-redundant-shortcuts-hidden"
+        Name    = "开始菜单冗余维护目录与快捷方式隐藏 (Rime/Office/Explorer/Steam/7-Zip/Git +h +s)"
+        Purpose = "将原厂小狼毫维护目录、Office 工具目录、文件资源管理器及 Steam 客服、7-Zip 帮助、Git CMD、Git GUI 快捷方式标记为 Hidden + System，减少开始菜单应用列表入口"
+        Impact  = "保留管理工具快捷方式 (Administrative Tools)，不删除快捷方式或程序；小狼毫仍可通过托盘管理，文件资源管理器仍可通过 Win+E 打开。按原厂精确名称识别小狼毫英文、简体及繁体目录；Office 工具和 Steam 客服名称受显示／客户端语言影响，未命中则跳过。无受控目标单独呈现，属性合规不代证开始菜单实际刷新"
+        Check   = {
+            $programsRoots = @(
+                (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
+                (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs')
+            )
+            $targetDirs = @("Weasel", "小狼毫输入法", "小狼毫輸入法", "Microsoft Office 工具")
+            $targetFiles = @(
+                "File Explorer.lnk",
+                "Steam\Steam Support Center.url",
+                "Scoop Apps\7-Zip\7-Zip Help.lnk",
+                "Scoop Apps\Git\Git CMD.lnk",
+                "Scoop Apps\Git\Git GUI.lnk"
+            )
+
+            $matched = 0
+            $unhidden = [System.Collections.Generic.List[string]]::new()
+
+            foreach ($root in $programsRoots) {
+                foreach ($dirName in $targetDirs) {
+                    $dirPath = Join-Path $root $dirName
+                    if (Test-Path -LiteralPath $dirPath -ErrorAction Stop) {
+                        $dirItem = Get-Item -LiteralPath $dirPath -Force -ErrorAction Stop
+                        $matched++
+                        $isDirHidden = ($dirItem.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and
+                                        $dirItem.Attributes.HasFlag([System.IO.FileAttributes]::System))
+                        if (-not $isDirHidden) { $unhidden.Add($dirItem.Name) }
+
+                        foreach ($child in Get-ChildItem -LiteralPath $dirPath -Recurse -Force -ErrorAction Stop) {
+                            $matched++
+                            $isChildHidden = ($child.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and
+                                              $child.Attributes.HasFlag([System.IO.FileAttributes]::System))
+                            if (-not $isChildHidden) { $unhidden.Add("$dirName\$($child.Name)") }
+                        }
+                    }
+                }
+
+                foreach ($fileName in $targetFiles) {
+                    $filePath = Join-Path $root $fileName
+                    if (Test-Path -LiteralPath $filePath -ErrorAction Stop) {
+                        $fileItem = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
+                        $matched++
+                        $isFileHidden = ($fileItem.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and
+                                         $fileItem.Attributes.HasFlag([System.IO.FileAttributes]::System))
+                        if (-not $isFileHidden) { $unhidden.Add($fileName) }
+                    }
+                }
+            }
+
+            $isPass = ($unhidden.Count -eq 0)
+            $expected = if ($matched -eq 0) { "无受控目标" } else { "已检测 $matched 项均具备 Hidden/System (+h +s)" }
+            return @{
+                Actual      = if ($isPass) { $expected } else { "未受保护隐藏: $($unhidden -join ', ')" }
+                Expected    = $expected
+                IsCompliant = $isPass
+            }
+        }
+        Apply   = {
+            $programsRoots = @(
+                (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'),
+                (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs')
+            )
+            $targetDirs = @("Weasel", "小狼毫输入法", "小狼毫輸入法", "Microsoft Office 工具")
+            $targetFiles = @(
+                "File Explorer.lnk",
+                "Steam\Steam Support Center.url",
+                "Scoop Apps\7-Zip\7-Zip Help.lnk",
+                "Scoop Apps\Git\Git CMD.lnk",
+                "Scoop Apps\Git\Git GUI.lnk"
+            )
+
+            foreach ($root in $programsRoots) {
+                foreach ($dirName in $targetDirs) {
+                    $dirPath = Join-Path $root $dirName
+                    if (Test-Path -LiteralPath $dirPath -ErrorAction Stop) {
+                        foreach ($child in Get-ChildItem -LiteralPath $dirPath -Recurse -Force -ErrorAction Stop) {
+                            $newChildAttrs = $child.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
+                            if ($child.Attributes -eq $newChildAttrs) { continue }
+                            $child.Attributes = $newChildAttrs
+                            $afterChild = Get-Item -LiteralPath $child.FullName -Force -ErrorAction Stop
+                            if (-not ($afterChild.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and $afterChild.Attributes.HasFlag([System.IO.FileAttributes]::System))) {
+                                throw "项隐藏属性设置失败：$($child.FullName)"
+                            }
+                        }
+
+                        $dirItem = Get-Item -LiteralPath $dirPath -Force -ErrorAction Stop
+                        $newDirAttrs = $dirItem.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
+                        if ($dirItem.Attributes -eq $newDirAttrs) { continue }
+                        $dirItem.Attributes = $newDirAttrs
+                        $afterDir = Get-Item -LiteralPath $dirPath -Force -ErrorAction Stop
+                        if (-not ($afterDir.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and $afterDir.Attributes.HasFlag([System.IO.FileAttributes]::System))) {
+                            throw "目录隐藏属性设置失败：$dirPath"
+                        }
+                    }
+                }
+
+                foreach ($fileName in $targetFiles) {
+                    $filePath = Join-Path $root $fileName
+                    if (Test-Path -LiteralPath $filePath -ErrorAction Stop) {
+                        $fileItem = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
+                        $newFileAttrs = $fileItem.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
+                        if ($fileItem.Attributes -eq $newFileAttrs) { continue }
+                        $fileItem.Attributes = $newFileAttrs
+                        $afterFile = Get-Item -LiteralPath $filePath -Force -ErrorAction Stop
+                        if (-not ($afterFile.Attributes.HasFlag([System.IO.FileAttributes]::Hidden) -and $afterFile.Attributes.HasFlag([System.IO.FileAttributes]::System))) {
+                            throw "快捷方式隐藏属性设置失败：$filePath"
+                        }
+                    }
+                }
+            }
         }
     },
     [PSCustomObject]@{

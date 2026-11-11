@@ -57,6 +57,11 @@ function Truncate-Cell([string]$Text, [int]$MaxLength = 24) {
 # Task: RenderDiff (受控属性看板呈现)
 # ==============================================================================
 if ($Task -eq "RenderDiff") {
+    if ($Yes) {
+        # -Yes 与静默模式深度绑定：非交互场景下抑制全量差异矩阵看板，保持输出极简
+        return
+    }
+
     if (-not $Specs -or $Specs.Count -eq 0) {
         Write-Host "[-] 未传入受控规格清单，跳过看板渲染。" -ForegroundColor DarkGray
         return

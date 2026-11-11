@@ -602,8 +602,10 @@ foreach ($spec in $ManagedSpecs) {
     }
 }
 
-Write-Host "`n📊 [巡检看板] Steam 原子受控属性审计清单:" -ForegroundColor Cyan
-$AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+if (-not $Yes) {
+    Write-Host "`n📊 [巡检看板] Steam 原子受控属性审计清单:" -ForegroundColor Cyan
+    $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+}
 
 $driftCount = $PendingItems.Count
 if ($Action -eq "Check") {

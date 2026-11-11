@@ -519,10 +519,16 @@ Write-Host "  应用生命周期管理与基线巡检: $AppName (pwsh 7+)" -Fore
 Write-Host ("  操作意图: {0} | 授权放行: {1} | 部署路径: {2}" -f $Action, ($Yes ? "自动放行 (-Yes)" : "交互审查"), $InstallDir) -ForegroundColor DarkGray
 Write-Host "====================================================================" -ForegroundColor Cyan
 
-# 4.1 嗅探实机程序状态与版本
-$isInstalled = Test-Path $AppExe
+# 4.1 嗅探实机程序状态、核心运行时载荷完整性与版本
+$hasAppExe = Test-Path -LiteralPath $AppExe
+$appSoPath = Join-Path $InstallDir "data\app.so"
+$resPakPath = Join-Path $InstallDir "resources.pak"
+$v8SnapPath = Join-Path $InstallDir "v8_context_snapshot.bin"
+$isPayloadIntact = ($hasAppExe -and (Test-Path -LiteralPath $appSoPath) -and (Test-Path -LiteralPath $resPakPath) -and (Test-Path -LiteralPath $v8SnapPath))
+$isInstalled = $isPayloadIntact
+
 $installedVersion = $null
-if ($isInstalled) {
+if ($hasAppExe) {
     try {
         $rawVer = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($AppExe).FileVersion
         if ($rawVer) {
@@ -569,12 +575,12 @@ $actualRunDesc = if ($hasRunDrift) { ($activeRunEntries -join "; ") } else { "�
 
 # 4.5 嗅探核心原厂定位项 (HKLM WOW6432Node\ecloud -> InstallDir)
 $hklmAppProp = Get-ItemProperty -Path $hklmAppKey -ErrorAction SilentlyContinue
-$isHklmAppAligned = ($isInstalled -and $null -ne $hklmAppProp -and $hklmAppProp.InstallDir -eq $InstallDir)
+$isHklmAppAligned = ($hasAppExe -and $null -ne $hklmAppProp -and $hklmAppProp.InstallDir -eq $InstallDir)
 $actualHklmAppDesc = if ($isHklmAppAligned) {
     "已对齐 ($hklmAppKey)"
 } elseif ($null -ne $hklmAppProp) {
     "偏离 ($($hklmAppProp.InstallDir))"
-} elseif ($isInstalled) {
+} elseif ($hasAppExe) {
     "缺失 (需写入定位键)"
 } else {
     "未安装"
@@ -586,7 +592,7 @@ $hasSelfRefUninst = (@($uninstRegistrations | Where-Object { $_.IsSelfReferencin
 $officialUninst = @($uninstRegistrations | Where-Object { -not $_.IsSelfReferencing -and $_.Path -like '*WOW6432Node*' }) | Select-Object -First 1
 $uninstExePath = Join-Path $InstallDir "uninst.exe"
 $hasUninstExe = Test-Path -LiteralPath $uninstExePath -PathType Leaf
-$isUninstallRegValid = ($isInstalled -and $hasUninstExe -and $null -ne $officialUninst -and -not $hasSelfRefUninst -and $officialUninst.UninstallString -match 'uninst\.exe')
+$isUninstallRegValid = ($hasAppExe -and $hasUninstExe -and $null -ne $officialUninst -and -not $hasSelfRefUninst -and $officialUninst.UninstallString -match 'uninst\.exe')
 $actualUninstDesc = if ($hasSelfRefUninst) {
     "存在旧自指向卸载登记 (需清理)"
 } elseif ($officialUninst -and $officialUninst.UninstallString -match 'uninst\.exe' -and -not $hasUninstExe) {
@@ -595,7 +601,7 @@ $actualUninstDesc = if ($hasSelfRefUninst) {
     "已对齐官方卸载格式 (uninst.exe)"
 } elseif ($officialUninst) {
     "存在卸载条目 ($($officialUninst.UninstallString))"
-} elseif ($isInstalled) {
+} elseif ($hasAppExe) {
     "官方卸载登记缺失"
 } else {
     "未安装 (无登记)"
@@ -613,12 +619,19 @@ $fwUdpState = Get-AppFirewallState $fwRules[1]
 # 4.9 组装全域原子受控规格清单
 $isClientAligned = ($isInstalled -and (Compare-VersionAligned -LocalVer $installedVersion -TargetVer $targetVersion))
 $expectedClientVer = if ($isClientAligned) { $installedVersion } else { $targetVersion }
+$actualClientDesc = if ($isInstalled) {
+    "已部署 (v$installedVersion)"
+} elseif ($hasAppExe) {
+    "载荷残缺 (缺少核心运行时)"
+} else {
+    "未安装"
+}
 $Specs = @(
     [PSCustomObject]@{
         Module   = "本体"
         Property = "客户端本体 (eCloud.exe)"
         Expected = "已部署 (v$expectedClientVer)"
-        Actual   = if ($isInstalled) { "已部署 (v$installedVersion)" } else { "未安装" }
+        Actual   = $actualClientDesc
         IsMatch  = $isClientAligned
         Purpose  = "通过 7z 纯净展开 64 位天翼云盘原生客户端，彻底规避官方安装器外壳弹窗与强制常驻"
         Impact   = "部署至 $InstallDir，占用物理磁盘空间约 520MB，零流氓后台常驻"
@@ -628,7 +641,7 @@ $Specs = @(
         Property = "原厂定位索引 (InstallDir)"
         Expected = "已对齐 ($hklmAppKey)"
         Actual   = $actualHklmAppDesc
-        IsMatch  = if ($isInstalled) { $isHklmAppAligned } else { $true }
+        IsMatch  = if ($hasAppExe) { $isHklmAppAligned } else { $true }
         Purpose  = "100% 对齐原厂 HKLM 注册表安装定位键，保证客户端子模块能完整检索自身安装目录"
         Impact   = "与官方安装器写入的系统索引完全同构，消除解包环境下的路径寻址异常"
     },
@@ -646,7 +659,7 @@ $Specs = @(
         Property = "Windows 已安装应用列表登记"
         Expected = "已对齐官方卸载格式 (uninst.exe)"
         Actual   = $actualUninstDesc
-        IsMatch  = if ($isInstalled) { $isUninstallRegValid } else { (-not $hasSelfRefUninst) }
+        IsMatch  = if ($hasAppExe) { $isUninstallRegValid } else { (-not $hasSelfRefUninst) }
         Purpose  = "对齐原厂 Uninstall 登记格式并将卸载命令指向 uninst.exe，彻底切断脚本自指向反模式"
         Impact   = "使系统设置与 BCU 能原生识别原厂卸载核心，杜绝递归循环调用与卸载挽留弹窗"
     },
@@ -689,7 +702,7 @@ $Specs = @(
 )
 
 # 渲染差异矩阵表格
-& $console -Task RenderDiff -Specs $Specs
+& $console -Task RenderDiff -Specs $Specs -Yes:$Yes
 
 # ==============================================================================
 # 5. 阶段 3: 审查门禁决策 (Gate)
@@ -774,15 +787,23 @@ if ($needBinaryDeploy) {
     Ensure-Dir $InstallDir
 
     $global:LASTEXITCODE = $null
-    & $7zExe x $installerPkg -o"$InstallDir" -y -xr'!$PLUGINSDIR' -xr'!$TEMP' | Out-Null
+    $7zExtractArgs = @('x', $installerPkg, "-o$InstallDir", '-y', "-xr!`$PLUGINSDIR", "-xr!`$TEMP")
+    & $7zExe @7zExtractArgs | Out-Null
     $exitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { $LASTEXITCODE }
     if ($exitCode -ne 0) {
         throw "7z 解包天翼云盘安装包失败 (退出代码 $exitCode)，请排查安装包或重试。"
     }
 
     $cleanUninstExe = Join-Path $InstallDir "uninst.exe"
-    if (-not (Test-Path -LiteralPath $AppExe) -or -not (Test-Path -LiteralPath $cleanUninstExe)) {
-        throw "解包完成但未能定位到核心执行文件 ($AppExe) 或卸载核心 ($cleanUninstExe)；请检查安装包完整性。"
+    $cleanAppSo = Join-Path $InstallDir "data\app.so"
+    $cleanResPak = Join-Path $InstallDir "resources.pak"
+    $cleanV8Snap = Join-Path $InstallDir "v8_context_snapshot.bin"
+    if (-not (Test-Path -LiteralPath $AppExe) -or
+        -not (Test-Path -LiteralPath $cleanUninstExe) -or
+        -not (Test-Path -LiteralPath $cleanAppSo) -or
+        -not (Test-Path -LiteralPath $cleanResPak) -or
+        -not (Test-Path -LiteralPath $cleanV8Snap)) {
+        throw "解包完成但未能定位核心执行文件 ($AppExe)、卸载核心 ($cleanUninstExe) 或核心运行时载荷 (data\app.so, resources.pak)；请检查安装包完整性。"
     }
 
     Write-Host "✔ 天翼云盘二进制本体解包完成。" -ForegroundColor Green

@@ -4,12 +4,40 @@
 
 ## 客户端准备（生成登录密钥）
 
-在本地工作站生成专用 Ed25519 密钥对：
+在本地工作站的pwsh中生成专用 Ed25519 密钥对：
 
-```bash
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-[[ -f ~/.ssh/server_login ]] || ssh-keygen -t ed25519 -f ~/.ssh/server_login -C ""
-cat ~/.ssh/server_login.pub
+```pwsh
+$n = Read-Host "密钥文件名（默认 server_login）"
+if (-not $n) { $n = "server_login" }
+$p = "$env:USERPROFILE\.ssh\$n"
+New-Item -ItemType Directory -Force -Path (Split-Path $p) | Out-Null
+ssh-keygen -t ed25519 -f $p -C $n
+icacls $p /inheritance:r /grant:r "${env:USERNAME}:R" | Out-Null
+Get-Content "$p.pub"
+```
+
+配置快速连接
+
+```pwsh
+$alias = Read-Host "连接别名（如 myserver）"
+$h     = Read-Host "服务器地址"
+$u     = Read-Host "登录用户名"
+$port  = Read-Host "端口（默认 22）"; if (-not $port) { $port = "22" }
+$key   = Read-Host "密钥文件名（默认 server_login）"; if (-not $key) { $key = "server_login" }
+
+$cfg = "$env:USERPROFILE\.ssh\config"
+New-Item -ItemType Directory -Force -Path (Split-Path $cfg) | Out-Null
+Add-Content $cfg -Encoding ASCII -Value @"
+
+# ---------- $alias ----------
+Host $alias
+    HostName $h
+    User $u
+    Port $port
+    IdentityFile ~/.ssh/$key
+"@
+icacls $cfg /inheritance:r /grant:r "${env:USERNAME}:R" | Out-Null
+Write-Host "已配置，连接命令：ssh $alias"
 ```
 
 ## 模式一：全盘自动化重装（抹盘重建）
@@ -65,7 +93,3 @@ bash /root/vps2arch-inplace.sh
 ```bash
 reboot
 ```
-
-## 完成检查
-
-保持现有管理通道，在新终端用新用户、公钥和所选端口登录；确认系统版本、挂载点及应保留的数据分区。确认新登录成功前不要关闭唯一可用会话。

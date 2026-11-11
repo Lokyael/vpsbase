@@ -20,8 +20,8 @@ OUTPUT_SCRIPT="server/os/vps2arch.sh"
 OUTPUT_PATCH="server/os/vps2arch.patch"
 
 UPSTREAM_REPO="bin456789/reinstall"
-# 审计检查点：已验证至 01e1e25 (2026-10-24)
-UPSTREAM_COMMIT="01e1e259968c3b9c5ee5d6aea7253392b5eafe92"
+# 审计检查点：已验证至 8ac9db6 (2026-11-09)
+UPSTREAM_COMMIT="8ac9db68f9bca0b26c4143b2f3e206f2aa342d6b"
 UPSTREAM_BASE_URL="https://raw.githubusercontent.com/${UPSTREAM_REPO}/${UPSTREAM_COMMIT}"
 
 BUILD_DIR=$(mktemp -d "server/os/.build_tmp_XXXXXX")

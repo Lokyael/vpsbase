@@ -1,7 +1,7 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-    系统基础运行库与应用底座 (Scoop / VC++ / .NET / WebView2 / Git 通用配置)
+    系统基础运行库与应用底座 (Scoop / VC++ / .NET / WebView2 / Git 通用配置 / 7-Zip 极简集成)
 
 .DESCRIPTION
     Windows 11 桌面与应用底层包管理器底座与核心通用运行库声明式校验与自动化补齐工具。
@@ -11,6 +11,7 @@
     4. 涵盖核心基础运行时依赖与通用工具偏好规范：
        - Scoop 包管理器底座与核心工具链 (git, 7zip, aria2, pwsh) 及 aria2 高性能切片配置；
        - Git 全局基础通用偏好规范 (锁定 LF 换行、统一 UTF-8 编码、main 默认分支与分支追踪/清理，不碰个人身份)；
+       - 7-Zip 原生外壳集成与核心压缩格式双击只读浏览关联 (平铺模式、掩码 0x104 直出、.zip/.7z/.rar/.tar/.gz 关联)；
        - Visual C++ 2015-2022 Redistributable (x64 与 x86 成对运行库，永久 aka.ms 权威直链)；
        - .NET 10.0 Desktop Runtime (x64 最新 LTS 桌面运行时框架)；
        - Microsoft Edge WebView2 Runtime (Evergreen 独立常青渲染运行时)。
@@ -73,7 +74,7 @@ if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
 # 2. 核心辅助函数与探测算子
 # ==============================================================================
 $AppId   = "runtimes"
-$AppName = "系统基础运行库与应用底座 (Scoop / VC++ / .NET / WebView2 / Git 通用配置)"
+$AppName = "系统基础运行库与应用底座 (Scoop / VC++ / .NET / WebView2 / Git 通用配置 / 7-Zip 极简集成)"
 
 $GitBaselineConfigs = [ordered]@{
     'init.defaultBranch'     = 'main'
@@ -87,6 +88,22 @@ $GitBaselineConfigs = [ordered]@{
     'i18n.commitEncoding'    = 'utf-8'
     'i18n.logOutputEncoding' = 'utf-8'
 }
+
+$SevenZipClsid = "{23170F69-40C1-278A-1000-000100020000}"
+
+$SevenZipBaselineOptions = [ordered]@{
+    'CascadedMenu'   = 0
+    'ContextMenu'    = 260    # 0x104 = kExtractTo (4) | kCompress (256)
+    'MenuIcons'      = 1
+    'ElimDupExtract' = 1
+}
+
+$SevenZipBaselineExts = @('.7z', '.zip', '.rar', '.tar', '.gz')
+
+$SevenZipBlockedNativeClsids = @(
+    '{b8cdcb65-b1bf-4b42-9428-1dfdb7ee92af}',  # Windows 原生 .zip 全部解压缩 (zipfldr.dll)
+    '{EE07CEF5-3441-4CFB-870A-4002C724783A}'   # Windows 11 原生 .7z/.rar/.tar 全部解压缩 (libarchive)
+)
 
 function Get-GitCommandPath {
     param([string]$ScoopRoot)
@@ -149,6 +166,244 @@ function Get-GitGlobalConfigStatus {
         Installed      = $isAligned
         StatusText     = $statusText
         MismatchedKeys = @($mismatches)
+    }
+}
+
+function Get-SevenZipCommandPaths {
+    param([string]$ScoopRoot)
+    $candidateDirs = [System.Collections.Generic.List[string]]::new()
+    if ($ScoopRoot -and (Test-Path -LiteralPath $ScoopRoot -PathType Container)) {
+        $candidateDirs.Add((Join-Path $ScoopRoot "apps\7zip\current"))
+    }
+    $cfgScoop = [Environment]::GetEnvironmentVariable('SCOOP', 'User')
+    if ($cfgScoop -and (Test-Path -LiteralPath $cfgScoop -PathType Container)) {
+        $candidateDirs.Add((Join-Path $cfgScoop "apps\7zip\current"))
+    }
+    $candidateDirs.Add("D:\prog\scoop\apps\7zip\current")
+
+    foreach ($dir in $candidateDirs) {
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+        $fm = Join-Path $dir "7zFM.exe"
+        $dll = Join-Path $dir "7-zip.dll"
+        if ((Test-Path -LiteralPath $fm -PathType Leaf) -and (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            return [PSCustomObject]@{
+                InstallDir = $dir
+                FmExe      = $fm
+                Dll        = $dll
+            }
+        }
+    }
+    return $null
+}
+
+function Get-SevenZipIntegrationStatus {
+    param([string]$ScoopRoot)
+
+    $paths = Get-SevenZipCommandPaths -ScoopRoot $ScoopRoot
+    if ($null -eq $paths) {
+        return [PSCustomObject]@{
+            Installed   = $false
+            StatusText  = "7-Zip 工具未就绪"
+            Mismatches  = @("7zFM.exe 或 7-zip.dll 缺失")
+            SevenZipDir = $null
+            SevenZipFm  = $null
+            SevenZipDll = $null
+        }
+    }
+
+    $mismatches = [System.Collections.Generic.List[string]]::new()
+
+    # 1. 检查 Options: CascadedMenu=0, ContextMenu=260, MenuIcons=1, ElimDupExtract=1
+    $optPath = "HKCU:\Software\7-Zip\Options"
+    if (-not (Test-Path -LiteralPath $optPath)) {
+        $mismatches.Add("HKCU\Software\7-Zip\Options 注册表项缺失")
+    } else {
+        foreach ($k in $SevenZipBaselineOptions.Keys) {
+            $expected = $SevenZipBaselineOptions[$k]
+            $val = (Get-ItemProperty -LiteralPath $optPath -ErrorAction SilentlyContinue).$k
+            if ($null -eq $val -or [int]$val -ne $expected) {
+                $mismatches.Add("Options\$k (当前: $val, 预期: $expected)")
+            }
+        }
+    }
+
+    # 2. 检查 COM 扩展 CLSID
+    $clsidPath = "HKCU:\Software\Classes\CLSID\$SevenZipClsid"
+    $inprocPath = "$clsidPath\InprocServer32"
+    if (-not (Test-Path -LiteralPath $inprocPath)) {
+        $mismatches.Add("CLSID\$SevenZipClsid\InprocServer32 未注册")
+    } else {
+        $inprocVal = (Get-ItemProperty -LiteralPath $inprocPath -ErrorAction SilentlyContinue)."(default)"
+        if (-not $inprocVal -or -not ($inprocVal.Trim('"') -ieq $paths.Dll)) {
+            $mismatches.Add("CLSID InprocServer32 路径偏离 (当前: $inprocVal, 预期: $($paths.Dll))")
+        }
+    }
+
+    # 3. 检查外壳上下文处理器 (*, Directory, Folder)
+    $handlers = @(
+        "HKCU:\Software\Classes\*\shellex\ContextMenuHandlers\7-Zip",
+        "HKCU:\Software\Classes\Directory\shellex\ContextMenuHandlers\7-Zip",
+        "HKCU:\Software\Classes\Folder\shellex\ContextMenuHandlers\7-Zip"
+    )
+    foreach ($h in $handlers) {
+        if (-not (Test-Path -LiteralPath $h)) {
+            $mismatches.Add("$h 缺失")
+        } else {
+            $hVal = (Get-ItemProperty -LiteralPath $h -ErrorAction SilentlyContinue)."(default)"
+            if (-not ($hVal -ieq $SevenZipClsid)) {
+                $mismatches.Add("$h 默认值偏离 (当前: $hVal)")
+            }
+        }
+    }
+
+    # 4. 检查 ProgID 与文件格式关联
+    $progIdPath = "HKCU:\Software\Classes\7-Zip.Archive"
+    $openCmdPath = "$progIdPath\shell\open\command"
+    if (-not (Test-Path -LiteralPath $openCmdPath)) {
+        $mismatches.Add("ProgID 7-Zip.Archive 未注册")
+    }
+
+    foreach ($ext in $SevenZipBaselineExts) {
+        $extPath = "HKCU:\Software\Classes\$ext"
+        if (-not (Test-Path -LiteralPath $extPath)) {
+            $mismatches.Add("格式关联 $ext 缺失")
+        } else {
+            $extVal = (Get-ItemProperty -LiteralPath $extPath -ErrorAction SilentlyContinue)."(default)"
+            if (-not ($extVal -ieq "7-Zip.Archive")) {
+                $mismatches.Add("格式关联 $ext 偏离 (当前: $extVal, 预期: 7-Zip.Archive)")
+            }
+        }
+    }
+
+    # 5. 检查 Windows 原生解压外壳扩展屏蔽名单 (Shell Extensions Blocked)
+    $blockedPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked"
+    if (-not (Test-Path -LiteralPath $blockedPath)) {
+        $mismatches.Add("原生解压外壳扩展屏蔽项缺失")
+    } else {
+        $blockedItem = Get-ItemProperty -LiteralPath $blockedPath -ErrorAction SilentlyContinue
+        foreach ($clsid in $SevenZipBlockedNativeClsids) {
+            if ($null -eq $blockedItem.PSObject.Properties[$clsid]) {
+                $mismatches.Add("原生解压外壳扩展未屏蔽: $clsid")
+            }
+        }
+    }
+
+    $isAligned = ($mismatches.Count -eq 0)
+    $statusText = if ($isAligned) {
+        "平铺直出 / 掩码 0x104 (260) / 5 格式关联已对齐 / 原生解压已屏蔽"
+    } else {
+        "偏离: $($mismatches.Count) 项未对齐"
+    }
+
+    return [PSCustomObject]@{
+        Installed   = $isAligned
+        StatusText  = $statusText
+        Mismatches  = @($mismatches)
+        SevenZipDir = $paths.InstallDir
+        SevenZipFm  = $paths.FmExe
+        SevenZipDll = $paths.Dll
+    }
+}
+
+function Set-SevenZipIntegration {
+    param([string]$ScoopRoot)
+
+    $paths = Get-SevenZipCommandPaths -ScoopRoot $ScoopRoot
+    if ($null -eq $paths) {
+        throw "未找到 7-Zip 可执行组件与动态库 (7zFM.exe / 7-zip.dll)，无法应用外壳集成。"
+    }
+
+    # 1. 写入 Options (CascadedMenu=0, ContextMenu=260, MenuIcons=1, ElimDupExtract=1)
+    $optPath = "HKCU:\Software\7-Zip\Options"
+    if (-not (Test-Path -LiteralPath $optPath)) {
+        New-Item -Path $optPath -Force -ErrorAction Stop | Out-Null
+    }
+    foreach ($k in $SevenZipBaselineOptions.Keys) {
+        Set-ItemProperty -LiteralPath $optPath -Name $k -Value $SevenZipBaselineOptions[$k] -Type DWord -Force -ErrorAction Stop
+    }
+
+    # 2. 注册 COM 扩展外壳服务器 CLSID (HKCU)
+    $clsidPath = "HKCU:\Software\Classes\CLSID\$SevenZipClsid"
+    $inprocPath = "$clsidPath\InprocServer32"
+    if (-not (Test-Path -LiteralPath $inprocPath)) {
+        New-Item -Path $inprocPath -Force -ErrorAction Stop | Out-Null
+    }
+    Set-ItemProperty -LiteralPath $clsidPath -Name "(default)" -Value "7-Zip Shell Extension" -Force -ErrorAction Stop
+    Set-ItemProperty -LiteralPath $inprocPath -Name "(default)" -Value $paths.Dll -Force -ErrorAction Stop
+    Set-ItemProperty -LiteralPath $inprocPath -Name "ThreadingModel" -Value "Apartment" -Force -ErrorAction Stop
+
+    # 3. 挂载外壳上下文处理器 (*, Directory, Folder)
+    $handlers = @(
+        "HKCU:\Software\Classes\*\shellex\ContextMenuHandlers\7-Zip",
+        "HKCU:\Software\Classes\Directory\shellex\ContextMenuHandlers\7-Zip",
+        "HKCU:\Software\Classes\Folder\shellex\ContextMenuHandlers\7-Zip"
+    )
+    foreach ($h in $handlers) {
+        if (-not (Test-Path -LiteralPath $h)) {
+            New-Item -Path $h -Force -ErrorAction Stop | Out-Null
+        }
+        Set-ItemProperty -LiteralPath $h -Name "(default)" -Value $SevenZipClsid -Force -ErrorAction Stop
+    }
+
+    # 4. 注册 ProgID 7-Zip.Archive 并绑定双击打开命令
+    $progIdPath = "HKCU:\Software\Classes\7-Zip.Archive"
+    $iconPath   = "$progIdPath\DefaultIcon"
+    $openCmdPath = "$progIdPath\shell\open\command"
+    if (-not (Test-Path -LiteralPath $openCmdPath)) {
+        New-Item -Path $openCmdPath -Force -ErrorAction Stop | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $iconPath)) {
+        New-Item -Path $iconPath -Force -ErrorAction Stop | Out-Null
+    }
+    Set-ItemProperty -LiteralPath $progIdPath -Name "(default)" -Value "7-Zip Archive" -Force -ErrorAction Stop
+    Set-ItemProperty -LiteralPath $iconPath -Name "(default)" -Value "`"$($paths.FmExe)`",0" -Force -ErrorAction Stop
+    Set-ItemProperty -LiteralPath $openCmdPath -Name "(default)" -Value "`"$($paths.FmExe)`" `"%1`"" -Force -ErrorAction Stop
+
+    # 5. 绑定核心压缩格式扩展名
+    foreach ($ext in $SevenZipBaselineExts) {
+        $extPath = "HKCU:\Software\Classes\$ext"
+        if (-not (Test-Path -LiteralPath $extPath)) {
+            New-Item -Path $extPath -Force -ErrorAction Stop | Out-Null
+        }
+        Set-ItemProperty -LiteralPath $extPath -Name "(default)" -Value "7-Zip.Archive" -Force -ErrorAction Stop
+    }
+
+    # 6. 屏蔽 Windows 原生重复解压外壳扩展 (Shell Extensions Blocked: zipfldr 与 libarchive)
+    $blockedPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked"
+    if (-not (Test-Path -LiteralPath $blockedPath)) {
+        New-Item -Path $blockedPath -Force -ErrorAction Stop | Out-Null
+    }
+    foreach ($clsid in $SevenZipBlockedNativeClsids) {
+        Set-ItemProperty -LiteralPath $blockedPath -Name $clsid -Value "" -Type String -Force -ErrorAction Stop
+    }
+
+    # 7. Windows 11 FileExts UserChoice 机制：清理核心格式锁定键使其安全回退至 HKCU 声明的 7-Zip.Archive
+    foreach ($ext in $SevenZipBaselineExts) {
+        $extUserChoice = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\$ext\UserChoice"
+        if (Test-Path -LiteralPath $extUserChoice) {
+            Remove-Item -LiteralPath $extUserChoice -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # 8. 广播外壳刷新
+    if (-not ('ShellSync7z' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class ShellSync7z {
+    [DllImport("shell32.dll")]
+    public static extern void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
+}
+"@ -ErrorAction SilentlyContinue
+    }
+    if ('ShellSync7z' -as [type]) {
+        [ShellSync7z]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+    }
+
+    # 9. 写后回读物理终态强校验
+    $after = Get-SevenZipIntegrationStatus -ScoopRoot $ScoopRoot
+    if (-not $after.Installed) {
+        throw "7-Zip 外壳集成写入后校验失败：$($after.Mismatches -join '; ')"
     }
 }
 
@@ -307,7 +562,7 @@ function Get-RuntimeInventory {
     $inventory["git"] = [PSCustomObject]@{
         Key            = "git"
         Name           = "Git 全局基础偏好规范"
-        Module         = "底座"
+        Module         = "配置"
         Installed      = $gitStatus.Installed
         Version        = $gitStatus.StatusText
         GitExe         = $gitExe
@@ -316,7 +571,23 @@ function Get-RuntimeInventory {
         Impact         = "规范跨平台协作提交格式，写入当前用户 ~/.gitconfig，不触碰 user.name 与 user.email 个人身份"
     }
 
-    # 3. 查询 64 位与 32 位卸载表
+    # 3. 查询 7-Zip 原生外壳集成与核心格式关联状态
+    $sevenZipStatus = Get-SevenZipIntegrationStatus -ScoopRoot $scoopRoot
+    $inventory["7zip"] = [PSCustomObject]@{
+        Key         = "7zip"
+        Name        = "7-Zip 极简外壳集成与文件关联"
+        Module      = "集成"
+        Installed   = $sevenZipStatus.Installed
+        Version     = $sevenZipStatus.StatusText
+        Mismatches  = $sevenZipStatus.Mismatches
+        SevenZipDir = $sevenZipStatus.SevenZipDir
+        SevenZipFm  = $sevenZipStatus.SevenZipFm
+        SevenZipDll = $sevenZipStatus.SevenZipDll
+        Purpose     = "装配极简一级右键解压/打包外壳扩展与 .zip/.7z/.rar 核心压缩格式双击只读浏览关联"
+        Impact      = "写入 HKCU 空间 7-Zip 掩码 (0x104) 与 COM 扩展，不触碰系统级 HKLM，保持无折叠极简交互"
+    }
+
+    # 4. 查询 64 位与 32 位卸载表
     $uninstKeys = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
         "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
@@ -451,8 +722,10 @@ foreach ($key in $inv.Keys) {
     }
 }
 
-Write-Host "`n📊 [巡检看板] 系统底层运行库与应用底座基线审计清单:" -ForegroundColor Cyan
-$AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+if (-not $Yes) {
+    Write-Host "`n📊 [巡检看板] 系统底层运行库与应用底座基线审计清单:" -ForegroundColor Cyan
+    $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
+}
 
 # 检查模式立即安全退出
 if ($Action -eq "Check") {
@@ -592,8 +865,22 @@ if ($gitItem) {
     }
 }
 
-# 6.3 依序下载并安装底层运行库 (VC++ x64/x86, .NET 10, WebView2)
-$runtimeItems = @($DiffList | Where-Object { $_.Key -notin @("scoop", "git") })
+# 6.3 对齐 7-Zip 极简外壳集成与核心格式关联
+$sevenZipItem = $DiffList | Where-Object { $_.Key -eq "7zip" } | Select-Object -First 1
+if ($sevenZipItem) {
+    Write-Host "`n🚀 正在对齐集成: $($sevenZipItem.Name)..." -ForegroundColor Cyan
+    try {
+        $targetScoopRoot = if ($inv -and $inv["scoop"]) { $inv["scoop"].ScoopRoot } else { $scoopRoot }
+        Set-SevenZipIntegration -ScoopRoot $targetScoopRoot
+        Write-Host "   ✔ 7-Zip 极简外壳集成与文件关联对齐成功并完成回读校验" -ForegroundColor Green
+    } catch {
+        Write-Host "   ✘ 7-Zip 外壳集成对齐失败: $($_.Exception.Message)" -ForegroundColor Red
+        $failures.Add("7-Zip 外壳集成 ($($_.Exception.Message))")
+    }
+}
+
+# 6.4 依序下载并安装底层运行库 (VC++ x64/x86, .NET 10, WebView2)
+$runtimeItems = @($DiffList | Where-Object { $_.Key -notin @("scoop", "git", "7zip") })
 foreach ($m in $runtimeItems) {
     Write-Host "`n🚀 正在对齐运行库: $($m.Name)..." -ForegroundColor Cyan
     $tempFile = Join-Path $env:TEMP $m.FileName
