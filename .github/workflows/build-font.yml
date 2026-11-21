@@ -1,0 +1,165 @@
+name: Build Maple Mono NL
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FONT_INPUTS: |-
+    tools/fonts/maple-mono/config.json
+    tools/fonts/maple-mono/README.md
+    .github/workflows/build-font.yml
+
+jobs:
+  detect:
+    if: github.repository == 'Lokyael/vpsbase' && github.event.deleted != true
+    runs-on: ubuntu-latest
+    env:
+      REBUILD: ${{ github.event_name == 'workflow_dispatch' || github.event.forced == true || github.event.created == true }}
+    outputs:
+      build: ${{ steps.paths.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+        if: env.REBUILD != 'true'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: paths
+        shell: bash
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          if [[ "$SOURCE_REF" != refs/heads/main ]]; then
+            echo '字体发布仅支持 main 分支' >&2
+            exit 1
+          fi
+          mapfile -t paths <<< "$FONT_INPUTS"
+          if [[ "$REBUILD" == true ]]; then
+            build=true
+          elif git --literal-pathspecs diff --quiet --no-ext-diff --no-renames \
+            "${PUSH_BEFORE}^{tree}" "${PUSH_AFTER}^{tree}" -- "${paths[@]}"; then
+            build=false
+          elif [[ $? -eq 1 ]]; then
+            build=true
+          else
+            echo '无法比较此次推送前后的 Git 树' >&2
+            exit 1
+          fi
+          printf 'build=%s\n' "$build" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build & Package Font Artifacts
+    needs: detect
+    if: needs.detect.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: maple-mono-assets
+      queue: max
+    permissions:
+      contents: write # 推送 assets 分支
+    steps:
+      - name: Checkout Triggering Commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Clone Upstream Maple Font
+        run: |
+          git clone --depth 1 -b v7 https://github.com/subframe7536/maple-font _build_maple
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: '_build_maple/requirements.txt'
+
+      - name: Install Build Dependencies
+        working-directory: _build_maple
+        run: |
+          pip install -r requirements.txt
+
+      - name: Compile Fonts
+        working-directory: _build_maple
+        run: |
+          cp ../tools/fonts/maple-mono/config.json ./config.json
+          python build.py --cn --cn-wenyuan --nf --nf-mono --no-liga --no-hinted --ttf-only --least-styles
+
+      - name: Assemble & Package Artifacts
+        run: |
+          mkdir -p _dist_pkg
+          # 仅收集最终的 NF-CN 目标字体产物，剔除纯西文等中间产物
+          find _build_maple/fonts/ -type f -name "*CN*.ttf" -exec cp {} _dist_pkg/ \;
+
+          TTF_COUNT=$(find _dist_pkg/ -type f -name "*.ttf" | wc -l)
+          echo "📦 提取目标字体数量: ${TTF_COUNT}"
+          if [ "${TTF_COUNT}" -eq 0 ]; then
+            echo "❌ 未检索到目标 *CN*.ttf 字体文件！" >&2
+            exit 1
+          fi
+
+          # 打入配置源文件与说明
+          cp tools/fonts/maple-mono/config.json _dist_pkg/
+          cp tools/fonts/maple-mono/README.md _dist_pkg/
+
+          # 子 shell 隔离打包为高压缩 zip
+          (cd _dist_pkg && zip -9 -r ../latest-maple-mono-nl.zip .)
+
+          # 校验打包产物及体积边界 (防御 GitHub 100MB 硬阻断)
+          ZIP_SIZE=$(stat -c%s "latest-maple-mono-nl.zip")
+          echo "📦 归档包体积: ${ZIP_SIZE} bytes"
+          if [ "${ZIP_SIZE}" -gt 104857600 ]; then
+            echo "❌ 归档包体积超出 GitHub 单文件 100MB 限制 (${ZIP_SIZE} bytes)！" >&2
+            exit 1
+          fi
+
+      - name: Check Current Font Inputs
+        id: current
+        shell: bash
+        run: |
+          mapfile -t paths <<< "$FONT_INPUTS"
+          git fetch --no-tags --depth=1 origin refs/heads/main
+          if git --literal-pathspecs diff --quiet --no-ext-diff --no-renames \
+            'HEAD^{tree}' 'FETCH_HEAD^{tree}' -- "${paths[@]}"; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          elif [[ $? -eq 1 ]]; then
+            echo '本次构建的字体输入与当前 main 不同，保留现有字体包。'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            echo '无法比较本次构建与当前 main 的字体输入' >&2
+            exit 1
+          fi
+
+      - name: Deploy to Assets Branch
+        if: steps.current.outputs.publish == 'true'
+        run: |
+          DEPLOY_DIR=$(mktemp -d)
+          trap 'rm -rf "${DEPLOY_DIR}"' EXIT
+
+          cp latest-maple-mono-nl.zip "${DEPLOY_DIR}/"
+          cd "${DEPLOY_DIR}"
+
+          git init -b assets
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add latest-maple-mono-nl.zip
+          git commit -m "chore: update auto-built Maple Mono NL assets"
+
+          # 显式使用带有令牌授权的上下文强推至 assets 孤儿分支
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          if ! git push --force origin assets; then
+            echo "❌ 推送至 assets 孤儿分支失败！" >&2
+            echo "👉 请排查：" >&2
+            echo "   1. 仓库 Settings -> Actions -> General -> Workflow permissions 是否已勾选 'Read and write permissions'" >&2
+            echo "   2. 仓库是否配置了分支保护规则或规则集阻断了强制推送" >&2
+            exit 1
+          fi
+
+          echo "🚀 成功发布最新 Maple Mono NL 等宽字体基线至 assets 孤儿分支"
