@@ -541,22 +541,6 @@ EOF_DISKS
     printf '%s %s\n' "$identity" "$selected"
 }
 
-arch_disk_key() {
-    local attr serial tag digest
-    # Read the kernel attribute directly, without depending on udev in rescue.
-    case "$1" in
-        vd*) tag=virtio; attr=serial ;;
-        nvme*) tag=nvme; attr=wwid ;;
-        sd*) tag=scsi; attr=device/wwid ;;
-        *) return 1 ;;
-    esac
-    serial=$(cat "/sys/class/block/$1/$attr") || return 1
-    case "$serial" in ''|*[!a-zA-Z0-9._:\ -]*) return 1 ;; esac
-    printf '%s\n' "$serial" | grep -Eq '[1-9a-zA-Z]' || return 1
-    digest=$(printf '%s:%s' "$tag" "$serial" | sha256sum) || return 1
-    printf '%s\n' "${digest%% *}"
-}
-
 arch_disk_instance() {
     local path=/sys/class/block/$1 devnum seq node
     devnum=$(cat "$path/dev") && seq=$(cat "$path/diskseq") &&
@@ -642,14 +626,70 @@ arch_ipv4_handoff() {
     printf '%s|%s|%s\n' "$ipv4_mac" "$ipv4_addr" "$ipv4_gateway"
 }
 
+arch_ifupdown_static() {
+    local config=$1 nic=$2 addr=$3 gateway=$4 include directory fragment
+    local -a files=("$config")
+    [[ -n "$nic" && -f "$config" && -r "$config" ]] || return 1
+    include=$(LC_ALL=C awk '$1 ~ /^source/ { print $1, $2; if (NF != 2) exit 1 }' "$config") || return 1
+    case "$include" in
+        '') ;;
+        'source /etc/network/interfaces.d/*' | 'source-directory /etc/network/interfaces.d')
+            directory=${config%/*}/interfaces.d
+            if [[ -e "$directory" || -L "$directory" ]]; then
+                [[ -d "$directory" && -r "$directory" && -x "$directory" ]] || return 1
+                for fragment in "$directory"/*; do
+                    if [[ "$include" == source-directory* && ! "${fragment##*/}" =~ ^[a-zA-Z0-9_-]+$ ]]; then continue; fi
+                    [[ -e "$fragment" || -L "$fragment" ]] || continue
+                    [[ -f "$fragment" && -r "$fragment" ]] || return 1
+                    files+=("$fragment")
+                done
+            fi ;;
+        *) return 1 ;;
+    esac
+    # Recognize the simple ifupdown stanza; never expand arbitrary includes or run hooks.
+    LC_ALL=C awk -v nic="$nic" -v addr="$addr" -v gateway="$gateway" -v include_line="$include" '
+        FNR == 1 { selected = 0 }
+        /\\[[:space:]]*$/ { bad = 1; exit }
+        NF == 0 || $1 ~ /^#/ { next }
+        /#/ || $1 == "mapping" || $1 == "rename" { bad = 1; exit }
+        $1 ~ /^source/ {
+            if (FILENAME != ARGV[1] || NF != 2 || $1 " " $2 != include_line || ++includes != 1) { bad = 1; exit }
+            selected = 0; next
+        }
+        $1 == "iface" {
+            if (NF != 4) { bad = 1; exit }
+            selected = (":" $2 == ":" nic && $3 == "inet")
+            if (selected && (++stanzas != 1 || $4 != "static")) { bad = 1; exit }
+            next
+        }
+        $1 ~ /^(auto|allow-[^ ]+|no-auto-down|no-scripts)$/ { if (NF > 1) selected = 0; next }
+        !selected { next }
+        $1 == "address" && NF == 2 && $2 == addr && ++addresses == 1 { next }
+        $1 == "gateway" && NF == 2 && $2 == gateway && ++gateways == 1 { next }
+        $1 ~ /^(broadcast|metric|mtu|dns-nameservers|dns-search)$/ && NF > 1 { next }
+        { bad = 1; exit }
+        END { exit (bad || (include_line != "" && includes != 1) || stanzas != 1 || addresses != 1 || gateways != 1) }
+    ' "${files[@]}"
+}
+
 confirm_arch_ipv4() {
-    arch_confirmed_ipv4=$(
-        unset ipv4_mac ipv4_addr ipv4_gateway
-        collect_netconf require-ipv4-probes >&2 && arch_ipv4_handoff
-    ) ||
-        error_and_exit '无法采集完整的源机 IPv4 地址、网关和网卡 MAC。'
-    read -r -p '确认以上 IPv4 参数，按服务商要求输入 dhcp（固定租约）或 static（手填，无默认）: ' arch_ipv4_mode < /dev/tty ||
-        error_and_exit '无法读取 IPv4 取址方式，请从交互终端运行。'
+    local evidence ipv4_ethx='' ipv4_mac='' ipv4_addr='' ipv4_gateway='' ipv4_routes='' ipv4_addresses=''
+    evidence=$(
+        collect_netconf require-ipv4-probes capture-ipv4-evidence >&2 && arch_ipv4_handoff || exit 1
+        if [[ ! "$ipv4_routes" =~ (^|[[:space:]])proto[[:blank:]]+dhcp([[:space:]]|$) &&
+              ! "$ipv4_addresses" =~ (^|[[:space:]])dynamic([[:space:]]|$) ]] &&
+            arch_ifupdown_static /etc/network/interfaces "$ipv4_ethx" "$ipv4_addr" "$ipv4_gateway"; then
+            printf 'static\n'
+        fi
+    ) || error_and_exit '无法采集完整的源机 IPv4 地址、网关和网卡 MAC。'
+    arch_confirmed_ipv4=${evidence%%$'\n'*}
+    if [[ "$evidence" == *$'\n'static ]]; then
+        arch_ipv4_mode=static
+        printf '%s\n' '源机 /etc/network/interfaces 的静态配置与采集值一致，采用 static。' >&2
+    else
+        read -r -p '无法自动确认取址方式，请按服务商要求输入 dhcp（固定租约）或 static（手填，无默认）: ' arch_ipv4_mode < /dev/tty ||
+            error_and_exit '无法读取 IPv4 取址方式，请从交互终端运行。'
+    fi
     case "$arch_ipv4_mode" in
         dhcp | static) ;;
         *) error_and_exit '未确认固定 IPv4 取址方式，请先核对服务商说明。' ;;
@@ -671,7 +711,7 @@ find_arch_bios_boot_disk() {
 }
 
 confirm_arch_target() {
-    local root root_info root_fs ancestors chosen identity name confirm key
+    local root root_info root_fs ancestors chosen identity name confirm
     ! is_in_windows || error_and_exit '请从目标 VPS 的 Linux 系统执行 Arch 全盘重装。'
     install_pkg lsblk
     command -v blkid >/dev/null || error_and_exit '缺少 util-linux 的 blkid，无法核对目标磁盘。'
@@ -694,11 +734,9 @@ confirm_arch_target() {
     identity=$(arch_disk_identity name "$chosen") || error_and_exit '无法直接核验所有整盘或确认目标 PTUUID 唯一。'
     read -r name main_disk <<< "$identity"
     [[ "$name" == "$chosen" && -b "/dev/$name" ]] || error_and_exit '已选目标不是可核对的整盘设备。'
-    key=$(arch_disk_key "$name") || error_and_exit '无法读取目标整盘的稳定标识。'
-    arch_disk_token=$key
     xda=$name
-    printf '\n目标：/dev/%s (PTUUID: %s, 设备标识摘要: %s) | Arch Linux | 用户：%s | SSH：%s/tcp，仅 Ed25519\n' "$xda" "$main_disk" "$arch_disk_token" "$username" "$ssh_port"
-    printf '重启进入救援环境后，确认的整块磁盘（包括所有分区）将被清空。\n'
+    printf '\n目标：/dev/%s (PTUUID: %s) | Arch Linux | 用户：%s | SSH：%s/tcp，仅 Ed25519\n' "$xda" "$main_disk" "$username" "$ssh_port"
+    printf '重启进入救援环境后，确认的整块磁盘（包括所有分区）将被清空。重装期间不要替换、热插拔目标盘或接入其克隆盘。\n'
     if ! IFS= read -rp "确认请原样输入 /dev/$xda，其他输入取消: " confirm < /dev/tty || [[ "$confirm" != "/dev/$xda" ]]; then
         printf '已取消\n'
         exit 0
@@ -797,7 +835,7 @@ awk -v wizard="$BUILD_DIR/wizard.txt" -v disk="$BUILD_DIR/arch-disk.txt" -v hash
     }
     $0 == "    for key in confhome hold force_boot_mode force_cn cloud_image no_cloud_kernel main_disk \\" {
         print
-        print "        arch_disk_token arch_ipv4_mode \\"
+        print "        arch_ipv4_mode \\"
         cmdline++
         next
     }
@@ -810,6 +848,7 @@ awk -v wizard="$BUILD_DIR/wizard.txt" -v disk="$BUILD_DIR/arch-disk.txt" -v hash
     in_collect && /via_gateway_dev_ethx=\$\(ip -\$v route show default \| / {
         print "            # Preserve each ip status for the confirmed IPv4 handoff; keep upstream selection."
         print "            probe_output=$(ip -\"$v\" route show default) || [[ \"$v:${1:-}\" != 4:require-ipv4-probes ]] || return 1"
+        print "            if [[ \"$v:${2:-}\" == 4:capture-ipv4-evidence ]]; then ipv4_routes=$probe_output; fi"
         sub(/ip -\$v route show default/, "printf \047%s\\n\047 \"$probe_output\"")
         route_probe++
     }
@@ -820,6 +859,7 @@ awk -v wizard="$BUILD_DIR/wizard.txt" -v disk="$BUILD_DIR/arch-disk.txt" -v hash
     }
     in_collect && /all_addrs=\$\(ip -\$v -o addr show scope global dev \$ethx \| / {
         print "                probe_output=$(ip -\"$v\" -o addr show scope global dev \"$ethx\") || [[ \"$v:${1:-}\" != 4:require-ipv4-probes ]] || return 1"
+        print "                if [[ \"$v:${2:-}\" == 4:capture-ipv4-evidence ]]; then ipv4_addresses=$probe_output; fi"
         sub(/ip -\$v -o addr show scope global dev \$ethx/, "printf \047%s\\n\047 \"$probe_output\"")
         address_probe++
     }
@@ -859,7 +899,7 @@ awk -v wizard="$BUILD_DIR/wizard.txt" -v disk="$BUILD_DIR/arch-disk.txt" -v hash
         next
     }
     $0 == "# 第二遍扫描，处理参数" {
-        print "unset xda main_disk arch_disk_token arch_confirmed_ipv4 arch_ipv4_mode ssh_keys username password ssh_port"
+        print "unset xda main_disk arch_confirmed_ipv4 arch_ipv4_mode ssh_keys username password ssh_port"
         parses++
     }
     $0 == "  --ssh-key \"ssh-rsa ...\"" || $0 == "  --ssh-key \"ecdsa-sha2-nistp256/384/521 ...\"" ||
@@ -1083,12 +1123,11 @@ EOF_ARCH_RESCUE_PASSWORD
 
 cat > "$BUILD_DIR/arch-rescue-disk.txt" <<'EOF_ARCH_RESCUE_DISK'
 require_confirmed_arch_disk() {
-    local identity disk key instance
-    [ -n "$main_disk" ] && [ -n "$arch_disk_token" ] || error_and_exit 'Missing confirmed whole-disk identity.'
+    local identity disk instance
+    [ -n "$main_disk" ] || error_and_exit 'Missing confirmed whole-disk PTUUID.'
     identity=$(arch_disk_identity id "$main_disk") || error_and_exit 'Cannot directly confirm all whole disks or the unique confirmed PTUUID.'
     disk=${identity%% *}
-    [ -b "/dev/$disk" ] && key=$(arch_disk_key "$disk") && [ "$key" = "$arch_disk_token" ] &&
-        instance=$(arch_disk_instance "$disk") &&
+    [ -b "/dev/$disk" ] && instance=$(arch_disk_instance "$disk") &&
         { [ -z "$xda" ] || { [ "$xda" = "$disk" ] && [ "$arch_rescue_disk_instance" = "$instance" ]; }; } ||
         error_and_exit 'The confirmed whole-disk device identity changed or is unavailable.'
     xda=$disk
@@ -1227,7 +1266,7 @@ awk -v network_gate="$BUILD_DIR/arch-fixed-ipv4.txt" -v disk="$BUILD_DIR/arch-di
                 close(hash)
                 while ((getline s < rescue_password) > 0) print s
                 close(rescue_password)
-                print "unset main_disk xda arch_disk_token arch_rescue_disk_instance arch_ipv4_mode arch_erase_started"
+                print "unset main_disk xda arch_rescue_disk_instance arch_ipv4_mode arch_erase_started"
             }
             print lines[i]
             if (i == extract) print "if [ \"$distro\" = arch ]; then require_arch_rescue_credentials; fi"
