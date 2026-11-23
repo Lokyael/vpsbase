@@ -1261,7 +1261,7 @@ arch_ifupdown_static() {
         !selected { next }
         $1 == "address" && NF == 2 && $2 == addr && ++addresses == 1 { next }
         $1 == "gateway" && NF == 2 && $2 == gateway && ++gateways == 1 { next }
-        $1 ~ /^(broadcast|metric|mtu|dns-nameservers|dns-search)$/ && NF > 1 { next }
+        $1 ~ /^(broadcast|metric|mtu|dns-nameservers|dns-search|dns-options)$/ && NF > 1 { next }
         { bad = 1; exit }
         END { exit (bad || (include_line != "" && includes != 1) || stanzas != 1 || addresses != 1 || gateways != 1) }
     ' "${files[@]}"

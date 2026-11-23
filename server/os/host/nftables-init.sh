@@ -194,6 +194,8 @@ normalize_firewall_listing() {
         /^$/ { next }
         expected && /^#/ { next }
         expected && /^type filter hook (input|forward|output) priority filter; policy / { sub(/priority filter;/, "priority 0;") }
+        # nft 1.1.7 回显省略 `update @ssh_ratelimit { ip saddr ... }` 规则里与 ip saddr 重复的 meta nfproto ipv4 前缀
+        /^meta nfproto ipv4 tcp dport [0-9]+ ct state new update @ssh_ratelimit / { sub(/^meta nfproto ipv4 /, "") }
         /^size (1048576|65536)[[:blank:]]+# count [0-9]+$/ { sub(/[[:blank:]]+# count [0-9]+$/, "") }
         /^flags (dynamic,[[:blank:]]*timeout|timeout,[[:blank:]]*dynamic)$/ { $0 = "flags dynamic,timeout" }
         { print }'
