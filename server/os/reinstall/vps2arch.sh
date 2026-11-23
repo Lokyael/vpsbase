@@ -11322,20 +11322,307 @@ arch_ifupdown_static() {
     ' "${files[@]}"
 }
 
+arch_networkd_static() {
+    local dir=$1 nic=$2 mac=$3 addr=$4 gateway=$5 f
+    local -a files=()
+    [[ -n "$nic" && -n "$mac" && -d "$dir" && -r "$dir" && -x "$dir" ]] || return 1
+    for f in "$dir"/*.network; do
+        [[ -e "$f" || -L "$f" ]] || continue
+        [[ -f "$f" && -r "$f" ]] || return 1
+        files+=("$f")
+    done
+    (( ${#files[@]} > 0 )) || return 1
+    LC_ALL=C awk -v nic="$nic" -v mac="${mac,,}" -v addr="$addr" -v gateway="$gateway" '
+        function flush_route() {
+            if (in_route && route_gw != "") {
+                if (route_dest == "" || route_dest == "0.0.0.0/0") {
+                    if (route_gw ~ /:/) {
+                    } else if (route_gw == gateway) {
+                        file_gw++
+                    } else {
+                        file_bad = 1
+                    }
+                }
+            }
+            in_route = 0; route_gw = ""; route_dest = ""
+        }
+        function flush_file() {
+            flush_route()
+            if (file_seen && file_matched) {
+                matched_files++
+                if (file_bad || file_dhcp_v4 || file_addr != 1 || file_gw != 1) bad = 1
+            }
+        }
+        FNR == 1 {
+            flush_file()
+            file_seen = 1; section = ""
+            file_matched = 0; file_bad = 0; file_dhcp_v4 = 0
+            file_addr = 0; file_gw = 0
+        }
+        /\\[[:space:]]*$/ { file_bad = 1; next }
+        /^[[:space:]]*([#;].*)?$/ { next }
+        /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+            flush_route()
+            section = $0
+            sub(/^[[:space:]]*\[/, "", section)
+            sub(/\][[:space:]]*$/, "", section)
+            if (section == "Route") in_route = 1
+            next
+        }
+        {
+            pos = index($0, "=")
+            if (pos == 0) { file_bad = 1; next }
+            key = substr($0, 1, pos - 1)
+            val = substr($0, pos + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+            if (val ~ /^".*"$/) val = substr(val, 2, length(val) - 2)
+        }
+        section == "Match" {
+            if (key == "Name") {
+                if (val == nic) file_matched = 1
+                else if (val ~ /[*?!|[:space:]]/) file_bad = 1
+            } else if (key == "MACAddress" || key == "PermanentMACAddress") {
+                if (tolower(val) == mac) file_matched = 1
+                else if (val ~ /[*?!|[:space:]]/) file_bad = 1
+            } else if (val ~ /^!/) {
+                file_bad = 1
+            }
+            next
+        }
+        section == "Network" {
+            if (key == "DHCP") {
+                v = tolower(val)
+                if (v != "no" && v != "false" && v != "0" && v != "ipv6" && v != "") file_dhcp_v4 = 1
+            } else if (key == "Address") {
+                if (val ~ /:/) next
+                if (val == addr) file_addr++
+                else file_bad = 1
+            } else if (key == "Gateway") {
+                if (val ~ /:/) next
+                if (val == gateway) file_gw++
+                else file_bad = 1
+            }
+            next
+        }
+        section == "Address" {
+            if (key == "Address") {
+                if (val ~ /:/) next
+                if (val == addr) file_addr++
+                else file_bad = 1
+            }
+            next
+        }
+        section == "Route" {
+            if (key == "Gateway") route_gw = val
+            else if (key == "Destination") route_dest = val
+            else if (key == "GatewayOnLink" || key == "Scope" || key == "Metric" || key == "Table") {}
+            else file_bad = 1
+            next
+        }
+        END {
+            flush_file()
+            exit (bad || matched_files != 1)
+        }
+    ' "${files[@]}"
+}
+
+arch_netplan_static() {
+    local dir=$1 nic=$2 mac=$3 addr=$4 gateway=$5 f
+    local -a files=()
+    [[ -n "$nic" && -n "$mac" && -d "$dir" && -r "$dir" && -x "$dir" ]] || return 1
+    for f in "$dir"/*.yaml "$dir"/*.yml; do
+        [[ -e "$f" || -L "$f" ]] || continue
+        [[ -f "$f" && -r "$f" ]] || return 1
+        files+=("$f")
+    done
+    (( ${#files[@]} > 0 )) || return 1
+    LC_ALL=C awk -v nic="$nic" -v mac="${mac,,}" -v addr="$addr" -v gateway="$gateway" '
+        function unquote(s) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+            if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
+            return s
+        }
+        function check_addr_item(item) {
+            item = unquote(item)
+            if (item == "" || item ~ /:/) return
+            if (item == addr) stanza_addr++
+            else stanza_bad = 1
+        }
+        function flush_route() {
+            if (in_route_item && (route_to != "" || route_via != "")) {
+                if (route_to == "default" || route_to == "0.0.0.0/0") {
+                    if (route_via ~ /:/) {
+                    } else if (route_via == gateway) {
+                        stanza_gw++
+                    } else {
+                        stanza_bad = 1
+                    }
+                }
+            }
+            in_route_item = 0; route_to = ""; route_via = ""
+        }
+        function flush_stanza() {
+            flush_route()
+            if (!in_stanza) return
+            matched = 0
+            if (stanza_match_mac != "") {
+                if (stanza_match_mac == mac && (stanza_set_name == "" || stanza_set_name == nic)) matched = 1
+            } else if (stanza_match_name != "") {
+                if (stanza_match_name == nic && (stanza_set_name == "" || stanza_set_name == nic)) matched = 1
+            } else if (stanza_id == nic && !stanza_has_match) {
+                matched = 1
+            }
+            if (matched) {
+                matched_stanzas++
+                if (stanza_bad || stanza_dhcp4 || stanza_addr != 1 || stanza_gw != 1) bad = 1
+            }
+            in_stanza = 0
+        }
+        FNR == 1 {
+            flush_stanza()
+            in_net = 0; in_eth = 0; eth_indent = -1; stanza_indent = -1; sub_indent = -1; sub_section = ""
+        }
+        /\t/ { bad = 1; exit }
+        /^[[:space:]]*(#.*)?$/ { next }
+        /[#]/ {
+            if ($0 !~ /^[[:space:]]*#/) { bad = 1; exit }
+        }
+        {
+            match($0, /^[ ]*/)
+            ind = RLENGTH
+            line = substr($0, ind + 1)
+            gsub(/[[:space:]]+$/, "", line)
+        }
+        line == "---" || line == "..." { next }
+        ind == 0 {
+            flush_stanza()
+            if (line == "network:") { in_net = 1; in_eth = 0 }
+            else { in_net = 0; in_eth = 0 }
+            next
+        }
+        !in_net { next }
+        !in_eth || ind <= eth_indent {
+            flush_stanza()
+            in_eth = 0
+            if (line == "ethernets:") { in_eth = 1; eth_indent = ind }
+            next
+        }
+        !in_stanza || ind <= stanza_indent {
+            flush_stanza()
+            if (ind <= eth_indent || line !~ /^[A-Za-z0-9_.-]+:$/) { bad = 1; exit }
+            stanza_id = substr(line, 1, length(line) - 1)
+            stanza_indent = ind
+            in_stanza = 1
+            stanza_bad = 0; stanza_dhcp4 = 0; stanza_addr = 0; stanza_gw = 0
+            stanza_has_match = 0; stanza_match_mac = ""; stanza_match_name = ""; stanza_set_name = ""
+            sub_section = ""; sub_indent = -1
+            next
+        }
+        sub_section != "" && ind <= sub_indent && !(ind == sub_indent && line ~ /^-[[:space:]]*/) {
+            flush_route()
+            sub_section = ""; sub_indent = -1
+        }
+        sub_section == "" {
+            pos = index(line, ":")
+            if (pos == 0) { stanza_bad = 1; next }
+            k = substr(line, 1, pos - 1)
+            v = substr(line, pos + 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+            if (k == "dhcp4") {
+                vl = tolower(unquote(v))
+                if (vl != "false" && vl != "no" && vl != "0") stanza_dhcp4 = 1
+            } else if (k == "set-name") {
+                stanza_set_name = unquote(v)
+            } else if (k == "gateway4") {
+                gv = unquote(v)
+                if (gv == gateway) stanza_gw++
+                else stanza_bad = 1
+            } else if (k == "addresses") {
+                if (v == "") {
+                    sub_section = "addresses"; sub_indent = ind
+                } else if (v ~ /^\[.*\]$/) {
+                    inner = substr(v, 2, length(v) - 2)
+                    n = split(inner, arr, ",")
+                    for (i = 1; i <= n; i++) check_addr_item(arr[i])
+                } else {
+                    stanza_bad = 1
+                }
+            } else if (k == "routes") {
+                if (v == "") { sub_section = "routes"; sub_indent = ind }
+                else stanza_bad = 1
+            } else if (k == "match") {
+                stanza_has_match = 1
+                if (v == "") { sub_section = "match"; sub_indent = ind }
+                else stanza_bad = 1
+            } else if (v == "") {
+                sub_section = "other"; sub_indent = ind
+            }
+            next
+        }
+        sub_section == "addresses" {
+            if (line !~ /^-[[:space:]]+/) { stanza_bad = 1; next }
+            item = line
+            sub(/^-[[:space:]]+/, "", item)
+            check_addr_item(item)
+            next
+        }
+        sub_section == "match" {
+            pos = index(line, ":")
+            if (pos == 0) { stanza_bad = 1; next }
+            k = substr(line, 1, pos - 1)
+            v = unquote(substr(line, pos + 1))
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+            if (k == "macaddress") stanza_match_mac = tolower(v)
+            else if (k == "name") stanza_match_name = v
+            else stanza_bad = 1
+            next
+        }
+        sub_section == "routes" {
+            if (line ~ /^-[[:space:]]+/) {
+                flush_route()
+                in_route_item = 1
+                sub(/^-[[:space:]]+/, "", line)
+            } else if (!in_route_item) {
+                stanza_bad = 1; next
+            }
+            pos = index(line, ":")
+            if (pos == 0) { stanza_bad = 1; next }
+            k = substr(line, 1, pos - 1)
+            v = unquote(substr(line, pos + 1))
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", k)
+            if (k == "to") route_to = v
+            else if (k == "via") route_via = v
+            next
+        }
+        END {
+            flush_stanza()
+            exit (bad || matched_stanzas != 1)
+        }
+    ' "${files[@]}"
+}
+
 confirm_arch_ipv4() {
-    local evidence ipv4_ethx='' ipv4_mac='' ipv4_addr='' ipv4_gateway='' ipv4_routes='' ipv4_addresses=''
+    local evidence ipv4_ethx='' ipv4_mac='' ipv4_addr='' ipv4_gateway='' ipv4_routes='' ipv4_addresses='' static_source=''
     evidence=$(
         collect_netconf require-ipv4-probes capture-ipv4-evidence >&2 && arch_ipv4_handoff || exit 1
         if [[ ! "$ipv4_routes" =~ (^|[[:space:]])proto[[:blank:]]+dhcp([[:space:]]|$) &&
-              ! "$ipv4_addresses" =~ (^|[[:space:]])dynamic([[:space:]]|$) ]] &&
-            arch_ifupdown_static /etc/network/interfaces "$ipv4_ethx" "$ipv4_addr" "$ipv4_gateway"; then
-            printf 'static\n'
+              ! "$ipv4_addresses" =~ (^|[[:space:]])dynamic([[:space:]]|$) ]]; then
+            if arch_ifupdown_static /etc/network/interfaces "$ipv4_ethx" "$ipv4_addr" "$ipv4_gateway"; then
+                printf 'static:/etc/network/interfaces\n'
+            elif arch_networkd_static /etc/systemd/network "$ipv4_ethx" "$ipv4_mac" "$ipv4_addr" "$ipv4_gateway"; then
+                printf 'static:/etc/systemd/network\n'
+            elif arch_netplan_static /etc/netplan "$ipv4_ethx" "$ipv4_mac" "$ipv4_addr" "$ipv4_gateway"; then
+                printf 'static:/etc/netplan\n'
+            fi
         fi
     ) || error_and_exit '无法采集完整的源机 IPv4 地址、网关和网卡 MAC。'
     arch_confirmed_ipv4=${evidence%%$'\n'*}
-    if [[ "$evidence" == *$'\n'static ]]; then
+    if [[ "$evidence" == *$'\n'static:* ]]; then
         arch_ipv4_mode=static
-        printf '%s\n' '源机 /etc/network/interfaces 的静态配置与采集值一致，采用 static。' >&2
+        static_source=${evidence##*$'\n'static:}
+        printf '源机 %s 的静态配置与采集值一致，采用 static。\n' "$static_source" >&2
     else
         read -r -p '无法自动确认取址方式，请按服务商要求输入 dhcp（固定租约）或 static（手填，无默认）: ' arch_ipv4_mode < /dev/tty ||
             error_and_exit '无法读取 IPv4 取址方式，请从交互终端运行。'
