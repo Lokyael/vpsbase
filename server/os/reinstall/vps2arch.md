@@ -26,15 +26,18 @@
 ```pwsh
 . {
     $ErrorActionPreference = 'Stop'
-    $name = if ($n) { $n } else { Read-Host "连接名（与密钥名一致，默认 vps）" }
-    if (-not $name) { $name = "vps" }
-    $h    = Read-Host "服务器地址"; if (-not $h) { throw "服务器地址不能为空。" }
-    $u    = Read-Host "登录用户名"; if (-not $u) { throw "登录用户名不能为空。" }
+    $name = if ($n) { $n } else { Read-Host "连接名（与密钥名一致，默认 vps）" }; if (-not $name) { $name = "vps" }
+    $h = Read-Host "服务器地址"; if (-not $h) { throw "服务器地址不能为空。" }
+    $u = Read-Host "登录用户名"; if (-not $u) { throw "登录用户名不能为空。" }
     $port = Read-Host "端口（默认 22）"; if (-not $port) { $port = "22" }
 
     $cfg = Join-Path "$env:USERPROFILE\.ssh" "config"
     New-Item -ItemType Directory -Force -Path (Split-Path $cfg) | Out-Null
-    if (Test-Path -LiteralPath $cfg) { icacls $cfg /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null }
+    if (Test-Path -LiteralPath $cfg) {
+        $hit = Select-String -LiteralPath $cfg -Pattern "^\s*Host\s+$([regex]::Escape($name))\s*$"
+        if ($hit) { throw "配置中已存在 Host $name（$cfg 第 $($hit.LineNumber -join ',') 行），已终止。" }
+        icacls $cfg /inheritance:r /grant:r "${env:USERNAME}:F" | Out-Null
+    }
 
     Add-Content -LiteralPath $cfg -Encoding ASCII -Value @"
 

@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'tools/fonts/maple-mono/config.json'
+      - 'tools/fonts/maple-mono/README.md'
+      - '.github/workflows/build-font.yml'
   workflow_dispatch:
 
 permissions:
@@ -16,48 +20,9 @@ env:
     .github/workflows/build-font.yml
 
 jobs:
-  detect:
-    if: github.repository == 'Lokyael/vpsbase' && github.event.deleted != true
-    runs-on: ubuntu-latest
-    env:
-      REBUILD: ${{ github.event_name == 'workflow_dispatch' || github.event.forced == true || github.event.created == true }}
-    outputs:
-      build: ${{ steps.paths.outputs.build }}
-    steps:
-      - uses: actions/checkout@v7
-        if: env.REBUILD != 'true'
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - id: paths
-        shell: bash
-        env:
-          PUSH_BEFORE: ${{ github.event.before }}
-          PUSH_AFTER: ${{ github.event.after }}
-          SOURCE_REF: ${{ github.ref }}
-        run: |
-          if [[ "$SOURCE_REF" != refs/heads/main ]]; then
-            echo '字体发布仅支持 main 分支' >&2
-            exit 1
-          fi
-          mapfile -t paths <<< "$FONT_INPUTS"
-          if [[ "$REBUILD" == true ]]; then
-            build=true
-          elif git --literal-pathspecs diff --quiet --no-ext-diff --no-renames \
-            "${PUSH_BEFORE}^{tree}" "${PUSH_AFTER}^{tree}" -- "${paths[@]}"; then
-            build=false
-          elif [[ $? -eq 1 ]]; then
-            build=true
-          else
-            echo '无法比较此次推送前后的 Git 树' >&2
-            exit 1
-          fi
-          printf 'build=%s\n' "$build" >> "$GITHUB_OUTPUT"
-
   build:
     name: Build & Package Font Artifacts
-    needs: detect
-    if: needs.detect.outputs.build == 'true'
+    if: github.repository == 'Lokyael/vpsbase' && github.event.deleted != true
     runs-on: ubuntu-latest
     concurrency:
       group: maple-mono-assets
