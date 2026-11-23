@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     工作站核心原生应用生命周期轻聚合编排门面 (Thin Orchestrator Facade)。
@@ -87,7 +87,13 @@ if ($localCandidates.Count -gt 0) {
 # 阶段 1: 基于契约的静态发现与元数据提取 (Plan - Zero-Cost AST Introspection)
 # ==============================================================================
 $DiscoveredApps = [ordered]@{}
-$scriptFiles = Get-ChildItem -Path $AppsDir -Filter "*.ps1" -File | Where-Object { -not $_.Name.StartsWith('_') -and $_.Name -ne 'setup.ps1' -and $_.Name -ne 'setup-apps.ps1' } | Sort-Object Name
+$scriptFiles = Get-ChildItem -Path $AppsDir -Directory |
+    Where-Object { $_.Name -notin @('_shared', 'dev') } |
+    ForEach-Object {
+        $entry = Join-Path $_.FullName "$($_.Name).ps1"
+        if (Test-Path -Path $entry -PathType Leaf) { Get-Item -Path $entry }
+    } |
+    Sort-Object Name
 
 foreach ($file in $scriptFiles) {
     $appId = $file.BaseName.ToLower()

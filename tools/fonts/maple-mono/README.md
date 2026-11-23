@@ -12,4 +12,4 @@ Windows 解压后安装 TTF，在终端或编辑器字体设置中选择 **Maple
 
 安装前关闭使用该字体的应用；更新字体后可能需要重开应用、注销或重启才能刷新。包内 config.json 用于标识构建选择，不是系统安装器。
 
-构建命令与选择理由见公开仓库的[字体开发说明](https://github.com/Lokyael/vpsbase/blob/main/tools/fonts/maple-mono/dev/dev.md)；该说明不随字体包分发，安装使用不依赖它。
+构建命令与选择理由见公开仓库的[字体开发说明](https://github.com/Lokyael/vpsbase/blob/main/tools/fonts/maple-mono/dev/maple-mono.dev.md)；该说明不随字体包分发，安装使用不依赖它。

@@ -96,7 +96,7 @@ scoop bucket list
 | `D:\prog` | 应用、Scoop 与 WSL |
 | `D:\res` | 独立于软件生命周期的配置、文档与媒体资产，优先备份 |
 
-Git 设置见 [Git 基础配置](../../tools/git/git.md#基础配置)。
+Git 设置见 [Git 基础配置](../../tools/git.md#基础配置)。
 
 ## 6. 语言与应用
 

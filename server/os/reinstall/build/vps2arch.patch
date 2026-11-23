@@ -1,7 +1,7 @@
 # ==============================================================================
-# AUDIT PATCH: Functional and security changes against upstream commit 603ba80f939db7f9fc82ad215bcac8d6558bd588
-# (Excludes dead-branch pruning diffs; focuses on wizard & Arch security hardening)
-# Generated automatically by server/os/reinstall/dev/build-vps2arch.sh.
+# AUDIT PATCH: Functional and security changes against upstream commit 2fcd14b4564bc21740b85d473b4a140e283bf292
+# (Excludes dead-branch pruning & verbatim upstream file inlining)
+# Generated automatically by server/os/reinstall/build/build-vps2arch.sh.
 # ==============================================================================
 --- upstream/reinstall.sh
 +++ vps2arch/reinstall.sh
@@ -13,8 +13,8 @@
  set -eE
 -confhome=https://raw.githubusercontent.com/bin456789/reinstall/main
 -confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/main
-+confhome=https://raw.githubusercontent.com/bin456789/reinstall/603ba80f939db7f9fc82ad215bcac8d6558bd588
-+confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/603ba80f939db7f9fc82ad215bcac8d6558bd588
++confhome=https://raw.githubusercontent.com/bin456789/reinstall/2fcd14b4564bc21740b85d473b4a140e283bf292
++confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/2fcd14b4564bc21740b85d473b4a140e283bf292
  # confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
  
  # 用于判断 reinstall.sh 和 trans.sh 是否兼容
@@ -26,7 +26,88 @@
  trap 'trap_err $LINENO $?' ERR
  
  trap_err() {
-@@ -272,7 +274,20 @@
+@@ -75,54 +77,20 @@
+ fi
+ 
+ usage_and_exit() {
+-    # kali 官网的 202x.x iso 安装后，apt 源是 kali-rolling
+-    # 微软商店的 wsl kali，apt 源是 kali-last-snapshot
+     cat <<EOF
+-Usage: $reinstall_____ anolis      7|8|23
+-                       opencloudos 8|9|23
+-                       rocky       8|9|10
+-                       oracle      8|9|10
+-                       almalinux   8|9|10
+-                       centos      9|10
+-                       fnos        1
+-                       fygoos      1
+-                       nixos       26.05
+-                       fedora      44|45
+-                       debian      9|10|11|12|13
+-                       alpine      3.21|3.22|3.23|3.24
+-                       opensuse    16.0|16.1|tumbleweed
+-                       kali        last-snapshot|rolling
+-                       openeuler   20.03|22.03|24.03|26.09
+-                       ubuntu      18.04|20.04|22.04|24.04|26.04|26.10 [--minimal]
+-                       arch
+-                       gentoo
+-                       aosc
+-                       redhat      --img="http://access.cdn.redhat.com/xxx.qcow2"
+-                       dd          --img="http://xxx.com/yyy.zzz" (raw image stores in raw/vhd/tar/gz/xz/zst)
+-                       windows     --image-name="windows xxx yyy" --lang=xx-yy
+-                       windows     --image-name="windows xxx yyy" --iso="http://xxx.com/xxx.iso"
+-                       netboot.xyz
+-                       talos
+-                       reset
+-
+-       Options:        For Linux/Windows:
+-                       [--username    USERNAME]
+-                       [--password    PASSWORD]
+-                       [--ssh-key     KEY]
+-                       [--ssh-port    PORT]
+-                       [--frpc-config PATH]
+-
+-                       For Windows Only:
+-                       [--allow-ping]
+-                       [--rdp-port    PORT]
+-                       [--add-driver  INF_OR_DIR]  (only for iso installation)
+-                       [--no-auto-drivers]         (only for iso installation)
+-
+-                       For Linux Only:
+-                       [--no-cloud-kernel]         (only for Debian/Ubuntu/Alpine/openSUSE)
+-
+-       Manual:         https://github.com/bin456789/reinstall
+-
++Usage: bash $0                          # 交互式 Arch Linux 安装向导
++       bash $0 [arch] [OPTIONS...]      # CLI 指定参数（省略 arch 自动补全）
++       bash $0 reset                    # 重启前撤销已安排的重装引导项
++
++Options (Arch Linux):
++  --username, --user NAME        新系统普通运维用户名（必填，禁止 root）
++  --password, --passwd PASS      新用户 sudo 提权密码（必填，<=256 字节，无 CR/LF）
++  --ssh-key,  --public-key KEY   Ed25519 登录公钥文本、本地路径、github:/gitlab: 或 HTTPS URL（必填）
++  --ssh-port PORT                新系统 SSH 端口（默认 22，禁止 443）
++  --target-disk /dev/DISK        显式指定目标整盘（Btrfs/bcachefs 或多盘根时必填）
++  --hold 0|1|2                   调试停顿点（0=打包前，1=进救援后暂停，2=安装完不自动重启）
++  --force-cn                     强制使用国内镜像源
++  -h, --help                     显示本帮助并退出
+ EOF
+     exit 1
+ }
+@@ -204,11 +172,10 @@
+     show_url_in_args "$@" >&2
+ 
+     # 添加 -f, --fail，不然 404 退出码也为0
+-    # 32位 cygwin 已停止更新，证书可能有问题，先添加 --insecure
+     # centos 7 curl 不支持 --retry-connrefused --retry-all-errors
+     # 因此手动 retry
+     for i in $(seq 5); do
+-        if command curl --insecure --connect-timeout 10 -f "$@"; then
++        if command curl --connect-timeout 10 -f "$@"; then
+             return
+         else
+             ret=$?
+@@ -273,7 +240,22 @@
      cp -f /reinstall-vmlinuz "$dir"
  
      if is_have_initrd; then
@@ -39,8 +120,10 @@
 +                # FAT can ignore chmod. Check the actual mode before copying the digest-bearing image.
 +                ownership_mode=$(stat -c '%u:%a' -- "$staged") && [ "$ownership_mode" = 0:600 ] ||
 +                    error_and_exit "无法确认引导目录 $dir 中的 initrd 副本为 root 所有且权限为 0600。"
++                [ ! -d "$dir/reinstall-initrd" ] ||
++                    error_and_exit "引导目录 $dir 中的 reinstall-initrd 目标路径异常。"
 +                cat /reinstall-initrd >"$staged"
-+                mv -fT -- "$staged" "$dir/reinstall-initrd"
++                mv -f -- "$staged" "$dir/reinstall-initrd"
 +            )
 +        else
 +            cp -f /reinstall-initrd "$dir"
@@ -48,8 +131,17 @@
      fi
  
      if is_use_firmware; then
-@@ -1663,10 +1678,6 @@
-         ;;
+@@ -457,7 +439,7 @@
+     # ${PIPESTATUS[n]} 表示第n个管道的返回值
+     echo $url
+     for i in $(seq 5 -1 0); do
+-        if command curl --insecure --connect-timeout 10 -Lfr 0-1048575 "$url" \
++        if command curl --connect-timeout 10 -Lfr 0-1048575 "$url" \
+             1> >(exec head -c 1048576 >$tmp_file) \
+             2> >(exec grep -v 'curl: (23)' >&2); then
+             break
+@@ -1677,10 +1659,6 @@
+     windows) [ -n "$image_name" ] || error_and_exit "Install Windows need --image-name." ;;
      esac
  
 -    # 不能同时使用证书和密码
@@ -59,7 +151,7 @@
  }
  
  get_cmd_path() {
-@@ -2011,19 +2022,27 @@
+@@ -2025,19 +2003,27 @@
  }
  
  get_local_bootloader_type() {
@@ -91,7 +183,7 @@
              _bootloader_type="limine"
  
          elif is_have_cmd extlinux || is_have_cmd syslinux; then
-@@ -2083,23 +2102,19 @@
+@@ -2097,23 +2083,19 @@
  }
  
  assert_username_valid() {
@@ -126,7 +218,7 @@
  }
  
  # trans.sh 有同名方法
-@@ -2124,27 +2139,6 @@
+@@ -2138,27 +2120,6 @@
      return 1
  }
  
@@ -154,7 +246,7 @@
  
  prompt_password() {
      echo >&2
-@@ -2221,11 +2215,16 @@
+@@ -2232,11 +2193,16 @@
      # 红帽把它 backport 到了 centos7 的 python2 上
      # 在其它发行版的 python2 上运行会出错
      elif is_have_cmd yum && is_have_cmd python2; then
@@ -173,7 +265,7 @@
  
      # yescrypt
      # 旧系统不支持，先不管
-@@ -2353,6 +2352,7 @@
+@@ -2358,6 +2324,7 @@
  
  # TODO: 单网卡多IP
  collect_netconf() {
@@ -181,7 +273,7 @@
      if is_in_windows; then
          convert_net_str_to_array() {
              config=$1
-@@ -2501,14 +2501,20 @@
+@@ -2506,14 +2473,20 @@
          # default nhid 4011550343 via fe80::fc00:5ff:fe3d:2714 dev enp1s0 proto ra metric 1024 expires 1504sec pref medium
  
          for v in 4 6; do
@@ -205,7 +297,7 @@
                  primary_addr=$(echo "$all_addrs" | head -1)
  
                  # IPv6: 用 ip route get 让内核返回正确的源 IP，指定 dev 避免 tun/warp 干扰
-@@ -3001,6 +3007,7 @@
+@@ -3006,6 +2979,7 @@
      # https://answers.launchpad.net/ubuntu/+question/249456
      # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
      for key in confhome hold force_boot_mode force_cn cloud_image no_cloud_kernel main_disk \
@@ -213,7 +305,7 @@
          force_old_windows_setup no_auto_drivers no_lockout_threshold \
          elts deb_mirror \
          username ssh_port rdp_port allow_ping; do
-@@ -3692,7 +3699,12 @@
+@@ -3741,7 +3715,12 @@
  }
  
  get_ip_conf_cmd() {
@@ -227,7 +319,7 @@
      is_in_china && is_in_china=true || is_in_china=false
  
      sh=/initrd-network.sh
-@@ -3762,10 +3774,11 @@
+@@ -3811,10 +3790,11 @@
      # hack 3 网络配置
      # alpine 根据 MAC_ADDRESS 判断是否有网络
      # https://github.com/alpinelinux/mkinitfs/blob/c4c0115f9aa5aa8884c923dc795b2638711bdf5c/initramfs-init.in#L914
@@ -240,7 +332,7 @@
          MAC_ADDRESS=1
          return
  EOF
-@@ -3843,8 +3856,10 @@
+@@ -3892,8 +3872,10 @@
  
      # shellcheck disable=SC2046
      # nonmatching 是精确匹配路径
@@ -253,7 +345,7 @@
  
      curl -Lo $initrd_dir/trans.sh $confhome/trans.sh
      if ! grep -iq "$SCRIPT_VERSION" $initrd_dir/trans.sh; then
-@@ -3857,10 +3872,15 @@
+@@ -3906,10 +3888,15 @@
      chmod a+x $initrd_dir/trans.sh $initrd_dir/initrd-network.sh
  
      # 保存配置
@@ -270,8 +362,8 @@
 +    if [ -n "$password" ]; then
          save_password $initrd_dir/configs
      fi
-     if [ -n "$frpc_config" ]; then
-@@ -3917,7 +3937,20 @@
+ 
+@@ -3963,7 +3950,20 @@
      # -c    Identical to "-H newc", use the new (SVR4)
      #       portable format.If you wish the old portable
      #       (ASCII) archive format, use "-H odc" instead.
@@ -293,9 +385,9 @@
      cd - >/dev/null
  }
  
-@@ -4381,6 +4414,277 @@
-     long_opts+=$o
- done
+@@ -4516,6 +4516,292 @@
+ 
+ # 整理参数
  
 +# Linux util-linux: KNAME is the kernel device name, PTUUID is the partition-table ID.
 +arch_disk_identity() {
@@ -331,16 +423,6 @@
 +    printf '%s %s\n' "$identity" "$selected"
 +}
 +
-+arch_disk_instance() {
-+    local path=/sys/class/block/$1 devnum seq node
-+    devnum=$(cat "$path/dev") && seq=$(cat "$path/diskseq") &&
-+        node=$(stat -Lc '%t:%T' -- "/dev/$1") || return 1
-+    printf '%s\n' "$devnum" | grep -Eq '^[0-9]+:[0-9]+$' &&
-+        printf '%s\n' "$seq" | grep -Eq '^[1-9][0-9]*$' || return 1
-+    [ "$(printf '%x:%x' "${devnum%:*}" "${devnum#*:}")" = "$node" ] || return 1
-+    printf '%s/%s\n' "$devnum" "$seq"
-+}
-+
 +valid_arch_password_hash() {
 +    case "$1" in *'
 +'*) return 1 ;; esac
@@ -350,9 +432,19 @@
 +# ==============================================================================
 +# vps2arch 入口处理：支持交互采集与 CLI 直接传参
 +# ==============================================================================
++check_arch_ssh_port() {
++    if ! { [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && is_port_valid "$1"; }; then
++        error "SSH 端口无效：$1"
++        return 1
++    fi
++    if [[ "$1" == 443 ]]; then
++        error '443/tcp 预留给业务入口，请选择其他 SSH 端口。'
++        return 1
++    fi
++}
++
 +assert_arch_ssh_port() {
-+    [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && is_port_valid "$1" || error_and_exit "SSH 端口无效：$1"
-+    [[ "$1" != 443 ]] || error_and_exit '443/tcp 预留给业务入口，请选择其他 SSH 端口。'
++    check_arch_ssh_port "$1" || exit 1
 +}
 +
 +valid_ed25519_key() {
@@ -457,22 +549,28 @@
 +    esac
 +}
 +
-+find_arch_bios_boot_disk() {
-+    local source source_info fs_type ancestors disk
-+    install_pkg findmnt lsblk || return 1
-+    source_info=$(findmnt -n -o SOURCE,FSTYPE --nofsroot --target /boot) || return 1
-+    [[ "$source_info" != *$'\n'* ]] || return 1
-+    read -r source fs_type <<< "$source_info"
-+    case "$fs_type" in btrfs|bcachefs|'') return 1 ;; esac
-+    [[ "$source" == /dev/* && -b "$source" ]] || return 1
-+    ancestors=$(LC_ALL=C lsblk -snro KNAME,TYPE -- "$source") || return 1
-+    disk=$(awk '$2 == "disk" { disks[$1] = 1 } END { for (disk in disks) { print disk; count++ } if (count != 1) exit 1 }' <<< "$ancestors") || return 1
-+    [[ "$disk" =~ ^[a-zA-Z0-9_.-]+$ && -b "/dev/$disk" ]] || return 1
++# 解析指定挂载点对应的唯一底层整盘（忽略 systemd autofs 触发项，拒绝 btrfs/bcachefs）。
++resolve_mount_unique_disk() {
++    local target=$1 raw filtered source fs_type ancestors disk
++    raw=$(findmnt -n -o SOURCE,FSTYPE --nofsroot --target "$target") || return 10
++    filtered=$(LC_ALL=C awk '$2 != "autofs" { print }' <<< "$raw")
++    [[ -n "$filtered" && "$filtered" != *$'\n'* ]] || return 11
++    read -r source fs_type <<< "$filtered"
++    case "$fs_type" in btrfs|bcachefs|'') return 12 ;; esac
++    [[ "$source" == /dev/* && -b "$source" ]] || return 13
++    ancestors=$(LC_ALL=C lsblk -snro KNAME,TYPE -- "$source") || return 14
++    disk=$(awk '$2 == "disk" { disks[$1] = 1 } END { for (disk in disks) { print disk; count++ } if (count != 1) exit 1 }' <<< "$ancestors") || return 15
++    [[ "$disk" =~ ^[a-zA-Z0-9_.-]+$ && -b "/dev/$disk" ]] || return 15
 +    printf '%s\n' "$disk"
 +}
 +
++find_arch_bios_boot_disk() {
++    install_pkg findmnt lsblk || return 1
++    resolve_mount_unique_disk /boot
++}
++
 +confirm_arch_target() {
-+    local root root_info root_fs ancestors chosen identity name confirm
++    local chosen rc=0 identity name confirm
 +    ! is_in_windows || error_and_exit '请从目标 VPS 的 Linux 系统执行 Arch 全盘重装。'
 +    install_pkg lsblk
 +    command -v blkid >/dev/null || error_and_exit '缺少 util-linux 的 blkid，无法核对目标磁盘。'
@@ -480,16 +578,17 @@
 +        chosen=$xda
 +    else
 +        install_pkg findmnt
-+        root_info=$(findmnt -n -o SOURCE,FSTYPE --nofsroot --target /) || error_and_exit '无法确认根文件系统设备。'
-+        [[ "$root_info" != *$'\n'* ]] || error_and_exit '无法唯一确认根文件系统，请明确指定 --target-disk。'
-+        read -r root root_fs <<< "$root_info"
-+        case "$root_fs" in
-+            btrfs|bcachefs|'') error_and_exit '无法由单个根设备证明整个文件系统的底层磁盘，请明确指定 --target-disk。' ;;
-+        esac
-+        [[ "$root" == /dev/* && -b "$root" ]] || error_and_exit '根文件系统不是可识别的块设备，请明确指定 --target-disk。'
-+        ancestors=$(LC_ALL=C lsblk -snro KNAME,TYPE -- "$root") || error_and_exit '无法读取根设备的底层磁盘。'
-+        chosen=$(awk '$2 == "disk" { disks[$1] = 1 } END { for (disk in disks) { print disk; count++ } if (count != 1) exit 1 }' <<< "$ancestors") \
-+            || error_and_exit '无法唯一确定根设备所在磁盘，请明确指定 --target-disk。'
++        if ! chosen=$(resolve_mount_unique_disk /); then
++            rc=$?
++            case "$rc" in
++                10) error_and_exit '无法确认根文件系统设备。' ;;
++                11) error_and_exit '无法唯一确认根文件系统，请明确指定 --target-disk。' ;;
++                12) error_and_exit '无法由单个根设备证明整个文件系统的底层磁盘，请明确指定 --target-disk。' ;;
++                13) error_and_exit '根文件系统不是可识别的块设备，请明确指定 --target-disk。' ;;
++                14) error_and_exit '无法读取根设备的底层磁盘。' ;;
++                *) error_and_exit '无法唯一确定根设备所在磁盘，请明确指定 --target-disk。' ;;
++            esac
++        fi
 +    fi
 +    [[ "$chosen" =~ ^[a-zA-Z0-9_.-]+$ ]] || error_and_exit '目标磁盘名称无效。'
 +    identity=$(arch_disk_identity name "$chosen") || error_and_exit '无法直接核验所有整盘或确认目标 PTUUID 唯一。'
@@ -516,13 +615,24 @@
 +    # 2. 采集 sudo 提权密码
 +    TARGET_PASSWORD=""
 +    while true; do
-+        IFS= read -s -rp "新用户 sudo 提权密码: " p1 < /dev/tty; printf '\n'
-+        IFS= read -s -rp "再次输入确认密码: " p2 < /dev/tty; printf '\n'
-+        if [[ -n "$p1" && "$p1" == "$p2" ]]; then
-+            TARGET_PASSWORD="$p1"
-+            break
++        IFS= read -s -rp "新用户 sudo 提权密码: " p1 < /dev/tty || error_and_exit '无法读取 sudo 密码。'
++        printf '\n'
++        IFS= read -s -rp "再次输入确认密码: " p2 < /dev/tty || error_and_exit '无法读取确认密码。'
++        printf '\n'
++        if [[ -z "$p1" || "$p1" != "$p2" ]]; then
++            printf '❌ 两次密码输入不匹配或为空，请重新输入\n' >&2
++            continue
 +        fi
-+        printf '❌ 两次密码输入不匹配或为空，请重新输入\n' >&2
++        if [[ "$p1" == *$'\n'* || "$p1" == *$'\r'* ]]; then
++            printf '❌ sudo 密码不能包含换行或回车，请重新输入\n' >&2
++            continue
++        fi
++        if ! (LC_ALL=C; (( ${#p1} <= 256 ))); then
++            printf '❌ sudo 密码不能超过 256 字节，请重新输入\n' >&2
++            continue
++        fi
++        TARGET_PASSWORD="$p1"
++        break
 +    done
 +
 +    # 3. 校验并采集 Ed25519 公钥
@@ -530,6 +640,7 @@
 +    DEFAULT_KEY=""
 +    if [[ -f "$AUTH_KEY_FILE" ]]; then
 +        while IFS= read -r key || [[ -n "$key" ]]; do
++            key=${key%$'\r'}
 +            if valid_ed25519_key "$key"; then DEFAULT_KEY=$key; break; fi
 +        done < "$AUTH_KEY_FILE"
 +    fi
@@ -551,40 +662,49 @@
 +    done
 +
 +    # 4. SSH 端口
-+    read -rp $'\n新系统 SSH 端口 [默认 22]: ' TARGET_SSH_PORT < /dev/tty
-+    TARGET_SSH_PORT=${TARGET_SSH_PORT:-22}
-+    assert_arch_ssh_port "$TARGET_SSH_PORT"
++    while true; do
++        read -rp $'\n新系统 SSH 端口 [默认 22]: ' TARGET_SSH_PORT < /dev/tty || error_and_exit '无法读取 SSH 端口。'
++        TARGET_SSH_PORT=${TARGET_SSH_PORT:-22}
++        if check_arch_ssh_port "$TARGET_SSH_PORT"; then break; fi
++    done
 +
 +    set -- arch \
 +        --username "$username" \
 +        --password "$TARGET_PASSWORD" \
 +        --ssh-key "$TARGET_SSH_KEY" \
 +        --ssh-port "$TARGET_SSH_PORT"
-+else
-+    # CLI 传参模式：保留目标与控制命令，其余参数自动补全 arch
-+    case "$1" in
-+        arch|reset|-h|--help) ;;
-+        *) set -- arch "$@" ;;
-+    esac
 +fi
 +
- # 使用 getopt 解析参数
- if ! ORIGINAL_OPTS=$(getopt -n $0 -o "h,x" --long "$long_opts" -- "$@"); then
-     exit 1
-@@ -4391,8 +4695,7 @@
- while true; do
-     case "$1" in
+ # 第一遍扫描
+ # 验证要安装的系统和版本
+ # 并处理通用参数
+@@ -4531,8 +4817,7 @@
+         usage_and_exit
+         ;;
      -x | --debug)
 -        set -x
 -        shift
 +        error_and_exit '重装入口不支持 --debug 或 -x 跟踪。'
          ;;
+     --force-cn)
+         # 仅为了方便测试
+@@ -4541,7 +4826,12 @@
+         ;;
      --)
          shift
-@@ -4410,10 +4713,10 @@
++        if [ $# -eq 0 ]; then set -- arch; fi
+         verify_os_name "$@"
++        case "$distro" in
++            arch | reset) ;;
++            *) error_and_exit "本构建仅支持 Arch Linux 重装与 reset，不支持目标：$distro" ;;
++        esac
+         break
+         ;;
+     *)
+@@ -4555,10 +4845,10 @@
+ # wmic 随时会用到
  # wmic 需要下载 wmic.ps1，需要从 confhome 得到，要先将 confhome 改成国内
  # 而 wmic.ps1 又放在 $tmp 目录，因此要先创建临时目录
- # 处理 --frpc-config 时会下载文件，因此在处理参数前就创建临时目录
 -mkdir_clear "$tmp"
 +(umask 077; mkdir_clear "$tmp")
  init_basearch
@@ -594,24 +714,15 @@
  
  if [ "$distro" = reset ]; then
      reset_and_exit
-@@ -4422,14 +4725,14 @@
+@@ -4567,6 +4857,7 @@
  # 安装必备组件
  install_pkg curl grep
  
 +unset xda main_disk arch_confirmed_ipv4 arch_ipv4_mode ssh_keys username password ssh_port
- # 第二遍扫描，处理参数
- eval set -- "$ORIGINAL_OPTS"
- # shellcheck disable=SC2034
- while true; do
-     case "$1" in
-     -x | --debug)
--        # 第一遍扫描已处理
--        shift
-+        error_and_exit '重装入口不支持 --debug 或 -x 跟踪。'
-         ;;
-     -h | --help)
-         usage_and_exit
-@@ -4528,12 +4831,9 @@
+ # 第二遍扫描
+ # 根据 distro 处理参数
+ if ! OPTS2_STR=$(
+@@ -4640,28 +4931,23 @@
              error "$1"
              cat <<EOF
  Available options:
@@ -623,8 +734,9 @@
 -  --ssh-key http://path/to/public_key
    --ssh-key https://path/to/public_key
    --ssh-key /path/to/public_key
-   --ssh-key C:\path\to\public_key
-@@ -4542,14 +4842,13 @@
+-  --ssh-key C:\path\to\public_key
+ EOF
+             exit 1
          }
  
          # https://manpages.debian.org/testing/openssh-server/authorized_keys.5.en.html#AUTHORIZED_KEYS_FILE_FORMAT
@@ -642,7 +754,7 @@
              if [[ "$(to_lower <<<"$2")" = http* ]]; then
                  key_url=$2
              else
-@@ -4562,13 +4861,13 @@
+@@ -4674,13 +4960,13 @@
                  [ -n "$user" ] || ssh_key_error_and_exit "Need a username for $site"
                  key_url="https://$site.com/$user.keys"
              fi
@@ -658,7 +770,7 @@
                  ssh_key=$2
              else
                  # 视为路径
-@@ -4582,7 +4881,7 @@
+@@ -4694,7 +4980,7 @@
          esac
  
          # 检查 key 格式
@@ -667,7 +779,7 @@
              ssh_key_error_and_exit "SSH Key/File/Url \"$2\" is invalid."
          fi
  
-@@ -4597,7 +4896,7 @@
+@@ -4709,7 +4995,7 @@
          shift 2
          ;;
      --ssh-port)
@@ -676,7 +788,7 @@
          ssh_port=$2
          shift 2
          ;;
-@@ -4649,7 +4948,8 @@
+@@ -4761,7 +5047,8 @@
          shift 2
          ;;
      --target-disk)
@@ -686,16 +798,16 @@
          if ! [ -b "/dev/$xda" ]; then
              error_and_exit "Can't not find Disk $2."
          fi
-@@ -4704,7 +5004,7 @@
+@@ -4816,7 +5103,7 @@
  verify_os_args
  
  # 用户名密码
--if ! is_netboot_xyz; then
-+if [ "$distro" != arch ] && ! is_netboot_xyz; then
+-if ! { is_netboot_xyz || [ "$distro" = talos ]; }; then
++if [ "$distro" != arch ] && ! { is_netboot_xyz || [ "$distro" = talos ]; }; then
      need_prompt_username=false
      need_prompt_password=false
      if [ -z "$username" ]; then
-@@ -4754,6 +5054,13 @@
+@@ -4866,6 +5153,13 @@
      ;;
  esac
  
@@ -709,7 +821,7 @@
  # 检查内存
  # 会用到 wmic，因此要在设置国内 confhome 后使用
  check_ram
-@@ -4806,6 +5113,7 @@
+@@ -4918,6 +5212,7 @@
      # 下载 nextos 内核
      info download vmlnuz and initrd
      curl -Lo /reinstall-vmlinuz $nextos_vmlinuz
@@ -717,7 +829,7 @@
      curl -Lo /reinstall-initrd $nextos_initrd
      if is_use_firmware; then
          curl -Lo /reinstall-firmware $nextos_firmware
-@@ -4901,6 +5209,12 @@
+@@ -5015,6 +5310,12 @@
          echo "$target_cfg"
          extlinux_dir="$(dirname "$target_cfg")"
  
@@ -730,7 +842,7 @@
          # 不起作用
          # 好像跟 extlinux --once 有冲突
          sed -i "/^MENU HIDDEN/d" "$target_cfg"
-@@ -4919,16 +5233,17 @@
+@@ -5033,16 +5334,17 @@
          # 设置重启引导项
          extlinux --once=reinstall $extlinux_dir
  
@@ -754,7 +866,7 @@
          # 添加条目
          del_empty_lines <<EOF | tee -a "$target_cfg"
  $BOOT_ENTEY_START_MARK
-@@ -4944,13 +5259,6 @@
+@@ -5058,13 +5360,6 @@
          sed -i "/^default_entry:/d" "$target_cfg"
          echo "default_entry: $(get_entry_name)" | insert_into_file "$target_cfg" head
  
@@ -768,7 +880,7 @@
      else
          # cloudcone 从光驱的 grub 启动，再加载硬盘的 grub.cfg
          # menuentry "Grub 2" --id grub2 {
-@@ -5100,39 +5408,40 @@
+@@ -5214,48 +5509,49 @@
  if [ "$distro" = netboot.xyz ]; then
      warn false '********** 警告 Warning **********'
      warn false '重启后会进入 netboot.xyz。'
@@ -776,6 +888,17 @@
 +    warn false "如果要取消进入，请在重启前运行 \"$reinstall_reset\"。"
      warn false
      warn false 'Reboot will start netboot.xyz.'
+-    warn false "If you want to cancel entering, run \"$reinstall_____ reset\" before reboot."
++    warn false "If you want to cancel entering, run \"$reinstall_reset\" before reboot."
+     warn false '**********************************'
+ 
+ elif [ "$distro" = talos ]; then
+     warn false '********** 警告 Warning **********'
+     warn false '重启后会进入 Talos 维护模式，任何人都可连接，因此你需要尽快使用 "talosctl" 等工具连接并初始化系统'
+-    warn false "如果要取消进入，请在重启前运行 \"$reinstall_____ reset\"。"
++    warn false "如果要取消进入，请在重启前运行 \"$reinstall_reset\"。"
+     warn false
+     warn false 'Reboot will start Talos Maintenance Mode. Anyone can connect. So you need to connect and initialize the system using tools like "talosctl" as soon as possible.'
 -    warn false "If you want to cancel entering, run \"$reinstall_____ reset\" before reboot."
 +    warn false "If you want to cancel entering, run \"$reinstall_reset\" before reboot."
      warn false '**********************************'
@@ -840,396 +963,40 @@
      # 解除锁定，允许用户登录处理故障
      # passwd -u "$username" >/dev/null
  
-@@ -472,9 +467,29 @@
- }
+@@ -476,9 +471,10 @@
+ 
  
  get_ttys() {
 -    prefix=$1
 -    # shellcheck disable=SC2154
 -    wget $confhome/ttys.sh -O- | sh -s $prefix
-+    local prefix=$1
-+    local ttys is_for_cmdline is_first tty
-+    if [ "$(uname -m)" = "aarch64" ]; then
-+        ttys="ttyS0 ttyAMA0 tty0"
-+    else
-+        ttys="ttyS0 tty0"
-+    fi
-+    [ "$prefix" = "console=" ] && is_for_cmdline=true || is_for_cmdline=false
-+    is_first=true
-+    for tty in $ttys; do
-+        if { [ -c "/dev/$tty" ] && stty -g -F "/dev/$tty" >/dev/null 2>&1; } ||
-+           { $is_for_cmdline && ! [ -c "/dev/$tty" ]; }; then
-+            if $is_first; then
-+                is_first=false
-+            else
-+                printf " "
-+            fi
-+            printf "%s" "$prefix$tty"
-+            if $is_for_cmdline && { [ "$tty" = ttyS0 ] || [ "$tty" = ttyAMA0 ]; }; then
-+                printf ",115200n8"
-+            fi
-+        fi
-+    done
++    # [Inlined ttys.sh] 本地内嵌展开，杜绝外部网络拉取
++    sh -s "$1" <<'EOF_INLINED_TTYS'
++# @@INLINE:ttys.sh@@
++EOF_INLINED_TTYS
  }
  
  find_xda() {
-@@ -1660,11 +1675,361 @@
+@@ -1664,11 +1660,24 @@
  
  add_fix_eth_name_systemd_service() {
      local os_dir=$1
 +    # [Inlined fix-eth-name.sh] 本地内嵌展开，杜绝外部网络拉取
 +    cat <<'EOF_FIX_ETH_SH' > "$os_dir/fix-eth-name.sh"
-+#!/usr/bin/env bash
-+# shellcheck shell=dash
-+# shellcheck disable=SC3001,SC3010
-+# alpine 使用 busybox ash
-+
-+set -eE
-+
-+# 本脚本在首次进入新系统后运行
-+# 将 trans 阶段生成的网络配置中的网卡名(eth0) 改为正确的网卡名，也适用于以下情况
-+# 1. alpine 要运行此脚本，因为安装后的内核可能有 netboot 没有的驱动
-+# 2. dmit debian 普通内核(安装时)和云内核网卡名不一致
-+#    https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=928923
-+
-+# openeuler 需等待 udev 将网卡名从 eth0 改为 enp3s0
-+# openeuler 本脚本运行一秒后才有 enp3s0
-+# 用 systemd-analyze plot >a.svg 发现 sys-subsystem-net-devices-enp3s0.device 也是出现在 NetworkManager 之后
-+
-+# 有些时候网卡名还会来回修改几次
-+# 因此需要等待网卡名稳定
-+
-+# 不知道有没有用
-+if false; then
-+    if command -v udevadm >/dev/null; then
-+        # udevadm trigger
-+        udevadm settle || true
-+    elif command -v mdev >/dev/null; then
-+        mdev -sf || true
-+    fi
-+    sleep 1
-+fi
-+
-+has_eth=false  # 是否检查到网卡
-+check_count=0  # 总检查次数
-+stable_count=0 # 网卡名稳定的次数
-+old_state=
-+while true; do
-+    check_count=$((check_count + 1))
-+
-+    new_state=$(ip -o link | awk '$2 != "lo:"')
-+    if [ -n "$new_state" ]; then
-+        has_eth=true
-+    fi
-+
-+    if $has_eth && [ "$old_state" = "$new_state" ]; then
-+        stable_count=$((stable_count + 1))
-+    else
-+        stable_count=0
-+    fi
-+
-+    old_state=$new_state
-+
-+    echo "Waiting for the NICs to be stable (${stable_count}s/10s)..."
- 
--    # 无需执行 systemctl daemon-reload
--    # 因为 chroot 下执行会提示 Running in chroot, ignoring command 'daemon-reload'
--    download "$confhome/fix-eth-name.sh" "$os_dir/fix-eth-name.sh"
--    add_systemd_service "$os_dir" fix-eth-name
-+    # 稳定 10 秒后退出循环
-+    if $has_eth && [ "$stable_count" -ge 10 ]; then
-+        break
-+    fi
-+
-+    # 60 秒都没发现网卡则退出脚本
-+    if ! $has_eth && [ "$check_count" -ge 60 ]; then
-+        exit 1
-+    fi
-+
-+    sleep 1
-+done
-+
-+to_lower() {
-+    tr '[:upper:]' '[:lower:]'
-+}
-+
-+get_ethx_by_mac() {
-+    mac=$(echo "$1" | to_lower)
-+
-+    flag=$2
-+    if [ -z "$flag" ]; then
-+        flag=master
-+    fi
-+
-+    if true; then
-+        if [ "$flag" = master ]; then
-+            # master
-+            # 过滤 azure vf (带 master ethx)
-+            ip -o link | grep -i "$mac" | grep -v master | awk '{print $2}' | cut -d: -f1 | grep .
-+        else
-+            # slave
-+            # 带 master ethx
-+            ip -o link | grep -i "$mac" | grep -w master | awk '{print $2}' | cut -d: -f1 | grep .
-+        fi
-+    else
-+        for i in $(cd /sys/class/net && echo *); do
-+            if [ "$(cat "/sys/class/net/$i/address")" = "$mac" ]; then
-+                if [ $(($(cat "/sys/class/net/$i/flags") & 0x800)) -ne 0 ]; then
-+                    fact_flag=slave
-+                else
-+                    fact_flag=master
-+                fi
-+                if [ "$flag" = "$fact_flag" ]; then
-+                    echo "$i"
-+                    return
-+                fi
-+            fi
-+        done
-+        return 1
-+    fi
-+}
-+
-+fix_rh_sysconfig() {
-+    for file in /etc/sysconfig/network-scripts/ifcfg-eth*; do
-+        # 没有 ifcfg-eth* 也会执行一次，因此要判断文件是否存在
-+        [ -f "$file" ] || continue
-+        mac=$(grep ^HWADDR= "$file" | cut -d= -f2 | grep .) || continue
-+        ethx=$(get_ethx_by_mac "$mac") || continue
-+
-+        proper_file=/etc/sysconfig/network-scripts/ifcfg-$ethx
-+        if [ "$file" != "$proper_file" ]; then
-+            # 更改文件内容
-+            sed -i "s/^DEVICE=.*/DEVICE=$ethx/" "$file"
-+
-+            # 不要直接更改文件名，因为可能覆盖已有文件
-+            mv "$file" "$proper_file.tmp"
-+        fi
-+    done
-+
-+    # 更改文件名
-+    for tmp_file in /etc/sysconfig/network-scripts/ifcfg-e*.tmp; do
-+        if [ -f "$tmp_file" ]; then
-+            mv "$tmp_file" "${tmp_file%.tmp}"
-+        fi
-+    done
-+}
-+
-+fix_suse_sysconfig() {
-+    for file in /etc/sysconfig/network/ifcfg-eth*; do
-+        [ -f "$file" ] || continue
-+
-+        # 可能两边有引号
-+        mac=$(grep ^LLADDR= "$file" | cut -d= -f2 | sed "s/'//g" | grep .) || continue
-+        ethx=$(get_ethx_by_mac "$mac") || continue
-+
-+        old_ethx=${file##*-}
-+        if ! [ "$old_ethx" = "$ethx" ]; then
-+            # 不要直接更改文件名，因为可能覆盖已有文件
-+            for type in ifcfg ifroute; do
-+                old_file=/etc/sysconfig/network/$type-$old_ethx
-+                new_file=/etc/sysconfig/network/$type-$ethx.tmp
-+                # 防止没有 ifroute-eth* 导致中断脚本
-+                if [ -f "$old_file" ]; then
-+                    mv "$old_file" "$new_file"
-+                fi
-+            done
-+        fi
-+    done
-+
-+    # 上面的循环结束后，再将 tmp 改成正式文件
-+    for tmp_file in \
-+        /etc/sysconfig/network/ifcfg-e*.tmp \
-+        /etc/sysconfig/network/ifroute-e*.tmp; do
-+        if [ -f "$tmp_file" ]; then
-+            mv "$tmp_file" "${tmp_file%.tmp}"
-+        fi
-+    done
-+}
-+
-+fix_network_manager() {
-+    for file in /etc/NetworkManager/system-connections/cloud-init-eth*.nmconnection; do
-+        [ -f "$file" ] || continue
-+        mac=$(grep ^mac-address= "$file" | cut -d= -f2 | grep .) || continue
-+        ethx=$(get_ethx_by_mac "$mac") || continue
-+
-+        proper_file=/etc/NetworkManager/system-connections/$ethx.nmconnection
-+
-+        # 更改文件内容
-+        sed -i "s/^id=.*/id=$ethx/" "$file"
-+
-+        # 更改文件名
-+        mv "$file" "$proper_file"
-+
-+        # NM 不会自动忽略 Azure 的 slave 网卡，需手动设置
-+        # azure 文档中的方法不够通用，只适合 azure
-+        # https://learn.microsoft.com/zh-cn/azure/virtual-network/accelerated-networking-overview
-+
-+        # 我们采用红帽的方法
-+        # https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/8/html/configuring_and_managing_networking/configuring-networkmanager-to-ignore-certain-devices_configuring-and-managing-networking
-+        if slave_ethx=$(get_ethx_by_mac "$mac" slave); then
-+            cat >"/etc/NetworkManager/conf.d/99-$slave_ethx-unmanaged.conf" <<EOF
-+[device-$slave_ethx-unmanaged]
-+match-device=interface-name:$slave_ethx
-+managed=0
-+EOF
-+        fi
-+
-+        # 也可以设置 unmanaged-devices, 但是官方文档不推荐
-+        # https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/NetworkManager.conf.html#:~:text=may%20be%20a-,better%20choice,-.
-+    done
-+}
-+
-+# debian 9 IPV6 onlink 路由需要 post-up
-+
-+# auto lo
-+# iface lo inet loopback
-+
-+# # mac 11:22:33:44:55:66    # 用此行匹配网卡
-+# auto eth0
-+# iface eth0 inet static
-+#     address 1.1.1.1/25
-+#     gateway 1.1.1.1
-+#     dns-nameservers 1.1.1.1
-+#     dns-nameservers 8.8.8.8
-+# iface eth0 inet6 static
-+#     address 2602:1:0:80::100/64
-+#     gateway 2602:1:0:80::1
-+#     post-up ip route add 2602:1:0:80::1 dev eth0
-+#     post-up ip route add default via 2602:1:0:80::1 dev eth0
-+#     dns-nameserver 2606:4700:4700::1111
-+#     dns-nameserver 2001:4860:4860::8888
-+
-+fix_ifupdown() {
-+    file=/etc/network/interfaces
-+    tmp_file=$file.tmp
-+
-+    rm -f "$tmp_file"
-+
-+    if [ -f "$file" ]; then
-+        while IFS= read -r line; do
-+            del_this_line=false
-+            if [[ "$line" = "# mac "* ]]; then
-+                ethx=
-+                if mac=$(echo "$line" | awk '{print $NF}'); then
-+                    ethx=$(get_ethx_by_mac "$mac") || true
-+                fi
-+                del_this_line=true
-+            elif [[ "$line" = "iface e"* ]] ||
-+                [[ "$line" = "auto e"* ]] ||
-+                [[ "$line" = "allow-hotplug e"* ]]; then
-+                if [ -n "$ethx" ]; then
-+                    line=$(echo "$line" | awk "{\$2=\"$ethx\"; print \$0}")
-+                fi
-+            elif [[ "$line" = *" dev e"* ]]; then
-+                if [ -n "$ethx" ]; then
-+                    # awk 会去除前面的空格
-+                    line=$(echo "$line" | sed -E "s/[^ ]*$/$ethx/")
-+                fi
-+            fi
-+            if ! $del_this_line; then
-+                echo "$line" >>"$tmp_file"
-+            fi
-+        done <"$file"
-+
-+        mv "$tmp_file" "$file"
-+    fi
-+}
-+
-+fix_netplan() {
-+    file=/etc/netplan/50-cloud-init.yaml
-+    tmp_file=$file.tmp
-+
-+    rm -f "$tmp_file"
-+
-+    if [ -f "$file" ]; then
-+        while IFS= read -r line; do
-+            if echo "$line" | grep -Eq '^[[:space:]]+macaddress:'; then
-+                # 得到正确的网卡名
-+                mac=$(echo "$line" | awk '{print $NF}' | sed 's/"//g')
-+                ethx=$(get_ethx_by_mac "$mac") || true
-+            elif echo "$line" | grep -Eq '^[[:space:]]+eth[0-9]+:'; then
-+                # 改成正确的网卡名
-+                if [ -n "$ethx" ]; then
-+                    line=$(echo "$line" | sed -E "s/[^[:space:]]+/$ethx:/")
-+                fi
-+            fi
-+            echo "$line" >>"$tmp_file"
-+
-+            # 删除 set-name 不过这一步在 trans 已完成
-+            # 因为 netplan-generator 会在 systemd generator 阶段就根据 netplan 配置重命名网卡
-+            # systemd generator 阶段比本脚本和 systemd-networkd 更早运行
-+
-+            # 倒序
-+        done < <(grep -Ev "^[[:space:]]+set-name:" "$file" | tac)
-+
-+        # 再倒序回来
-+        tac "$tmp_file" >"$file"
-+        rm -f "$tmp_file"
-+
-+        # 通过 systemd netplan generator 生成 /run/systemd/network/10-netplan-enp3s0.network
-+        systemctl daemon-reload
-+    fi
-+}
-+
-+fix_systemd_networkd() {
-+    for file in /etc/systemd/network/10-cloud-init-eth*.network; do
-+        [ -f "$file" ] || continue
-+        mac=$(grep ^MACAddress= "$file" | cut -d= -f2 | grep .) || continue
-+        ethx=$(get_ethx_by_mac "$mac") || continue
-+
-+        proper_file=/etc/systemd/network/10-$ethx.network
-+
-+        # 更改文件内容
-+        sed -Ei "s/^Name=eth[0-9]+/Name=$ethx/" "$file"
-+
-+        # 更改文件名
-+        mv "$file" "$proper_file"
-+    done
-+}
-+
-+fix_rh_sysconfig
-+fix_suse_sysconfig
-+fix_network_manager
-+fix_ifupdown
-+fix_netplan
-+fix_systemd_networkd
++# @@INLINE:fix-eth-name.sh@@
 +EOF_FIX_ETH_SH
 +    chmod +x "$os_dir/fix-eth-name.sh"
 +
 +    # [Inlined fix-eth-name.service] 本地内嵌展开
 +    mkdir -p "$os_dir/etc/systemd/system"
 +    cat <<'EOF_FIX_ETH_SVC' > "$os_dir/etc/systemd/system/fix-eth-name.service"
-+[Unit]
-+Description=Fix Eth Name
-+ConditionPathExists=/fix-eth-name.sh
-+
-+After=dbus.service
-+
-+Before=cloud-init-local.service
-+Before=network.service
-+Before=networking.service
-+Before=systemd-networkd.service
-+Before=NetworkManager.service
-+
-+Before=network.target
-+
-+[Service]
-+Type=oneshot
-+
-+StandardOutput=journal+console
-+StandardError=journal+console
-+
-+ExecStart=/usr/bin/env bash /fix-eth-name.sh
-+ExecStart=/usr/bin/env rm -f /fix-eth-name.sh
-+ExecStart=/usr/bin/env rm -f /etc/systemd/system/fix-eth-name.service
-+ExecStart=/usr/bin/env rm -f /etc/systemd/system/multi-user.target.wants/fix-eth-name.service
-+ExecStart=/usr/bin/env rm -f /lib/systemd/system-preset/01-fix-eth-name.preset
-+ExecStart=/usr/bin/env rm -f /usr/lib/systemd/system-preset/01-fix-eth-name.preset
-+
-+[Install]
-+WantedBy=multi-user.target
++# @@INLINE:fix-eth-name.service@@
 +EOF_FIX_ETH_SVC
-+
+ 
+-    # 无需执行 systemctl daemon-reload
+-    # 因为 chroot 下执行会提示 Running in chroot, ignoring command 'daemon-reload'
+-    download "$confhome/fix-eth-name.sh" "$os_dir/fix-eth-name.sh"
+-    add_systemd_service "$os_dir" fix-eth-name
 +    chroot "$os_dir" systemctl enable fix-eth-name.service 2>/dev/null || true
 +    if [ -d "$os_dir/usr/lib/systemd/system-preset" ]; then
 +        echo "enable fix-eth-name.service" > "$os_dir/usr/lib/systemd/system-preset/01-fix-eth-name.preset"
@@ -1238,8 +1005,8 @@
 +    fi
  }
  
- get_frpc_url() {
-@@ -1745,37 +2110,113 @@
+ 
+@@ -1705,37 +1714,113 @@
      # gentoo 不会自动创建 machine-id
      clear_machine_id $os_dir
  
@@ -1302,7 +1069,7 @@
 +
 +    # Arch Linux 终态原生加固
 +    if [ "$distro" = "arch" ]; then
-+        local ssh_enabled
++        local ssh_enabled effective_ssh
 +        # 1. 主机密钥：在目标系统内仅保留 Ed25519。
 +        chroot "$os_dir" sh -c "rm -f /etc/ssh/ssh_host_* && ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key"
 +        chmod 0600 "$os_dir/etc/ssh/ssh_host_ed25519_key"
@@ -1331,7 +1098,7 @@
 +        chmod 0600 "$os_dir/etc/ssh/sshd_config.d/00-hardened.conf"
 +        rm -f "$os_dir/etc/ssh/sshd_config.d/00-custom.conf"
 +
-+        # 保证主配置必然包含 drop-in 目录
++        # 直接修改主配置：保证 /etc/ssh/sshd_config 首行必然包含 drop-in 目录（First-Match）
 +        if ! grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' "$os_dir/etc/ssh/sshd_config" 2>/dev/null; then
 +            sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' "$os_dir/etc/ssh/sshd_config"
 +        fi
@@ -1374,8 +1141,8 @@
      fi
  
      # 下载 fix-eth-name.service
-@@ -1787,6 +2228,112 @@
-     add_frpc_systemd_service_if_need $os_dir
+@@ -1779,6 +1864,112 @@
+     apk del tar file xz zstd
  }
  
 +# Linux util-linux: KNAME is the kernel device name, PTUUID is the partition-table ID.
@@ -1487,7 +1254,7 @@
  install_arch_gentoo_aosc() {
      info "install $distro"
  
-@@ -1974,11 +2521,22 @@
+@@ -1947,11 +2138,22 @@
          create_cloud_init_network_config net.cfg
          cat -n net.cfg
  
@@ -1515,7 +1282,7 @@
  
          # 注意名字是 10-cloud-init-eth*.network，fix-eth-name.sh 会此文件名查找配置文件
          cp out/etc/systemd/network/10-cloud-init-eth*.network $os_dir/etc/systemd/network/
-@@ -2282,6 +2840,12 @@
+@@ -2255,6 +2457,12 @@
      # 清除分区表
      # https://github.com/bin456789/reinstall/issues/638
      apk add wipefs
@@ -1528,7 +1295,7 @@
      wipefs -a -f /dev/$xda
      apk del wipefs
  
-@@ -3859,7 +4423,12 @@
+@@ -3833,7 +4041,12 @@
      local os_dir=$1
  
      # 添加用户
@@ -1542,7 +1309,7 @@
          # debian 推荐使用 adduser 而不是 useradd
          # https://manpages.debian.org/trixie/passwd/useradd.8.en.html
          # useradd is a low level utility for adding users.
-@@ -3957,7 +4526,7 @@
+@@ -3931,7 +4144,7 @@
  
      info 'change user password'
  
@@ -1551,7 +1318,7 @@
          pam_d=$os_dir/etc/pam.d
  
          [ -f $pam_d/chpasswd ] && has_pamd_chpasswd=true || has_pamd_chpasswd=false
-@@ -3995,7 +4564,13 @@
+@@ -3969,7 +4182,13 @@
              mv $pam_d/chpasswd.orig $pam_d/chpasswd
          fi
      else
@@ -1566,7 +1333,7 @@
      fi
  }
  
-@@ -5142,10 +5717,10 @@
+@@ -5121,10 +5340,10 @@
      clear_previous
      add_community_repo
  
@@ -1581,7 +1348,7 @@
          find_xda
      fi
  
-@@ -5278,22 +5853,35 @@
+@@ -5257,22 +5476,35 @@
  rm -f /etc/runlevels/default/local
  
  # 提取变量

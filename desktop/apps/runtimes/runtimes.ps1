@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     系统基础运行库与应用底座 (Scoop / VC++ / .NET / WebView2 / Git 通用配置 / 7-Zip 极简集成)
@@ -416,7 +416,7 @@ function Invoke-DownloadFile {
         [int]$TimeoutSec = 300
     )
 
-    $tool = Join-Path $PSScriptRoot "_aria2.ps1"
+    $tool = Join-Path $PSScriptRoot "..\_shared\_aria2.ps1"
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
         throw "未在应用域定位到核心下载引擎: _aria2.ps1，请确保仓库完整性！"
     }

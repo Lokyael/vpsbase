@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     天翼云盘客户端
@@ -75,17 +75,17 @@ if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
     throw "【跨账号提权阻断】检测到终端运行身份 [$currentUser] 与当前桌面登录用户 [$consoleUser] 不一致！为防止将受控配置与注册表错误写入 [$currentUser] 账户，请直接在 [$consoleUser] 桌面会话中运行。"
 }
 
-$console = Join-Path $PSScriptRoot "_console.ps1"
+$console = Join-Path $PSScriptRoot "..\_shared\_console.ps1"
 if (-not (Test-Path $console)) {
     throw "未在应用域定位到核心终端交互组件: _console.ps1，请确保仓库完整性！"
 }
 
-$aria2 = Join-Path $PSScriptRoot "_aria2.ps1"
+$aria2 = Join-Path $PSScriptRoot "..\_shared\_aria2.ps1"
 if (-not (Test-Path $aria2)) {
     throw "未在应用域定位到核心下载引擎: _aria2.ps1，请确保仓库完整性！"
 }
 
-$firewall = Join-Path $PSScriptRoot "_firewall.ps1"
+$firewall = Join-Path $PSScriptRoot "..\_shared\_firewall.ps1"
 if (-not (Test-Path $firewall)) {
     throw "未在应用域定位到核心防火墙工具: _firewall.ps1，请确保仓库完整性！"
 }

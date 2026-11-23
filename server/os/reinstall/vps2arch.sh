@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # WARNING: THIS IS AN AUTO-GENERATED STATIC ARTIFACT. DO NOT EDIT DIRECTLY.
-# Source: Built by server/os/reinstall/dev/build-vps2arch.sh from upstream commit 603ba80f939db7f9fc82ad215bcac8d6558bd588.
-# Audit: See server/os/reinstall/dev/vps2arch.patch for changes relative to the pruned upstream.
+# Source: Built by server/os/reinstall/build/build-vps2arch.sh from upstream commit 2fcd14b4564bc21740b85d473b4a140e283bf292.
+# Audit: See server/os/reinstall/build/vps2arch.patch for changes relative to the pruned upstream.
 # ==============================================================================
 # shellcheck shell=bash
 # shellcheck disable=SC2086
@@ -12,8 +12,8 @@
 
 { set +x; } 2>/dev/null
 set -eE
-confhome=https://raw.githubusercontent.com/bin456789/reinstall/603ba80f939db7f9fc82ad215bcac8d6558bd588
-confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/603ba80f939db7f9fc82ad215bcac8d6558bd588
+confhome=https://raw.githubusercontent.com/bin456789/reinstall/2fcd14b4564bc21740b85d473b4a140e283bf292
+confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/2fcd14b4564bc21740b85d473b4a140e283bf292
 # confhome_cn=https://www.ghproxy.cc/https://raw.githubusercontent.com/bin456789/reinstall/main
 
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
@@ -82,53 +82,20 @@ else
 fi
 
 usage_and_exit() {
-    # kali 官网的 202x.x iso 安装后，apt 源是 kali-rolling
-    # 微软商店的 wsl kali，apt 源是 kali-last-snapshot
     cat <<EOF
-Usage: $reinstall_____ anolis      7|8|23
-                       opencloudos 8|9|23
-                       rocky       8|9|10
-                       oracle      8|9|10
-                       almalinux   8|9|10
-                       centos      9|10
-                       fnos        1
-                       fygoos      1
-                       nixos       26.05
-                       fedora      44|45
-                       debian      9|10|11|12|13
-                       alpine      3.21|3.22|3.23|3.24
-                       opensuse    16.0|16.1|tumbleweed
-                       kali        last-snapshot|rolling
-                       openeuler   20.03|22.03|24.03|26.09
-                       ubuntu      18.04|20.04|22.04|24.04|26.04|26.10 [--minimal]
-                       arch
-                       gentoo
-                       aosc
-                       redhat      --img="http://access.cdn.redhat.com/xxx.qcow2"
-                       dd          --img="http://xxx.com/yyy.zzz" (raw image stores in raw/vhd/tar/gz/xz/zst)
-                       windows     --image-name="windows xxx yyy" --lang=xx-yy
-                       windows     --image-name="windows xxx yyy" --iso="http://xxx.com/xxx.iso"
-                       netboot.xyz
-                       reset
+Usage: bash $0                          # 交互式 Arch Linux 安装向导
+       bash $0 [arch] [OPTIONS...]      # CLI 指定参数（省略 arch 自动补全）
+       bash $0 reset                    # 重启前撤销已安排的重装引导项
 
-       Options:        For Linux/Windows:
-                       [--username    USERNAME]
-                       [--password    PASSWORD]
-                       [--ssh-key     KEY]
-                       [--ssh-port    PORT]
-                       [--frpc-config PATH]
-
-                       For Windows Only:
-                       [--allow-ping]
-                       [--rdp-port    PORT]
-                       [--add-driver  INF_OR_DIR]  (only for iso installation)
-                       [--no-auto-drivers]         (only for iso installation)
-
-                       For Linux Only:
-                       [--no-cloud-kernel]         (only for Debian/Ubuntu/Alpine/openSUSE)
-
-       Manual:         https://github.com/bin456789/reinstall
-
+Options (Arch Linux):
+  --username, --user NAME        新系统普通运维用户名（必填，禁止 root）
+  --password, --passwd PASS      新用户 sudo 提权密码（必填，<=256 字节，无 CR/LF）
+  --ssh-key,  --public-key KEY   Ed25519 登录公钥文本、本地路径、github:/gitlab: 或 HTTPS URL（必填）
+  --ssh-port PORT                新系统 SSH 端口（默认 22，禁止 443）
+  --target-disk /dev/DISK        显式指定目标整盘（Btrfs/bcachefs 或多盘根时必填）
+  --hold 0|1|2                   调试停顿点（0=打包前，1=进救援后暂停，2=安装完不自动重启）
+  --force-cn                     强制使用国内镜像源
+  -h, --help                     显示本帮助并退出
 EOF
     exit 1
 }
@@ -210,11 +177,10 @@ curl() {
     show_url_in_args "$@" >&2
 
     # 添加 -f, --fail，不然 404 退出码也为0
-    # 32位 cygwin 已停止更新，证书可能有问题，先添加 --insecure
     # centos 7 curl 不支持 --retry-connrefused --retry-all-errors
     # 因此手动 retry
     for i in $(seq 5); do
-        if command curl --insecure --connect-timeout 10 -f "$@"; then
+        if command curl --connect-timeout 10 -f "$@"; then
             return
         else
             ret=$?
@@ -287,8 +253,10 @@ cp_boot_files_to_dir() {
                 # FAT can ignore chmod. Check the actual mode before copying the digest-bearing image.
                 ownership_mode=$(stat -c '%u:%a' -- "$staged") && [ "$ownership_mode" = 0:600 ] ||
                     error_and_exit "无法确认引导目录 $dir 中的 initrd 副本为 root 所有且权限为 0600。"
+                [ ! -d "$dir/reinstall-initrd" ] ||
+                    error_and_exit "引导目录 $dir 中的 reinstall-initrd 目标路径异常。"
                 cat /reinstall-initrd >"$staged"
-                mv -fT -- "$staged" "$dir/reinstall-initrd"
+                mv -f -- "$staged" "$dir/reinstall-initrd"
             )
         else
             cp -f /reinstall-initrd "$dir"
@@ -476,7 +444,7 @@ test_url_real() {
     # ${PIPESTATUS[n]} 表示第n个管道的返回值
     echo $url
     for i in $(seq 5 -1 0); do
-        if command curl --insecure --connect-timeout 10 -Lfr 0-1048575 "$url" \
+        if command curl --connect-timeout 10 -Lfr 0-1048575 "$url" \
             1> >(exec head -c 1048576 >$tmp_file) \
             2> >(exec grep -v 'curl: (23)' >&2); then
             break
@@ -1506,6 +1474,11 @@ set_var() {
     # IFS= read -r "$1" <<<"$2"
 }
 
+get_daocloud_url() {
+    local url=$1
+    echo "https://files.m.daocloud.io/$(echo "$url" | sed -E 's,^https?://,,i')"
+}
+
 setos() {
     local step=$1
     local distro=$2
@@ -1515,6 +1488,8 @@ setos() {
     set_osvar() {
         set_var "${step}_$1" "$2"
     }
+
+
 
     setos_alpine() {
         is_virt && flavour=virt || flavour=lts
@@ -1530,6 +1505,9 @@ setos() {
         set_osvar modloop "$mirror/releases/$basearch/netboot/modloop-$flavour"
         set_osvar repo "$mirror/main"
     }
+
+
+
 
     setos_arch() {
         if [ "$basearch" = "x86_64" ]; then
@@ -1565,6 +1543,20 @@ setos() {
             set_osvar mirror "$mirror"
         fi
     }
+
+
+
+
+
+    # shellcheck disable=SC2154
+
+
+
+
+
+
+
+
 
     set_osvar distro "$distro"
     set_osvar releasever "$releasever"
@@ -1640,6 +1632,7 @@ verify_os_name() {
         'windows' \
         'dd' \
         'netboot.xyz' \
+        'talos' \
         'reset'; do
         read -r ds vers <<<"$os"
         vers_=${vers//\./\\\.}
@@ -1669,18 +1662,6 @@ verify_os_args() {
     dd) [ -n "$img" ] || error_and_exit "dd need --img." ;;
     redhat) [ -n "$img" ] || error_and_exit "redhat need --img." ;;
     windows) [ -n "$image_name" ] || error_and_exit "Install Windows need --image-name." ;;
-    esac
-
-    # 用户名/密码/证书相关
-    case "$distro" in
-    netboot.xyz)
-        [ -z "$username" ] || error_and_exit "not support set username for $distro."
-        [ -z "$password" ] || error_and_exit "not support set password for $distro."
-        [ -z "$ssh_keys" ] || error_and_exit "not support set ssh key for $distro."
-        ;;
-    windows)
-        [ -z "$ssh_keys" ] || error_and_exit "not support set ssh key for $distro."
-        ;;
     esac
 
 }
@@ -1912,7 +1893,7 @@ is_valid_ram_size() {
 check_ram() {
     ram_standard=$(
         case "$distro" in
-        netboot.xyz) echo 0 ;;
+        netboot.xyz | talos) echo 0 ;;
         alpine | debian | kali | dd) echo 256 ;;
         arch | gentoo | aosc | nixos | windows) echo 512 ;;
         redhat | centos | almalinux | rocky | fedora | oracle | ubuntu | anolis | opencloudos | openeuler) echo 1024 ;;
@@ -2191,9 +2172,6 @@ save_password() {
     # 假如用户运行 alpine live 直接打包硬盘镜像，如果保存了明文密码，则会暴露明文密码，因为 netboot initrd 在里面
     # 通过 --password 传入密码，history 有记录，也会暴露明文密码
     # /reinstall.log 也会暴露明文密码（已处理）
-    if false; then
-        printf '%s' "$password" >>"$dir/password-plaintext"
-    fi
 
     # sha512
     # 以下系统均支持 sha512 密码，但是生成密码需要不同的工具
@@ -2233,12 +2211,6 @@ save_password() {
 
     # yescrypt
     # 旧系统不支持，先不管
-    if false; then
-        if mkpasswd -m help | grep -wq yescrypt; then
-            crypted=$(printf '%s' "$password" | mkpasswd -m yescrypt --stdin)
-            echo "$crypted" >"$dir/password-linux-yescrypt"
-        fi
-    fi
 
     # windows
     if [ "$distro" = windows ]; then
@@ -3060,6 +3032,12 @@ get_entry_name() {
 build_nextos_cmdline() {
     if [ $nextos_distro = alpine ]; then
         nextos_cmdline="alpine_repo=$nextos_repo modloop=$nextos_modloop"
+    elif [ $nextos_distro = talos ]; then
+        # https://docs.siderolabs.com/talos/v1.14/platform-specific-installations/bare-metal-platforms/pxe
+        nextos_cmdline=$(build_ip_cmdline)
+        nextos_cmdline+=" talos.platform=metal"
+        nextos_cmdline+=" slab_nomerge"
+        nextos_cmdline+=" pti=on"
     elif is_distro_like_debian $nextos_distro; then
         # 我们直接强制 di 优先显示到 串口，因此不需要设置分辨率
         # 设置分辨率为800*600，防止分辨率过高 ssh screen attach 后无法全部显示
@@ -3114,7 +3092,9 @@ build_cmdline() {
     fi
 
     # extra
-    build_extra_cmdline
+    if ! [ "$distro" = talos ]; then
+        build_extra_cmdline
+    fi
 
     cmdline="$nextos_cmdline $finalos_cmdline $extra_cmdline"
 }
@@ -3414,10 +3394,6 @@ EOF
     # 因此改成在这里下载
     curl -LO "$confhome/get-xda.sh"
     curl -LO "$confhome/ttys.sh"
-    if [ -n "$frpc_config" ]; then
-        curl -LO "$confhome/get-frpc-url.sh"
-        curl -LO "$confhome/frpc.service"
-    fi
 
     # 可以节省一点内存？
     echo 'export DEBCONF_DROP_TRANSLATIONS=1' |
@@ -3701,6 +3677,46 @@ create_can_use_cloud_kernel_sh() {
         releasever="$releasever"
         can_use_cloud_kernel "\$@"
 EOF
+}
+
+# shellcheck disable=SC2155
+build_ip_cmdline() {
+    collect_netconf >&2
+
+    if is_in_china; then
+        local ipv4_dns1='223.5.5.5'
+        local ipv4_dns2='119.29.29.29'
+        local ipv6_dns1='2400:3200::1'
+        local ipv6_dns2='2402:4e00::'
+    else
+        local ipv4_dns1='1.1.1.1'
+        local ipv4_dns2='8.8.8.8'
+        local ipv6_dns1='2606:4700:4700::1111'
+        local ipv6_dns2='2001:4860:4860::8888'
+    fi
+
+    # https://docs.siderolabs.com/talos/v1.14/reference/kernel#ip
+    # https://www.kernel.org/doc/Documentation/filesystems/nfs/nfsroot.txt
+    # 不从 /etc/resolv.conf 获取 DNS，因为它们可能指向 127.0.0.53，例如 networkd
+
+    # ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:<device>:<autoconf>:<dns0-ip>:<dns1-ip>:<ntp0-ip>
+    local ip_cmdline=
+    if is_found_ipv4_netconf; then
+        local client_ip=$(echo "$ipv4_addr" | cut -d/ -f1)
+        local netmask=$(echo "$ipv4_addr" | cut -d/ -f2)
+        local device=enx$(echo $ipv4_mac | tr -d ':')
+        ip_cmdline+="ip=$client_ip::$ipv4_gateway:$netmask::$device::$ipv4_dns1:$ipv4_dns2:"
+    fi
+    if is_found_ipv6_netconf; then
+        if [ -n "$ip_cmdline" ]; then
+            ip_cmdline+=" "
+        fi
+        local client_ip=$(echo "$ipv6_addr" | cut -d/ -f1)
+        local netmask=$(echo "$ipv6_addr" | cut -d/ -f2)
+        local device=enx$(echo $ipv6_mac | tr -d ':')
+        ip_cmdline+="ip=[$client_ip]::[$ipv6_gateway]:$netmask::$device::[$ipv6_dns1]:[$ipv6_dns2]:"
+    fi
+    echo "$ip_cmdline"
 }
 
 get_ip_conf_cmd() {
@@ -4323,6 +4339,8 @@ is_allow_ping() {
     [ -n "$allow_ping" ] && [ "$allow_ping" = 1 ]
 }
 
+
+
 get_approximate_ram_size() {
     # lsmem 需要 util-linux
     if false && is_have_cmd lsmem; then
@@ -4336,30 +4354,60 @@ get_approximate_ram_size() {
     echo "$ram_size"
 }
 
+
+
 get_ttys() {
-    local prefix=$1
-    local ttys is_for_cmdline is_first tty
-    if [ "$(uname -m)" = "aarch64" ]; then
-        ttys="ttyS0 ttyAMA0 tty0"
-    else
-        ttys="ttyS0 tty0"
-    fi
-    [ "$prefix" = "console=" ] && is_for_cmdline=true || is_for_cmdline=false
-    is_first=true
-    for tty in $ttys; do
-        if { [ -c "/dev/$tty" ] && stty -g -F "/dev/$tty" >/dev/null 2>&1; } ||
-           { $is_for_cmdline && ! [ -c "/dev/$tty" ]; }; then
-            if $is_first; then
-                is_first=false
-            else
-                printf " "
-            fi
-            printf "%s" "$prefix$tty"
-            if $is_for_cmdline && { [ "$tty" = ttyS0 ] || [ "$tty" = ttyAMA0 ]; }; then
-                printf ",115200n8"
-            fi
+    # [Inlined ttys.sh] 本地内嵌展开，杜绝外部网络拉取
+    sh -s "$1" <<'EOF_INLINED_TTYS'
+#!/bin/sh
+prefix=$1
+
+# 不要在 windows 上使用，因为不准确
+# 在原系统上使用，也可能不准确？例如安装了 cloud 内核的甲骨文？
+
+# 注意 debian initrd 没有 xargs
+
+# 最后一个 tty 是主 tty，显示的信息最全
+if [ "$(uname -m)" = "aarch64" ]; then
+    ttys="ttyS0 ttyAMA0 tty0"
+else
+    ttys="ttyS0 tty0"
+fi
+
+# 安装环境下 tty 不一定齐全
+# hytron 有ttyS0 但无法写入
+# 用于 cmdline 引导参数时，明确排除不可写的 tty，避免 getty 反复重启
+# https://github.com/bin456789/reinstall/issues/620
+
+if [ "$prefix" = "console=" ]; then
+    is_for_cmdline=true
+else
+    is_for_cmdline=false
+fi
+
+# 用途       条件
+# 安装日志   存在且可写
+# console    存在且可写 或 不存在（因为安装环境下 tty 不一定齐全）
+
+is_first=true
+for tty in $ttys; do
+    if { [ -c "/dev/$tty" ] && stty -g -F "/dev/$tty" >/dev/null 2>&1; } ||
+        { $is_for_cmdline && ! [ -c "/dev/$tty" ]; }; then
+        if $is_first; then
+            is_first=false
+        else
+            printf " "
         fi
-    done
+
+        printf "%s" "$prefix$tty"
+
+        if $is_for_cmdline &&
+            { [ "$tty" = ttyS0 ] || [ "$tty" = ttyAMA0 ]; }; then
+            printf ",115200n8"
+        fi
+    fi
+done
+EOF_INLINED_TTYS
 }
 
 find_xda() {
@@ -5008,13 +5056,11 @@ add_default_efi_to_nvram() {
 
         # 创建条目，先判断是否已经存在
         # 好像没必要先判断
-        if true || ! efibootmgr | grep -i "HD($efi_part_num,GPT,$efi_part_uuid,.*)/File(\\\EFI\\\boot\\\\$efi_file)"; then
-            efibootmgr --create \
-                --disk "/dev/$xda" \
-                --part "$efi_part_num" \
-                --label "$efi_file" \
-                --loader "\\EFI\\boot\\$efi_file"
-        fi
+        efibootmgr --create \
+            --disk "/dev/$xda" \
+            --part "$efi_part_num" \
+            --label "$efi_file" \
+            --loader "\\EFI\\boot\\$efi_file"
     else
         # shellcheck disable=SC2154
         if [ "$confirmed_no_efi" = 1 ]; then
@@ -5482,6 +5528,7 @@ EOF
 install_alpine() {
     error_and_exit "Alpine is not supported in this build."
 }
+
 get_cpu_vendor() {
     cpu_vendor=$(grep 'vendor_id' /proc/cpuinfo | head -1 | awk '{print $NF}')
     case "$cpu_vendor" in
@@ -5518,6 +5565,7 @@ add_newline() {
 install_nixos() {
     error_and_exit "NixOS is not supported in this build."
 }
+
 add_systemd_service() {
     local os_dir=$1
     local service_name=$2
@@ -5902,51 +5950,7 @@ EOF_FIX_ETH_SVC
     fi
 }
 
-get_frpc_url() {
-    wget "$confhome/get-frpc-url.sh" -O- | sh -s "$@"
-}
 
-add_frpc_systemd_service_if_need() {
-    local os_dir=$1
-
-    if ls /configs/frpc.* >/dev/null 2>&1; then
-        mkdir -p "$os_dir/usr/local/bin"
-        mkdir -p "$os_dir/usr/local/etc/frpc"
-
-        # 下载 frpc
-        # 注意下载的 frpc owner 不是 root:root
-        frpc_url=$(get_frpc_url linux)
-        basename=$(echo "$frpc_url" | awk -F/ '{print $NF}' | sed 's/\.tar\.gz//')
-        download "$frpc_url" "$os_dir/frpc.tar.gz"
-        # busybox tar 不支持 wildcard
-        # tar: */frpc: not found in archive
-        tar xzf "$os_dir/frpc.tar.gz" "$basename/frpc" -O >"$os_dir/usr/local/bin/frpc"
-        rm -f "$os_dir/frpc.tar.gz"
-        chmod a+x "$os_dir/usr/local/bin/frpc"
-
-        # frpc toml
-        cp -f /configs/frpc.* "$os_dir/usr/local/etc/frpc/frpc.toml"
-        download "$confhome/frpc.service" /tmp/frpc.service
-        if [ "$(chroot $os_dir systemctl --version | head -1 | awk '{print $2}')" -ge 247 ]; then
-            # 新版本 systemd
-            sed -i 's/^\[X-Service-New\]$/[Service]/' /tmp/frpc.service
-            chroot "$os_dir" chown root:root /usr/local/etc/frpc/frpc.toml
-            chroot "$os_dir" chmod 600 /usr/local/etc/frpc/frpc.toml
-        else
-            # 旧版本 systemd
-            sed -i 's/^\[X-Service-Old\]$/[Service]/' /tmp/frpc.service
-            chroot "$os_dir" useradd --system --no-create-home \
-                --home-dir /nonexistent \
-                --shell /sbin/nologin \
-                frpc
-            chroot "$os_dir" chown root:frpc /usr/local/etc/frpc/frpc.toml
-            chroot "$os_dir" chmod 640 /usr/local/etc/frpc/frpc.toml
-        fi
-
-        # 添加服务
-        add_systemd_service "$os_dir" frpc /tmp/frpc.service
-    fi
-}
 
 get_fs_of_mount_point() {
     local mount_point=$1
@@ -6018,7 +6022,7 @@ basic_init() {
 
     # Arch Linux 终态原生加固
     if [ "$distro" = "arch" ]; then
-        local ssh_enabled
+        local ssh_enabled effective_ssh
         # 1. 主机密钥：在目标系统内仅保留 Ed25519。
         chroot "$os_dir" sh -c "rm -f /etc/ssh/ssh_host_* && ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key"
         chmod 0600 "$os_dir/etc/ssh/ssh_host_ed25519_key"
@@ -6047,7 +6051,7 @@ EOF_SSHD_HARDENED
         chmod 0600 "$os_dir/etc/ssh/sshd_config.d/00-hardened.conf"
         rm -f "$os_dir/etc/ssh/sshd_config.d/00-custom.conf"
 
-        # 保证主配置必然包含 drop-in 目录
+        # 直接修改主配置：保证 /etc/ssh/sshd_config 首行必然包含 drop-in 目录（First-Match）
         if ! grep -qiE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' "$os_dir/etc/ssh/sshd_config" 2>/dev/null; then
             sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' "$os_dir/etc/ssh/sshd_config"
         fi
@@ -6094,8 +6098,40 @@ EOF_SSHD_HARDENED
     # 因为 alpine live 和目标系统的网卡顺序可能不同
     add_fix_eth_name_systemd_service $os_dir
 
-    # frpc
-    add_frpc_systemd_service_if_need $os_dir
+}
+
+download_and_extract_pacman_pkg() {
+    local mirror=$1
+    local repo=$2
+    local pkg=$3
+    local file_to_extract=$4
+    local dest_dir=$5
+    mkdir -p "$dest_dir"
+
+    local tmp_dir http_dir
+    tmp_dir=$(mktemp -d -p "$dest_dir")
+    http_dir=$(echo "$mirror" | sed -e "s/\$repo/$repo/" -e "s/\$arch/$(uname -m)/")
+
+    download "$http_dir/$repo.db" "$tmp_dir/$repo.db"
+
+    # archlinux 是 tar.zst
+    # archlinuxarm 是 tar.xz
+    # archlinuxcn 是 tar.zst
+    apk add tar file xz zstd
+
+    # 找到包名
+    pkg_tar_xx=$(tar -xf "$tmp_dir/$repo.db" -O --wildcards "$pkg-*/desc" |
+        grep "^$pkg-.*-any\.pkg\.tar\..*" | sort -Vr | head -1)
+
+    # 下载并解压
+    download "$http_dir/$pkg_tar_xx" "$tmp_dir/$pkg_tar_xx"
+    tar -xf "$tmp_dir/$pkg_tar_xx" \
+        -C "$dest_dir" \
+        "$file_to_extract"
+
+    # 清理
+    rm -rf "$tmp_dir"
+    apk del tar file xz zstd
 }
 
 # Linux util-linux: KNAME is the kernel device name, PTUUID is the partition-table ID.
@@ -6269,37 +6305,16 @@ EOF
         esac
         echo "Server = $mirror/$repo_pattem" >$alpine_rootfs/etc/pacman.d/mirrorlist
 
-        # 下载 core.db
-        core_dir=$(echo "$repo_pattem" | sed -e "s/\$repo/core/" -e "s/\$arch/$(uname -m)/")
-        download $mirror/$core_dir/core.db $alpine_rootfs/tmp/core.db
-
-        # 下载 archlinux-keyring archlinuxarm-keyring 包
-        # arch x86 是 tar.zst
-        # arch arm 是 tar.xz
-        xz_or_zstd=$([ "$(uname -m)" = aarch64 ] && echo xz || echo zstd)
-        apk add tar file $xz_or_zstd
-
-        keyrings=archlinux-keyring
-        if [ "$(uname -m)" = aarch64 ]; then
-            keyrings="$keyrings archlinuxarm-keyring"
-        fi
+        # 下载 keyring
+        case "$(uname -m)" in
+        x86_64) keyrings="archlinux-keyring" ;;
+        aarch64) keyrings="archlinux-keyring archlinuxarm-keyring" ;;
+        esac
 
         for keyring in $keyrings; do
-            # 找到包名
-            keyring_pkg_tar_xx=$(tar -xf $alpine_rootfs/tmp/core.db -O --wildcards "$keyring-*/desc" |
-                grep "^$keyring-.*-any\.pkg\.tar\..*" | sort -Vr | head -1)
-
-            # 下载并解压
-            download $mirror/$core_dir/$keyring_pkg_tar_xx $alpine_rootfs/tmp/$keyring_pkg_tar_xx
-            tar -xf $alpine_rootfs/tmp/$keyring_pkg_tar_xx \
-                -C $alpine_rootfs \
-                usr/share/pacman/keyrings/
-            rm -f $alpine_rootfs/tmp/$keyring_pkg_tar_xx
+            download_and_extract_pacman_pkg "$mirror/$repo_pattem" core "$keyring" \
+                usr/share/pacman/keyrings/ "$alpine_rootfs"
         done
-
-        # 清理
-        rm -f $alpine_rootfs/tmp/core.db
-        apk del tar file $xz_or_zstd
 
         # 初始化 pacman keyring
         chroot $alpine_rootfs pacman-key --init
@@ -6363,7 +6378,9 @@ EOF
 
     # shellcheck disable=SC2317
     install_gentoo() { :; }
+
     install_aosc() { :; }
+
     local os_dir=/os
 
     # 挂载分区
@@ -7284,6 +7301,7 @@ get_image_state() {
 }
 
 modify_windows() { :; }
+
 get_axx64() {
     case "$(uname -m)" in
     x86_64) echo amd64 ;;
@@ -8746,6 +8764,8 @@ EOF
 install_fnos() {
     error_and_exit "fnOS is not supported in this build."
 }
+
+
 get_partition_table_format() {
     apk add parted
     parted "$1" -s print | grep 'Partition Table:' | awk '{print $NF}'
@@ -9386,6 +9406,8 @@ download_from_fedorapeople() {
 install_windows() {
     error_and_exit "Windows is not supported in this build."
 }
+
+# 添加 netboot.efi 备用
 download_netboot_xyz_efi() {
     dir=$1
     info "download netboot.xyz.efi"
@@ -9573,6 +9595,7 @@ set_max_sectors_kb_for_tencent_cloud_persist() {
 install_redhat_ubuntu() {
     error_and_exit "RedHat/Ubuntu is not supported in this build."
 }
+
 trans() {
     info "start trans"
 
@@ -9786,18 +9809,6 @@ else
     printf '\nyes' | setup-sshd
 fi
 
-# 设置 frpc
-# 并防止重复运行
-if ls /configs/frpc.* >/dev/null 2>&1 && ! pidof frpc >/dev/null; then
-    info 'run frpc'
-    chmod 600 /configs/frpc.*
-    add_community_repo
-    apk add frp
-    while true; do
-        frpc -c /configs/frpc.* || true
-        sleep 5
-    done &
-fi
 
 # shellcheck disable=SC2154
 if [ "$hold" = 1 ]; then
@@ -10558,9 +10569,6 @@ EOF_INLINED_NETWORK
     if [ -n "$password" ]; then
         save_password $initrd_dir/configs
     fi
-    if [ -n "$frpc_config" ]; then
-        cat "$frpc_config" >$initrd_dir/configs/frpc.conf
-    fi
 
     # 收集 cloud-data 打包进 initrd
     if [ -n "$cloud_data" ]; then
@@ -11005,6 +11013,121 @@ reset_and_exit() {
     fi
 }
 
+get_long_opts_generic() {
+    cat <<EOF
+help
+debug
+force-cn
+EOF
+}
+
+get_long_opts_linux() {
+    local distro=$1
+
+    cat <<EOF
+user:|username:
+passwd:|password:
+ssh-key:|public-key:
+ssh-port:
+hold:
+target-disk:
+EOF
+
+    cat <<EOF |
+ci                 debian ubuntu centos almalinux rocky fedora redhat oracle anolis opencloudos openeuler opensuse
+img:               debian ubuntu centos almalinux rocky fedora redhat oracle anolis opencloudos openeuler opensuse
+installer          debian ubuntu centos almalinux rocky fedora kali
+no-cloud-kernel    debian ubuntu kali alpine opensuse
+minimal            ubuntu
+EOF
+        if [ -n "$distro" ]; then
+            grep -w "$distro"
+        else
+            cat
+        fi | awk '{print $1}'
+}
+
+get_long_opts_windows() {
+    cat <<EOF
+image-name:
+lang:
+bit:
+iso:
+user:|username:
+passwd:|password:
+rdp-port:
+ssh-port:
+allow-ping
+no-lockout|no-lockout-threshold
+add-driver:
+no-auto-drivers
+hold:
+boot-wim:
+target-disk:
+force-boot-mode:
+force-old-windows-setup:
+EOF
+}
+
+get_long_opts_dd() {
+    cat <<EOF
+img:
+user:|username:
+passwd:|password:
+ssh-key:|public-key:
+ssh-port:
+rdp-port:
+allow-ping
+no-lockout|no-lockout-threshold
+cloud-data:
+hold:
+target-disk:
+EOF
+}
+
+get_long_opts() {
+    local distro=$1
+
+    local opt opts opts_str
+
+    opts=$({
+        # 通用选项
+        get_long_opts_generic
+
+        # 发行版特定选项
+        case "$distro" in
+        windows)
+            get_long_opts_windows
+            ;;
+        dd)
+            get_long_opts_dd
+            ;;
+        netboot.xyz | talos)
+            ;;
+        '')
+            # 如果未指定发行版，则获取所有
+            get_long_opts_linux
+            get_long_opts_windows
+            get_long_opts_dd
+            ;;
+        *)
+            # 特定 Linux
+            get_long_opts_linux "$distro"
+            ;;
+        esac
+    } | tr '|' '\n' | del_empty_lines | sort -u)
+
+    for opt in $opts; do
+        if [ -z "$opts_str" ]; then
+            opts_str="$opt"
+        else
+            opts_str+=",$opt"
+        fi
+    done
+
+    echo "$opts_str"
+}
+
 # 脚本入口
 
 # windows 环境下的额外初始化
@@ -11062,32 +11185,6 @@ if is_secure_boot_enabled; then
 fi
 
 # 整理参数
-long_opts=
-for o in ci installer debug minimal no-cloud-kernel no-auto-drivers allow-ping force-cn help \
-    no-lockout no-lockout-threshold \
-    add-driver: \
-    hold: sleep: \
-    iso: \
-    image-name: \
-    bit: \
-    boot-wim: \
-    img: \
-    cloud-data: \
-    lang: \
-    user: username: \
-    passwd: password: \
-    ssh-port: \
-    ssh-key: public-key: \
-    rdp-port: \
-    allow-ping: \
-    commit: \
-    frpc-conf: frpc-config: \
-    target-disk: \
-    force-boot-mode: \
-    force-old-windows-setup:; do
-    [ -n "$long_opts" ] && long_opts+=,
-    long_opts+=$o
-done
 
 # Linux util-linux: KNAME is the kernel device name, PTUUID is the partition-table ID.
 arch_disk_identity() {
@@ -11123,16 +11220,6 @@ EOF_DISKS
     printf '%s %s\n' "$identity" "$selected"
 }
 
-arch_disk_instance() {
-    local path=/sys/class/block/$1 devnum seq node
-    devnum=$(cat "$path/dev") && seq=$(cat "$path/diskseq") &&
-        node=$(stat -Lc '%t:%T' -- "/dev/$1") || return 1
-    printf '%s\n' "$devnum" | grep -Eq '^[0-9]+:[0-9]+$' &&
-        printf '%s\n' "$seq" | grep -Eq '^[1-9][0-9]*$' || return 1
-    [ "$(printf '%x:%x' "${devnum%:*}" "${devnum#*:}")" = "$node" ] || return 1
-    printf '%s/%s\n' "$devnum" "$seq"
-}
-
 valid_arch_password_hash() {
     case "$1" in *'
 '*) return 1 ;; esac
@@ -11142,9 +11229,19 @@ valid_arch_password_hash() {
 # ==============================================================================
 # vps2arch 入口处理：支持交互采集与 CLI 直接传参
 # ==============================================================================
+check_arch_ssh_port() {
+    if ! { [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && is_port_valid "$1"; }; then
+        error "SSH 端口无效：$1"
+        return 1
+    fi
+    if [[ "$1" == 443 ]]; then
+        error '443/tcp 预留给业务入口，请选择其他 SSH 端口。'
+        return 1
+    fi
+}
+
 assert_arch_ssh_port() {
-    [[ "$1" =~ ^[1-9][0-9]{0,4}$ ]] && is_port_valid "$1" || error_and_exit "SSH 端口无效：$1"
-    [[ "$1" != 443 ]] || error_and_exit '443/tcp 预留给业务入口，请选择其他 SSH 端口。'
+    check_arch_ssh_port "$1" || exit 1
 }
 
 valid_ed25519_key() {
@@ -11249,22 +11346,28 @@ confirm_arch_ipv4() {
     esac
 }
 
-find_arch_bios_boot_disk() {
-    local source source_info fs_type ancestors disk
-    install_pkg findmnt lsblk || return 1
-    source_info=$(findmnt -n -o SOURCE,FSTYPE --nofsroot --target /boot) || return 1
-    [[ "$source_info" != *$'\n'* ]] || return 1
-    read -r source fs_type <<< "$source_info"
-    case "$fs_type" in btrfs|bcachefs|'') return 1 ;; esac
-    [[ "$source" == /dev/* && -b "$source" ]] || return 1
-    ancestors=$(LC_ALL=C lsblk -snro KNAME,TYPE -- "$source") || return 1
-    disk=$(awk '$2 == "disk" { disks[$1] = 1 } END { for (disk in disks) { print disk; count++ } if (count != 1) exit 1 }' <<< "$ancestors") || return 1
-    [[ "$disk" =~ ^[a-zA-Z0-9_.-]+$ && -b "/dev/$disk" ]] || return 1
+# 解析指定挂载点对应的唯一底层整盘（忽略 systemd autofs 触发项，拒绝 btrfs/bcachefs）。
+resolve_mount_unique_disk() {
+    local target=$1 raw filtered source fs_type ancestors disk
+    raw=$(findmnt -n -o SOURCE,FSTYPE --nofsroot --target "$target") || return 10
+    filtered=$(LC_ALL=C awk '$2 != "autofs" { print }' <<< "$raw")
+    [[ -n "$filtered" && "$filtered" != *$'\n'* ]] || return 11
+    read -r source fs_type <<< "$filtered"
+    case "$fs_type" in btrfs|bcachefs|'') return 12 ;; esac
+    [[ "$source" == /dev/* && -b "$source" ]] || return 13
+    ancestors=$(LC_ALL=C lsblk -snro KNAME,TYPE -- "$source") || return 14
+    disk=$(awk '$2 == "disk" { disks[$1] = 1 } END { for (disk in disks) { print disk; count++ } if (count != 1) exit 1 }' <<< "$ancestors") || return 15
+    [[ "$disk" =~ ^[a-zA-Z0-9_.-]+$ && -b "/dev/$disk" ]] || return 15
     printf '%s\n' "$disk"
 }
 
+find_arch_bios_boot_disk() {
+    install_pkg findmnt lsblk || return 1
+    resolve_mount_unique_disk /boot
+}
+
 confirm_arch_target() {
-    local root root_info root_fs ancestors chosen identity name confirm
+    local chosen rc=0 identity name confirm
     ! is_in_windows || error_and_exit '请从目标 VPS 的 Linux 系统执行 Arch 全盘重装。'
     install_pkg lsblk
     command -v blkid >/dev/null || error_and_exit '缺少 util-linux 的 blkid，无法核对目标磁盘。'
@@ -11272,16 +11375,17 @@ confirm_arch_target() {
         chosen=$xda
     else
         install_pkg findmnt
-        root_info=$(findmnt -n -o SOURCE,FSTYPE --nofsroot --target /) || error_and_exit '无法确认根文件系统设备。'
-        [[ "$root_info" != *$'\n'* ]] || error_and_exit '无法唯一确认根文件系统，请明确指定 --target-disk。'
-        read -r root root_fs <<< "$root_info"
-        case "$root_fs" in
-            btrfs|bcachefs|'') error_and_exit '无法由单个根设备证明整个文件系统的底层磁盘，请明确指定 --target-disk。' ;;
-        esac
-        [[ "$root" == /dev/* && -b "$root" ]] || error_and_exit '根文件系统不是可识别的块设备，请明确指定 --target-disk。'
-        ancestors=$(LC_ALL=C lsblk -snro KNAME,TYPE -- "$root") || error_and_exit '无法读取根设备的底层磁盘。'
-        chosen=$(awk '$2 == "disk" { disks[$1] = 1 } END { for (disk in disks) { print disk; count++ } if (count != 1) exit 1 }' <<< "$ancestors") \
-            || error_and_exit '无法唯一确定根设备所在磁盘，请明确指定 --target-disk。'
+        if ! chosen=$(resolve_mount_unique_disk /); then
+            rc=$?
+            case "$rc" in
+                10) error_and_exit '无法确认根文件系统设备。' ;;
+                11) error_and_exit '无法唯一确认根文件系统，请明确指定 --target-disk。' ;;
+                12) error_and_exit '无法由单个根设备证明整个文件系统的底层磁盘，请明确指定 --target-disk。' ;;
+                13) error_and_exit '根文件系统不是可识别的块设备，请明确指定 --target-disk。' ;;
+                14) error_and_exit '无法读取根设备的底层磁盘。' ;;
+                *) error_and_exit '无法唯一确定根设备所在磁盘，请明确指定 --target-disk。' ;;
+            esac
+        fi
     fi
     [[ "$chosen" =~ ^[a-zA-Z0-9_.-]+$ ]] || error_and_exit '目标磁盘名称无效。'
     identity=$(arch_disk_identity name "$chosen") || error_and_exit '无法直接核验所有整盘或确认目标 PTUUID 唯一。'
@@ -11308,13 +11412,24 @@ if [ $# -eq 0 ]; then
     # 2. 采集 sudo 提权密码
     TARGET_PASSWORD=""
     while true; do
-        IFS= read -s -rp "新用户 sudo 提权密码: " p1 < /dev/tty; printf '\n'
-        IFS= read -s -rp "再次输入确认密码: " p2 < /dev/tty; printf '\n'
-        if [[ -n "$p1" && "$p1" == "$p2" ]]; then
-            TARGET_PASSWORD="$p1"
-            break
+        IFS= read -s -rp "新用户 sudo 提权密码: " p1 < /dev/tty || error_and_exit '无法读取 sudo 密码。'
+        printf '\n'
+        IFS= read -s -rp "再次输入确认密码: " p2 < /dev/tty || error_and_exit '无法读取确认密码。'
+        printf '\n'
+        if [[ -z "$p1" || "$p1" != "$p2" ]]; then
+            printf '❌ 两次密码输入不匹配或为空，请重新输入\n' >&2
+            continue
         fi
-        printf '❌ 两次密码输入不匹配或为空，请重新输入\n' >&2
+        if [[ "$p1" == *$'\n'* || "$p1" == *$'\r'* ]]; then
+            printf '❌ sudo 密码不能包含换行或回车，请重新输入\n' >&2
+            continue
+        fi
+        if ! (LC_ALL=C; (( ${#p1} <= 256 ))); then
+            printf '❌ sudo 密码不能超过 256 字节，请重新输入\n' >&2
+            continue
+        fi
+        TARGET_PASSWORD="$p1"
+        break
     done
 
     # 3. 校验并采集 Ed25519 公钥
@@ -11322,6 +11437,7 @@ if [ $# -eq 0 ]; then
     DEFAULT_KEY=""
     if [[ -f "$AUTH_KEY_FILE" ]]; then
         while IFS= read -r key || [[ -n "$key" ]]; do
+            key=${key%$'\r'}
             if valid_ed25519_key "$key"; then DEFAULT_KEY=$key; break; fi
         done < "$AUTH_KEY_FILE"
     fi
@@ -11343,41 +11459,53 @@ if [ $# -eq 0 ]; then
     done
 
     # 4. SSH 端口
-    read -rp $'\n新系统 SSH 端口 [默认 22]: ' TARGET_SSH_PORT < /dev/tty
-    TARGET_SSH_PORT=${TARGET_SSH_PORT:-22}
-    assert_arch_ssh_port "$TARGET_SSH_PORT"
+    while true; do
+        read -rp $'\n新系统 SSH 端口 [默认 22]: ' TARGET_SSH_PORT < /dev/tty || error_and_exit '无法读取 SSH 端口。'
+        TARGET_SSH_PORT=${TARGET_SSH_PORT:-22}
+        if check_arch_ssh_port "$TARGET_SSH_PORT"; then break; fi
+    done
 
     set -- arch \
         --username "$username" \
         --password "$TARGET_PASSWORD" \
         --ssh-key "$TARGET_SSH_KEY" \
         --ssh-port "$TARGET_SSH_PORT"
-else
-    # CLI 传参模式：保留目标与控制命令，其余参数自动补全 arch
-    case "$1" in
-        arch|reset|-h|--help) ;;
-        *) set -- arch "$@" ;;
-    esac
 fi
 
-# 使用 getopt 解析参数
-if ! ORIGINAL_OPTS=$(getopt -n $0 -o "h,x" --long "$long_opts" -- "$@"); then
+# 第一遍扫描
+# 验证要安装的系统和版本
+# 并处理通用参数
+if ! OPTS1_STR=$(getopt -n $0 -o "h,x" --long "$(get_long_opts)" -- "$@"); then
     exit 1
 fi
 
-# 第一遍扫描，验证要安装的系统和版本
-eval set -- "$ORIGINAL_OPTS"
+eval set -- "$OPTS1_STR"
+OPTS2_ARR=()
 while true; do
     case "$1" in
+    -h | --help)
+        usage_and_exit
+        ;;
     -x | --debug)
         error_and_exit '重装入口不支持 --debug 或 -x 跟踪。'
         ;;
+    --force-cn)
+        # 仅为了方便测试
+        force_cn=1
+        shift
+        ;;
     --)
         shift
+        if [ $# -eq 0 ]; then set -- arch; fi
         verify_os_name "$@"
+        case "$distro" in
+            arch | reset) ;;
+            *) error_and_exit "本构建仅支持 Arch Linux 重装与 reset，不支持目标：$distro" ;;
+        esac
         break
         ;;
     *)
+        OPTS2_ARR+=("$1")
         shift
         ;;
     esac
@@ -11387,7 +11515,6 @@ done
 # wmic 随时会用到
 # wmic 需要下载 wmic.ps1，需要从 confhome 得到，要先将 confhome 改成国内
 # 而 wmic.ps1 又放在 $tmp 目录，因此要先创建临时目录
-# 处理 --frpc-config 时会下载文件，因此在处理参数前就创建临时目录
 (umask 077; mkdir_clear "$tmp")
 init_basearch
 init_confhome
@@ -11401,21 +11528,19 @@ fi
 install_pkg curl grep
 
 unset xda main_disk arch_confirmed_ipv4 arch_ipv4_mode ssh_keys username password ssh_port
-# 第二遍扫描，处理参数
-eval set -- "$ORIGINAL_OPTS"
+# 第二遍扫描
+# 根据 distro 处理参数
+if ! OPTS2_STR=$(
+    getopt -n $0 -o "h,x" --long "$(get_long_opts "$distro")" -- "${OPTS2_ARR[@]}" \
+        2> >(sed "s/unrecognized option:/invalid option for $distro:/" >&2)
+); then
+    exit 1
+fi
+
+eval set -- "$OPTS2_STR"
 # shellcheck disable=SC2034
 while true; do
     case "$1" in
-    -x | --debug)
-        error_and_exit '重装入口不支持 --debug 或 -x 跟踪。'
-        ;;
-    -h | --help)
-        usage_and_exit
-        ;;
-    --commit)
-        commit=$2
-        shift 2
-        ;;
     --ci)
         cloud_image=1
         unset installer
@@ -11446,41 +11571,11 @@ while true; do
         allow_ping=1
         shift
         ;;
-    --force-cn)
-        # 仅为了方便测试
-        force_cn=1
-        shift
-        ;;
-    --hold | --sleep)
+    --hold)
         if ! { [ "$2" = 0 ] || [ "$2" = 1 ] || [ "$2" = 2 ]; }; then
             error_and_exit "Invalid $1 value: $2"
         fi
         hold=$2
-        shift 2
-        ;;
-    --frpc-conf | --frpc-config)
-        [ -n "$2" ] || error_and_exit "Need value for $1"
-
-        case "$(to_lower <<<"$2")" in
-        http://* | https://*)
-            frpc_config_url=$2
-            frpc_config=$tmp/frpc.conf
-            # 用 file 识别文件类型？
-            if ! curl -L "$frpc_config_url" -o "$frpc_config"; then
-                error_and_exit "Can't get frpc config from $frpc_config_url"
-            fi
-            ;;
-        *)
-            # windows 路径转换
-            if ! { frpc_config=$(get_unix_path "$2") && [ -f "$frpc_config" ]; }; then
-                error_and_exit "File not exists: $2"
-            fi
-            ;;
-        esac
-
-        # 转为绝对路径
-        frpc_config=$(readlink -f "$frpc_config")
-
         shift 2
         ;;
     --force-boot-mode)
@@ -11511,7 +11606,6 @@ Available options:
   --ssh-key gitlab:your_username
   --ssh-key https://path/to/public_key
   --ssh-key /path/to/public_key
-  --ssh-key C:\path\to\public_key
 EOF
             exit 1
         }
@@ -11679,7 +11773,7 @@ done
 verify_os_args
 
 # 用户名密码
-if [ "$distro" != arch ] && ! is_netboot_xyz; then
+if [ "$distro" != arch ] && ! { is_netboot_xyz || [ "$distro" = talos ]; }; then
     need_prompt_username=false
     need_prompt_password=false
     if [ -z "$username" ]; then
@@ -11746,7 +11840,7 @@ check_ram
 # el7 x86_64 >=1g
 # el7 aarch64 >=1.5g
 # el8/9/fedora 任何架构 >=2g
-if is_netboot_xyz ||
+if is_netboot_xyz || [ "$distro" = "talos" ] ||
     { ! is_use_cloud_image && {
         [ "$distro" = "alpine" ] || is_distro_like_debian ||
             { is_distro_like_redhat && [ $releasever -eq 7 ] && [ $ram_size -ge 1024 ] && [ $basearch = "x86_64" ]; } ||
@@ -11870,7 +11964,9 @@ if is_need_boot_vmlinuz; then
 
     # 设置 cmdlind initrds
     if ! is_netboot_xyz; then
-        find_main_disk
+        if ! [ "$distro" = talos ]; then
+            find_main_disk
+        fi
         build_cmdline
 
         initrds="$initrd"
@@ -12012,7 +12108,7 @@ echo "$distro $releasever"
 ssh_port=${ssh_port:-22}
 rdp_port=${rdp_port:-3389}
 
-if [ "$distro" = netboot.xyz ]; then
+if [ "$distro" = netboot.xyz ] || [ "$distro" = talos ]; then
     :
 elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
     info "Alpine Live OS"
@@ -12086,6 +12182,15 @@ if [ "$distro" = netboot.xyz ]; then
     warn false "如果要取消进入，请在重启前运行 \"$reinstall_reset\"。"
     warn false
     warn false 'Reboot will start netboot.xyz.'
+    warn false "If you want to cancel entering, run \"$reinstall_reset\" before reboot."
+    warn false '**********************************'
+
+elif [ "$distro" = talos ]; then
+    warn false '********** 警告 Warning **********'
+    warn false '重启后会进入 Talos 维护模式，任何人都可连接，因此你需要尽快使用 "talosctl" 等工具连接并初始化系统'
+    warn false "如果要取消进入，请在重启前运行 \"$reinstall_reset\"。"
+    warn false
+    warn false 'Reboot will start Talos Maintenance Mode. Anyone can connect. So you need to connect and initialize the system using tools like "talosctl" as soon as possible.'
     warn false "If you want to cancel entering, run \"$reinstall_reset\" before reboot."
     warn false '**********************************'
 

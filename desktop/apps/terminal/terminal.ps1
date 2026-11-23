@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     Windows Terminal 与现代 PowerShell 7 终端底座
@@ -16,7 +16,7 @@
        - PowerShell 7 (pwsh): 优先探测 Scoop 持久化路径，注入 -NoLogo 与遥测禁用；
        - 菜单 newTabMenu 纯化收敛为唯一默认生产力终端。
     4. 终端交互体验基线对齐：
-       - pwsh: 固化 $PROFILE 的 PSReadLine 历史按键与行内预测。
+       - pwsh: 固化 $PROFILE 的 PSReadLine 前缀回溯、回溯去重、增量保存与行内预测。
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
@@ -146,7 +146,7 @@ function Invoke-DownloadFile {
         [int]$TimeoutSec = 300
     )
 
-    $tool = Join-Path $PSScriptRoot "_aria2.ps1"
+    $tool = Join-Path $PSScriptRoot "..\_shared\_aria2.ps1"
     if (-not (Test-Path $tool)) {
         throw "未在应用域定位到核心下载引擎: _aria2.ps1，请确保仓库完整性！"
     }
@@ -228,64 +228,66 @@ public class FontManager {
     }
 }
 
-function Update-ManagedConfigFile {
-    param(
-        [string]$FilePath,
-        [string]$BlockTag,
-        [string]$BlockContent
-    )
-    if ([string]::IsNullOrWhiteSpace($FilePath)) { throw "FilePath 不可为空" }
-    $parent = Split-Path -Path $FilePath -Parent
-    if (-not [string]::IsNullOrWhiteSpace($parent) -and -not (Test-Path $parent)) {
-        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+function Get-ManagedConfigBlockMatch([string]$Text, [string]$BlockTag) {
+    $start = "# >>> managed: $BlockTag >>>"
+    $end = "# <<< managed: $BlockTag <<<"
+    $tokens = $null; $errors = $null
+    [void][Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { throw 'PowerShell Profile 无法解析，请修正语法后重试。' }
+    # 只认可真实的整行注释，避免改写 here-string 中的同名标记。
+    $markers = @($tokens | Where-Object { $_.Kind -eq 'Comment' -and $_.Extent.StartColumnNumber -eq 1 -and $_.Text -cin @($start, $end) })
+    if ($markers.Count -eq 0) { return }
+    if ($markers.Count -ne 2 -or $markers[0].Text -cne $start -or $markers[1].Text -cne $end) {
+        throw "PowerShell Profile 托管块 [$BlockTag] 边界重复或不完整，请检查对应标记。"
     }
-
-    $startMarker = "# >>> managed: $BlockTag >>>"
-    $endMarker   = "# <<< managed: $BlockTag <<<"
-    $injection   = "$startMarker`r`n$BlockContent`r`n$endMarker"
-
-    $existing = if (Test-Path $FilePath) { [System.IO.File]::ReadAllText($FilePath, [System.Text.UTF8Encoding]::new($false)) } else { "" }
-    $startEscaped = [regex]::Escape($startMarker)
-    $endEscaped   = [regex]::Escape($endMarker)
-    $regex = "(?s)[ \t]*$startEscaped\r?\n.*?\r?\n[ \t]*$endEscaped"
-
-    if ($existing -match $regex) {
-        $newContent = [System.Text.RegularExpressions.Regex]::Replace($existing, $regex, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $injection })
-    } else {
-        if ([string]::IsNullOrWhiteSpace($existing)) {
-            $newContent = "$injection`r`n"
-        } else {
-            $trimmed = $existing.TrimEnd("`r", "`n")
-            $newContent = "$trimmed`r`n`r`n$injection`r`n"
-        }
-    }
-
-    if ($existing -ne $newContent) {
-        [System.IO.File]::WriteAllText($FilePath, $newContent, [System.Text.UTF8Encoding]::new($false))
+    $first = $markers[0].Extent.StartOffset
+    $bodyStart = $Text.IndexOf([char]10, $markers[0].Extent.EndOffset) + 1
+    $blockEnd = $markers[1].Extent.EndOffset
+    if ($blockEnd -lt $Text.Length -and $Text[$blockEnd] -eq "`r") { $blockEnd++ }
+    if ($blockEnd -lt $Text.Length -and $Text[$blockEnd] -eq "`n") { $blockEnd++ }
+    return [pscustomobject]@{
+        Index = $first; Length = $blockEnd - $first
+        Body = $Text.Substring($bodyStart, $markers[1].Extent.StartOffset - $bodyStart)
     }
 }
 
-function Remove-ManagedConfigBlock {
-    param(
-        [string]$FilePath,
-        [string]$BlockTag
-    )
-    if (-not (Test-Path $FilePath)) { return }
-    $existing = [System.IO.File]::ReadAllText($FilePath, [System.Text.UTF8Encoding]::new($false))
-    $startMarker = "# >>> managed: $BlockTag >>>"
-    $endMarker   = "# <<< managed: $BlockTag <<<"
-    $startEscaped = [regex]::Escape($startMarker)
-    $endEscaped   = [regex]::Escape($endMarker)
-    $pattern = "(?ms)^[ \t]*$startEscaped\r?\n.*?\r?\n[ \t]*$endEscaped[ \t]*\r?\n?"
+function Test-ManagedConfigBlock([string]$FilePath, [string]$BlockTag, [string]$BlockContent) {
+    if (-not (Test-Path -LiteralPath $FilePath)) { return $false }
+    $existing = [IO.File]::ReadAllText($FilePath, [Text.UTF8Encoding]::new($false, $true))
+    $block = Get-ManagedConfigBlockMatch $existing $BlockTag
+    return ($null -ne $block -and [string]::Equals($block.Body.Replace("`r`n", "`n"), ($BlockContent.Replace("`r`n", "`n") + "`n"), [StringComparison]::Ordinal))
+}
 
-    if ($existing -match $pattern) {
-        $cleaned = [System.Text.RegularExpressions.Regex]::Replace($existing, $pattern, "")
-        $final = $cleaned.TrimEnd("`r", "`n")
-        if ([string]::IsNullOrWhiteSpace($final)) {
-            Remove-Item -Path $FilePath -Force -ErrorAction SilentlyContinue
-        } else {
-            [System.IO.File]::WriteAllText($FilePath, "$final`r`n", [System.Text.UTF8Encoding]::new($false))
-        }
+function Update-ManagedConfigFile([string]$FilePath, [string]$BlockTag, [string]$BlockContent) {
+    if ([string]::IsNullOrWhiteSpace($FilePath)) { throw 'FilePath 不可为空' }
+    if (Test-ManagedConfigBlock $FilePath $BlockTag $BlockContent) { return }
+
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $existing = if (Test-Path -LiteralPath $FilePath) { [IO.File]::ReadAllText($FilePath, $encoding) } else { '' }
+    $block = Get-ManagedConfigBlockMatch $existing $BlockTag
+    $body = $BlockContent.Replace("`r`n", "`n").Replace("`n", "`r`n")
+    $injection = "# >>> managed: $BlockTag >>>`r`n$body`r`n# <<< managed: $BlockTag <<<`r`n"
+    if ($null -ne $block) {
+        $newContent = $existing.Remove($block.Index, $block.Length).Insert($block.Index, $injection)
+    } else {
+        $separator = if ($existing.Length -eq 0) { '' } elseif ($existing.EndsWith("`n")) { "`r`n" } else { "`r`n`r`n" }
+        $newContent = $existing + $separator + $injection
+    }
+    [void][IO.Directory]::CreateDirectory((Split-Path -Path $FilePath -Parent))
+    [IO.File]::WriteAllText($FilePath, $newContent, $encoding)
+}
+
+function Remove-ManagedConfigBlock([string]$FilePath, [string]$BlockTag) {
+    if (-not (Test-Path -LiteralPath $FilePath)) { return }
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $existing = [IO.File]::ReadAllText($FilePath, $encoding)
+    $block = Get-ManagedConfigBlockMatch $existing $BlockTag
+    if ($null -eq $block) { return }
+    $cleaned = $existing.Remove($block.Index, $block.Length)
+    if ([string]::IsNullOrWhiteSpace($cleaned)) {
+        Remove-Item -LiteralPath $FilePath -ErrorAction Stop
+    } else {
+        [IO.File]::WriteAllText($FilePath, $cleaned, $encoding)
     }
 }
 
@@ -370,12 +372,14 @@ $HighValueUserData = @(
 )
 
 $pwshBlock = @'
-# PSReadLine 按键绑定: 根据已输入前缀滚动历史记录与预测
+# PSReadLine: 前缀回溯与预测；增量保存最新使用，回溯时去重。
 if (Get-Module -ListAvailable -Name PSReadLine) {
     Set-PSReadLineKeyHandler -Key UpArrow   -Function HistorySearchBackward
     Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
-    Set-PSReadLineOption -PredictionSource History
-    Set-PSReadLineOption -PredictionViewStyle InlineView
+    Set-PSReadLineOption -HistoryNoDuplicates -HistorySaveStyle SaveIncrementally
+    if (-not [Console]::IsOutputRedirected -and ($null -eq $Host.UI.SupportsVirtualTerminal -or $Host.UI.SupportsVirtualTerminal)) {
+        Set-PSReadLineOption -PredictionSource History -PredictionViewStyle InlineView
+    }
 }
 '@
 
@@ -620,23 +624,23 @@ if (-not $isLegacyHidden) {
 }
 
 # 4.5 PowerShell 7 前缀历史检索托管块
-$pwshHasBlock = (Test-Path $pwshProfilePath) -and (Get-Content $pwshProfilePath -Raw -ErrorAction SilentlyContinue | Select-String "pwsh-history-search")
+$pwshHasBlock = Test-ManagedConfigBlock $pwshProfilePath 'pwsh-history-search' $pwshBlock
 $chkList.Add([PSCustomObject]@{
     状态     = if ($pwshHasBlock) { " ✔" } else { " ▲" }
     模块     = "配置"
     属性     = "PowerShell 7 PSReadLine 历史回溯"
-    实机     = if ($pwshHasBlock) { "已托管注入 ($pwshProfilePath)" } else { "未注入" }
-    基线     = "已托管注入 ($pwshProfilePath)"
+    实机     = if ($pwshHasBlock) { "托管块匹配 ($pwshProfilePath)" } else { "托管块缺失或偏离" }
+    基线     = "托管块匹配 ($pwshProfilePath)"
     状态判定 = if ($pwshHasBlock) { "✔ 匹配" } else { "✘ 偏离" }
 })
 if (-not $pwshHasBlock) {
     $diffList.Add([PSCustomObject]@{
         分层模块 = "配置"
         受控属性 = "PowerShell 7 PSReadLine 历史回溯"
-        实机状态 = "未注入"
-        期望基线 = "已托管注入 ($pwshProfilePath)"
-        Purpose  = "固化 PSReadLine 的 Up/Down 键按已键入前缀模糊匹配历史与行内预测"
-        Impact   = "打命令时仅需输入前几个字母按 Up 键即可秒级回溯历史"
+        实机状态 = "托管块缺失或偏离"
+        期望基线 = "托管块匹配 ($pwshProfilePath)"
+        Purpose  = "固化 PSReadLine 前缀回溯、回溯去重、增量保存与行内预测"
+        Impact   = "重开 pwsh 后生效；重复命令回溯时优先显示最近一次，不改写已有历史"
     })
 }
 
@@ -750,7 +754,10 @@ Write-Host "✅ Windows Terminal 策略已写入: $wtSettings" -ForegroundColor 
 
 # 6.3 注入 PowerShell 7 历史按键与行内预测托管块
 Write-Host "⚙️  正在注入 PowerShell 7 前缀历史智能检索与行内预测基线..." -ForegroundColor Cyan
-Update-ManagedConfigFile -FilePath $pwshProfilePath -BlockTag "pwsh-history-search" -BlockContent $pwshBlock
+Update-ManagedConfigFile -FilePath $pwshProfilePath -BlockTag 'pwsh-history-search' -BlockContent $pwshBlock
+if (-not (Test-ManagedConfigBlock $pwshProfilePath 'pwsh-history-search' $pwshBlock)) {
+    throw "PowerShell Profile 托管块写后回读不匹配: $pwshProfilePath"
+}
 Write-Host "✅ PowerShell 7 历史检索体验基线对齐完毕。" -ForegroundColor Green
 
 # ==============================================================================

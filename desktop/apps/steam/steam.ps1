@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     Steam 平台
@@ -124,7 +124,7 @@ function Get-SteamFirewallSpecs {
     return ,$specs
 }
 
-$firewall = Join-Path $PSScriptRoot "_firewall.ps1"
+$firewall = Join-Path $PSScriptRoot "..\_shared\_firewall.ps1"
 if (-not (Test-Path $firewall)) {
     throw "未在应用域定位到核心防火墙工具: _firewall.ps1，请确保仓库完整性！"
 }
@@ -212,7 +212,7 @@ function Invoke-DownloadFile {
         [int]$TimeoutSec = 300
     )
 
-    $tool = Join-Path $PSScriptRoot "_aria2.ps1"
+    $tool = Join-Path $PSScriptRoot "..\_shared\_aria2.ps1"
     if (-not (Test-Path $tool)) {
         throw "未在应用域定位到核心下载引擎: _aria2.ps1，请确保仓库完整性！"
     }

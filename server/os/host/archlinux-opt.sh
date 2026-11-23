@@ -134,53 +134,154 @@ normalize_history() {
     [[ -f "$histfile" && -s "$histfile" && -r "$histfile" && -w "$histfile" && ! -L "$histfile" ]] || return 0
     history -a 2>/dev/null || true
 
-    local has_unformatted=0
-    if awk '
-        BEGIN { bad=0 }
-        /^#[0-9]+$/ { have_stamp=1; next }
-        { if (!have_stamp) { bad=1; exit 0 } }
-        END { if (bad) exit 0; exit 1 }
+    # 快速预检：仅当首个时间戳前出现裸行，或任意时间戳块包含多行时才进入解析
+    if ! awk '
+        /^#[0-9]+$/ { have_stamp=1; lines=0; next }
+        {
+            if (!have_stamp) { need=1; exit 0 }
+            lines++
+            if (lines > 1) { need=1; exit 0 }
+        }
+        END { exit (need ? 0 : 1) }
     ' "$histfile" 2>/dev/null; then
-        has_unformatted=1
+        return 0
     fi
 
-    [[ "$has_unformatted" -eq 1 ]] || return 0
+    local base_time
+    base_time=$(stat -c '%Y' -- "$histfile" 2>/dev/null || date +%s)
 
-    local base_time tmp_norm
-    base_time=$(stat -c '%Y' "$histfile" 2>/dev/null || date +%s)
-    tmp_norm=$(mktemp "${histfile%/*}/.bash_history.norm.XXXXXX") || return 0
+    local -a raw_lines=() out_lines=() block_lines=()
+    mapfile -t raw_lines < "$histfile"
 
-    if awk -v btime="$base_time" '
-        BEGIN { count=0; has_cmd=0; has_stamp=0; stamp="" }
-        function flush_line() {
-            if (!has_cmd) return
-            print (has_stamp ? stamp : "#" (btime + count))
-            print cmd
-            count++
-            has_cmd=0; has_stamp=0; stamp=""; cmd=""
-        }
-        /^#[0-9]+$/ {
-            if (has_cmd) flush_line()
-            has_stamp=1; stamp=$0; next
-        }
-        {
-            if (has_stamp) {
-                if (!has_cmd) { cmd=$0; has_cmd=1 }
-                else { cmd=cmd "\n" $0 }
-            } else {
-                if (has_cmd) flush_line()
-                cmd=$0; has_cmd=1; has_stamp=0; stamp=""
-            }
-        }
-        END { flush_line() }
-    ' "$histfile" > "$tmp_norm" && [[ -s "$tmp_norm" ]]; then
-        cp --attributes-only --preserve=mode,ownership "$histfile" "$tmp_norm" 2>/dev/null || true
-        mv -f "$tmp_norm" "$histfile"
+    local count=0 needs_rewrite=0 seen_stamp=0 current_stamp=""
+    local line cand err j k n split_end tail_bs tmp_l complete_end
+
+    # 按行扫描：单行时间戳条目零开销原样保留；多行块用 bash -n 区分真多行命令与混入的裸行
+    local total=${#raw_lines[@]} idx=0
+    while (( idx <= total )); do
+        if (( idx == total )) || [[ "${raw_lines[idx]}" =~ ^#[0-9]+$ ]]; then
+            n=${#block_lines[@]}
+            if (( seen_stamp == 0 )); then
+                if (( n > 0 )); then
+                    needs_rewrite=1
+                    j=0
+                    while (( j < n )); do
+                        cand=""
+                        complete_end=-1
+                        for (( k = j; k < n; k++ )); do
+                            cand+="${cand:+$'\n'}${block_lines[k]}"
+                            tail_bs=0
+                            tmp_l="${block_lines[k]}"
+                            while [[ "$tmp_l" == *\\ ]]; do
+                                tmp_l="${tmp_l%?}"
+                                tail_bs=$(( tail_bs + 1 ))
+                            done
+                            if (( tail_bs % 2 == 1 && k < n - 1 )); then continue; fi
+                            if err=$(printf '%s\n' "$cand" | bash -n 2>&1) && [[ -z "$err" ]]; then
+                                complete_end=$k
+                                break
+                            fi
+                        done
+                        if (( complete_end < 0 )); then
+                            complete_end=$j
+                        fi
+                        out_lines+=("#$(( base_time + count ))")
+                        count=$(( count + 1 ))
+                        for (( k = j; k <= complete_end; k++ )); do
+                            out_lines+=("${block_lines[k]}")
+                        done
+                        j=$(( complete_end + 1 ))
+                    done
+                fi
+            else
+                if (( n == 0 )); then
+                    out_lines+=("$current_stamp")
+                elif (( n == 1 )); then
+                    out_lines+=("$current_stamp" "${block_lines[0]}")
+                else
+                    cand=""
+                    split_end=-1
+                    for (( k = 0; k < n; k++ )); do
+                        cand+="${cand:+$'\n'}${block_lines[k]}"
+                        tail_bs=0
+                        tmp_l="${block_lines[k]}"
+                        while [[ "$tmp_l" == *\\ ]]; do
+                            tmp_l="${tmp_l%?}"
+                            tail_bs=$(( tail_bs + 1 ))
+                        done
+                        if (( tail_bs % 2 == 1 && k < n - 1 )); then continue; fi
+                        if err=$(printf '%s\n' "$cand" | bash -n 2>&1) && [[ -z "$err" ]]; then
+                            split_end=$k
+                            break
+                        fi
+                    done
+                    if (( split_end < 0 )); then
+                        split_end=0
+                    fi
+                    out_lines+=("$current_stamp")
+                    for (( k = 0; k <= split_end; k++ )); do
+                        out_lines+=("${block_lines[k]}")
+                    done
+                    if (( split_end < n - 1 )); then
+                        needs_rewrite=1
+                        j=$(( split_end + 1 ))
+                        while (( j < n )); do
+                            cand=""
+                            complete_end=-1
+                            for (( k = j; k < n; k++ )); do
+                                cand+="${cand:+$'\n'}${block_lines[k]}"
+                                tail_bs=0
+                                tmp_l="${block_lines[k]}"
+                                while [[ "$tmp_l" == *\\ ]]; do
+                                    tmp_l="${tmp_l%?}"
+                                    tail_bs=$(( tail_bs + 1 ))
+                                done
+                                if (( tail_bs % 2 == 1 && k < n - 1 )); then continue; fi
+                                if err=$(printf '%s\n' "$cand" | bash -n 2>&1) && [[ -z "$err" ]]; then
+                                    complete_end=$k
+                                    break
+                                fi
+                            done
+                            if (( complete_end < 0 )); then
+                                complete_end=$j
+                            fi
+                            out_lines+=("#$(( base_time + count ))")
+                            count=$(( count + 1 ))
+                            for (( k = j; k <= complete_end; k++ )); do
+                                out_lines+=("${block_lines[k]}")
+                            done
+                            j=$(( complete_end + 1 ))
+                        done
+                    fi
+                fi
+            fi
+            block_lines=()
+            if (( idx < total )); then
+                seen_stamp=1
+                current_stamp="${raw_lines[idx]}"
+            fi
+        else
+            block_lines+=("${raw_lines[idx]}")
+        fi
+        idx=$(( idx + 1 ))
+    done
+
+    if [[ "$needs_rewrite" -ne 1 ]]; then
+        return 0
+    fi
+
+    local histdir="${histfile%/*}" tmp_norm
+    [[ "$histdir" != "$histfile" ]] || histdir=.
+    tmp_norm=$(mktemp "$histdir/.bash_history.norm.XXXXXX") || return 0
+
+    if printf '%s\n' "${out_lines[@]}" > "$tmp_norm" && [[ -s "$tmp_norm" ]]; then
+        cp --attributes-only --preserve=mode,ownership -- "$histfile" "$tmp_norm" 2>/dev/null || true
+        mv -f -- "$tmp_norm" "$histfile"
         history -c 2>/dev/null || true
         history -r 2>/dev/null || true
         printf '  ℹ️  已自动规范化已有历史记录的时间戳格式\n'
     else
-        rm -f "$tmp_norm"
+        rm -f -- "$tmp_norm"
     fi
 }
 
@@ -218,13 +319,20 @@ __git_info() {
     local branch
     branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return
     [[ -n "$branch" ]] || return
-    if git status --porcelain --ignore-submodules 2>/dev/null | command grep -q .; then
+    if git status --porcelain -uno --ignore-submodules 2>/dev/null | command grep -q .; then
         printf ' (%s*)' "$branch"
     else
         printf ' (%s)' "$branch"
     fi
 }
-PS1='\[\e[01;32m\]\u@\h\[\e[00m\]:\[\e[01;34m\]\w\[\e[00m\]\[\e[01;33m\]$(__git_info)\[\e[00m\]\$ '
+if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && [[ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]]; then
+    PS1='\[\e[01;32m\]\u@\h\[\e[00m\]:\[\e[01;34m\]\w\[\e[00m\]\[\e[01;33m\]$(__git_info)\[\e[00m\]\$ '
+else
+    PS1='[\u@\h \W]$(__git_info)\$ '
+fi
+if declare -F __exit_status >/dev/null 2>&1 && [[ "$PS1" != *'$(__exit_status)'* ]]; then
+    PS1='$(__exit_status)'"$PS1"
+fi
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:git-prompt" "$content"
@@ -430,10 +538,19 @@ opt_paru() {
         local tmp_conf= result=0
         if [[ "$compile_profile" == "low-memory" ]]; then
             export MAKEFLAGS="-j1"
+            export CARGO_BUILD_JOBS=1
             export CARGO_PROFILE_RELEASE_LTO=off
             tmp_conf=$(mktemp) || exit 1
-            if ! cat > "$tmp_conf" <<EOF
+            if ! cat > "$tmp_conf" <<'EOF'
 source /etc/makepkg.conf
+if [[ -d /etc/makepkg.conf.d ]]; then
+    for _dropin in /etc/makepkg.conf.d/*.conf; do
+        if [[ -r "$_dropin" ]]; then
+            source "$_dropin"
+        fi
+    done
+    unset _dropin
+fi
 MAKEFLAGS="-j1"
 OPTIONS+=(!lto !debug)
 EOF
@@ -442,7 +559,7 @@ EOF
                 exit 1
             fi
             build_options+=(--config "$tmp_conf")
-            printf '  ⚙️  低内存：-j1，!lto !debug，CARGO_LTO=off\n'
+            printf '  ⚙️  低内存：-j1，CARGO_BUILD_JOBS=1，!lto !debug，CARGO_LTO=off\n'
         else
             printf '  🔨 makepkg %s\n' "$([[ "$install_mode" == "prebuilt" ]] && echo "安装预编译" || echo "默认编译")"
         fi

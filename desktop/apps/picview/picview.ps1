@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     PicView 看图工具
@@ -59,7 +59,7 @@ if ($currentUser -ne $consoleUser -and $Action -ne "Check") {
     throw "【跨账号提权阻断】检测到终端运行身份 [$currentUser] 与当前桌面登录用户 [$consoleUser] 不一致！为防配置污染，请直接在 [$consoleUser] 桌面会话中执行。"
 }
 
-$console = Join-Path $PSScriptRoot "_console.ps1"
+$console = Join-Path $PSScriptRoot "..\_shared\_console.ps1"
 if (-not (Test-Path $console)) {
     throw "未在应用域定位到核心终端交互组件: _console.ps1，请确保仓库完整性！"
 }
