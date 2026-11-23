@@ -1834,7 +1834,7 @@ require_arch_fixed_ipv4() {
         error_and_exit 'Cannot read the rescue IPv4 result.'
     [ "$usable" = 1 ] || error_and_exit 'The rescue environment did not confirm usable IPv4.'
     case "$arch_ipv4_mode:$dhcp:$disabled" in
-        dhcp:1:0 | static:0:0) ;;
+        dhcp:1:0 | static:0:0 | static:1:0) ;;
         *) error_and_exit 'Rescue IPv4 does not match the confirmed assignment mode. Check the provider settings.' ;;
     esac
     mac=$(cat "/dev/netconf/$nic/mac_addr") && [ -n "$mac" ] &&
@@ -1848,7 +1848,7 @@ require_arch_fixed_ipv4() {
     [ "${actual%/*}" = "${expected%/*}" ] || error_and_exit 'The fixed IPv4 address changed in rescue.'
     routes=$(ip -4 route show default dev "$nic") && [ -n "$routes" ] ||
         error_and_exit 'Cannot verify the live rescue IPv4 default route.'
-    if [ "$arch_ipv4_mode" = static ]; then
+    if [ "$arch_ipv4_mode" = static ] && [ "$dhcp" = 0 ]; then
         gateway=$(cat "/dev/netconf/$nic/ipv4_gateway") && [ -n "$gateway" ] &&
             [ "$actual" = "$expected" ] &&
             printf '%s\n' "$routes" | awk -v gateway="$gateway" '

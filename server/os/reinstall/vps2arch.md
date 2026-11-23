@@ -73,10 +73,42 @@ Arch x86-64 面向服务商已分配固定 IPv4 的 VPS。先查服务商说明�
 set -Eeuo pipefail
 [[ $EUID -eq 0 ]] || { printf '❌ 必须以 root 执行\n' >&2; exit 1; }
 
-curl -fL --progress-bar https://raw.githubusercontent.com/Lokyael/vpsbase/main/server/os/reinstall/vps2arch.sh -o /root/vps2arch.sh
+URL=https://raw.githubusercontent.com/Lokyael/vpsbase/main/server/os/reinstall/vps2arch.sh
+
+if command -v wget >/dev/null; then wget -q --show-progress -O /root/vps2arch.sh "$URL"
+else curl -fL --progress-bar "$URL" -o /root/vps2arch.sh; fi
 
 bash /root/vps2arch.sh
 )
 ```
 
 仅在脚本成功退出并显示 `本次已安排重装` 后，才执行 `reboot` 或通过控制台冷重启。需要在重启前撤销安排时，使用脚本打印的 `reset` 命令。`已取消` 也会退出 0，但没有安排本次重装，也不会清除先前安排的任务；若曾安排旧任务，请先核对引导状态再决定是否重启。进入新系统后先在控制台核对实际 IPv4 地址，再从新终端验证 SSH 和 sudo 密码。
+
+## 服务商回收与整盘销毁（在线抹盘）
+
+重装系统（包括上方 `vps2arch`）通过格式化重建文件系统元数据，**无需且不应**前置执行整盘覆写（写入全零在未开启 TRIM 的虚拟化磁盘上会导致严重的写放大并消耗 I/O 信用）。
+
+仅在 VPS **彻底退租、销毁实例并交还服务商**，且需防止后继租户或非规范服务商扫描底层磁盘残留时，才需对整盘进行擦除。
+
+在缺乏服务商救援系统（Rescue Mode）的常见环境中，直接在线裸写磁盘设备会导致内核发生 I/O 错误紧急锁定，使覆写半途截断。[`vps-wipe.sh`](vps-wipe.sh) 提供免救援系统的在线自包含销毁：依次**粉碎敏感凭据、填零所有未分配空闲扇区，并最终物理抹除磁盘分区表与引导头部**。
+
+> [!CAUTION]
+> 此操作**绝对不可逆**！执行后当前系统所有凭据与数据将被彻底抹除，系统将立即瘫痪断联。必须在已确定 VPS 彻底废弃退租、无任何保留价值时执行。
+
+在目标 VPS 上以 root 执行交互式销毁（需手动输入 `DESTROY` 确认）：
+
+```bash
+(
+set -Eeuo pipefail
+[[ $EUID -eq 0 ]] || { printf '❌ 必须以 root 执行\n' >&2; exit 1; }
+
+URL=https://raw.githubusercontent.com/Lokyael/vpsbase/main/server/os/reinstall/vps-wipe.sh
+
+if command -v wget >/dev/null; then wget -q --show-progress -O /root/vps-wipe.sh "$URL"
+else curl -fL --progress-bar "$URL" -o /root/vps-wipe.sh; fi
+
+bash /root/vps-wipe.sh
+)
+```
+
+脚本执行完毕并输出销毁完成提示后，直接在服务商控制台彻底**删除／销毁（Destroy / Terminate）实例**。
