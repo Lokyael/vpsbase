@@ -207,8 +207,14 @@ vw_fetch() {
     [[ "$image" =~ ^(sha256:)?[0-9a-f]{64}$ ]] || vw_fail '镜像获取结果无效'
     image="sha256:${image#sha256:}"
     meta=$(vw_pm image inspect "$image")
-    digest=$(jq -er '.[0].RepoDigests|map(select(test("^docker.io/vaultwarden/server@sha256:[0-9a-f]{64}$")))|unique|
-      if length==1 then .[0] else error("镜像摘要不唯一") end' <<< "$meta")
+    # RepoDigests 可同时含发布索引和平台清单；记录本次镜像 ID 的 Podman 主摘要。
+    digest=$(jq -er --arg image "$image" '
+      select(type=="array" and length==1) | .[0] |
+      select((.Id|ltrimstr("sha256:"))==($image|ltrimstr("sha256:"))) |
+      .Digest as $main | select($main|type=="string" and test("^sha256:[0-9a-f]{64}$")) |
+      ("docker.io/vaultwarden/server@"+$main) as $ref |
+      select(.RepoDigests|type=="array" and all(.[]; type=="string") and index($ref)!=null) | $ref' <<< "$meta") \
+      || vw_fail '无法核验本次 Vaultwarden 镜像 ID 的官方仓库主摘要'
     arch=$(jq -er '.[0].Architecture' <<< "$meta")
     actual=$(vw_probe "$image" /vaultwarden --version)
     [[ "${actual%%$'\n'*}" == "Vaultwarden $version" ]] || vw_fail '镜像实际版本与发行版不符'
