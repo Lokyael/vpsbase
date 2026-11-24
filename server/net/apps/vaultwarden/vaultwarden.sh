@@ -257,7 +257,9 @@ vw_state() {
     token=$(jq -er .token <<< "$SLOT")
     jq -e --arg base "$VW" --arg token "$token" '
       .[0]|(.Config.Env|map(select(startswith("HOSTNAME=")))|length)<=1 and
-      (.Config.Env|map(select(startswith("HOSTNAME=")|not))|sort)==([
+      (.Config.Env|map(select(startswith("HOME=")))|length)<=1 and
+      (.Config.Env|map(select(startswith("HOME=")))|all(.=="HOME=/root")) and
+      (.Config.Env|map(select((startswith("HOSTNAME=") or startswith("HOME="))|not))|sort)==([
         "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "container=podman", "ROCKET_PROFILE=release", "DEBIAN_FRONTEND=noninteractive",
         "ROCKET_ADDRESS=0.0.0.0", "ROCKET_PORT=8088", "DATA_FOLDER=/data", "DATABASE_URL=sqlite:///data/db.sqlite3",
         "CONFIG_FILE=/data/config.json", "ENV_FILE=/etc/vaultwarden-config/vaultwarden.env",
@@ -543,7 +545,7 @@ vw_create() {
       --label "io.vaultwarden.lifecycle=$token" --restart no --stop-signal SIGTERM --user 0:0 \
       --pid private --init=false --cgroups enabled --read-only=false --entrypoint /bin/sh --health-cmd none \
       --unsetenv-all --env-host=false --http-proxy=false \
-      -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin -e container=podman \
+      -e PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin -e container=podman -e HOME=/root \
       -e ROCKET_PROFILE=release -e DEBIAN_FRONTEND=noninteractive \
       -e "VAULTWARDEN_TOKEN=$token" -e ROCKET_ADDRESS=0.0.0.0 -e ROCKET_PORT=8088 \
       -e DATA_FOLDER=/data -e DATABASE_URL=sqlite:///data/db.sqlite3 -e CONFIG_FILE=/data/config.json \
