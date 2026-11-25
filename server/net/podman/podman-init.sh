@@ -76,7 +76,8 @@ fi
 # 启用用户管理器前，确认 ctrsvc 没有任何 sudo 授权。
 sudo_rc=0
 sudo_out=$(sudo -l -U ctrsvc 2>&1) || sudo_rc=$?
-[[ $sudo_rc -eq 1 && "$sudo_out" == *"not allowed to run sudo"* ]] \
+no_sudo_re='^User ctrsvc is not allowed to run sudo on [^[:space:]]+\.$'
+[[ $sudo_rc -eq 0 && "$sudo_out" =~ $no_sudo_re ]] \
     || fail "无法确认 ctrsvc 无 sudo 授权或存在授权规则: $sudo_out"
 
 ! sudo test -L /usr/local/bin/ctrsvc-check || fail '/usr/local/bin/ctrsvc-check 不能为符号链接'
