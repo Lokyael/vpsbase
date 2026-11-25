@@ -16,7 +16,7 @@
        - PowerShell 7 (pwsh): 优先探测 Scoop 持久化路径，注入 -NoLogo 与遥测禁用；
        - 菜单 newTabMenu 纯化收敛为唯一默认生产力终端。
     4. 终端交互体验基线对齐：
-       - pwsh: 固化 $PROFILE 的 PSReadLine 前缀回溯、回溯去重、增量保存与行内预测。
+       - pwsh: 固化 $PROFILE 的 PSReadLine 前缀回溯、回溯去重、增量保存、超过 6 行多行仅内存保留与行内预测。
 
 .PARAMETER Action
     指定生命周期操作模式，可选值:
@@ -367,11 +367,18 @@ $HighValueUserData = @(
 )
 
 $pwshBlock = @'
-# PSReadLine: 前缀回溯与预测；增量保存最新使用，回溯时去重。
+# PSReadLine: 前缀回溯与预测；增量保存最新使用，回溯时去重；超过 6 行的多行命令仅保留在当前会话内存。
 if (Get-Module -ListAvailable -Name PSReadLine) {
     Set-PSReadLineKeyHandler -Key UpArrow   -Function HistorySearchBackward
     Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward
     Set-PSReadLineOption -HistoryNoDuplicates -HistorySaveStyle SaveIncrementally
+    Set-PSReadLineOption -AddToHistoryHandler {
+        param([string]$line)
+        $default = [Microsoft.PowerShell.PSConsoleReadLine]::GetDefaultAddToHistoryOption($line)
+        if ($default -ne [Microsoft.PowerShell.AddToHistoryOption]::MemoryAndFile) { return $default }
+        if (($line -split "`r?`n").Count -gt 6) { return [Microsoft.PowerShell.AddToHistoryOption]::MemoryOnly }
+        return $default
+    }
     if (-not [Console]::IsOutputRedirected -and ($null -eq $Host.UI.SupportsVirtualTerminal -or $Host.UI.SupportsVirtualTerminal)) {
         Set-PSReadLineOption -PredictionSource History -PredictionViewStyle InlineView
     }
@@ -634,7 +641,7 @@ if (-not $pwshHasBlock) {
         受控属性 = "PowerShell 7 PSReadLine 历史回溯"
         实机状态 = "托管块缺失或偏离"
         期望基线 = "托管块匹配 ($pwshProfilePath)"
-        Purpose  = "固化 PSReadLine 前缀回溯、回溯去重、增量保存与行内预测"
+        Purpose  = "固化 PSReadLine 前缀回溯、回溯去重、增量保存、超过 6 行多行仅内存保留与行内预测"
         Impact   = "重开 pwsh 后生效；重复命令回溯时优先显示最近一次，不改写已有历史"
     })
 }
@@ -764,6 +771,6 @@ Write-Host "====================================================================
 Write-Host "   - 默认终端: PowerShell 7 ($GUID_PWSH)" -ForegroundColor Gray
 Write-Host "   - 启动目录: $targetStartDir (Acrylic 0.85 磨砂开启)" -ForegroundColor Gray
 Write-Host "   - 渲染字体: Maple Mono NL NFMono CN (12pt)" -ForegroundColor Gray
-Write-Host "   - 体验统一: pwsh 已固化 PSReadLine 前缀历史智能检索与行内预测" -ForegroundColor Gray
+Write-Host "   - 体验统一: pwsh 已固化 PSReadLine 前缀历史智能检索、超过 6 行多行仅内存保留与行内预测" -ForegroundColor Gray
 
 return
