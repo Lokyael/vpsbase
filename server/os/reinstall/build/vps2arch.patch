@@ -907,15 +907,15 @@
 +        IFS= read -s -rp "再次输入确认密码: " p2 < /dev/tty || error_and_exit '无法读取确认密码。'
 +        printf '\n'
 +        if [[ -z "$p1" || "$p1" != "$p2" ]]; then
-+            printf '❌ 两次密码输入不匹配或为空，请重新输入\n' >&2
++            printf '✘ 两次密码输入不匹配或为空，请重新输入\n' >&2
 +            continue
 +        fi
 +        if [[ "$p1" == *$'\n'* || "$p1" == *$'\r'* ]]; then
-+            printf '❌ sudo 密码不能包含换行或回车，请重新输入\n' >&2
++            printf '✘ sudo 密码不能包含换行或回车，请重新输入\n' >&2
 +            continue
 +        fi
 +        if ! (LC_ALL=C; (( ${#p1} <= 256 ))); then
-+            printf '❌ sudo 密码不能超过 256 字节，请重新输入\n' >&2
++            printf '✘ sudo 密码不能超过 256 字节，请重新输入\n' >&2
 +            continue
 +        fi
 +        TARGET_PASSWORD="$p1"
@@ -932,7 +932,7 @@
 +        done < "$AUTH_KEY_FILE"
 +    fi
 +    if [[ -n "$DEFAULT_KEY" ]]; then
-+        printf '\n🔑 检测到宿主有效 Ed25519 公钥：\n%s\n' "$DEFAULT_KEY"
++        printf '\n→ 检测到宿主有效 Ed25519 公钥：\n%s\n' "$DEFAULT_KEY"
 +    fi
 +
 +    TARGET_SSH_KEY=""
@@ -945,7 +945,7 @@
 +        fi
 +        TARGET_SSH_KEY=$(printf '%s' "$TARGET_SSH_KEY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 +        valid_ed25519_key "$TARGET_SSH_KEY" && break
-+        printf '❌ 公钥无效（必须为 ssh-ed25519 格式），请重新输入\n' >&2
++        printf '✘ 公钥无效（必须为 ssh-ed25519 格式），请重新输入\n' >&2
 +    done
 +
 +    # 4. SSH 端口

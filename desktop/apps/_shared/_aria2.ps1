@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     应用生命周期域私有高速并发下载引擎 (aria2 专属)
@@ -32,7 +32,7 @@
     aria2 单任务并发连接数与分段切片数 (-x / -s / -j)。默认 8。
 
 .EXAMPLE
-    pwsh -File .\desktop\apps\_aria2.ps1 -Url "https://example.com/pkg.zip" -OutFile "$env:TEMP\pkg.zip" -Description "测试包"
+    pwsh -File .\desktop\apps\_shared\_aria2.ps1 -Url "https://example.com/pkg.zip" -OutFile "$env:TEMP\pkg.zip" -Description "测试包"
 #>
 
 [CmdletBinding()]
@@ -80,7 +80,7 @@ $aria2Control = "$OutFile.aria2"
 if (Test-Path $OutFile) { Remove-Item -Path $OutFile -Force -ErrorAction SilentlyContinue }
 if (Test-Path $aria2Control) { Remove-Item -Path $aria2Control -Force -ErrorAction SilentlyContinue }
 
-Write-Host "⬇️  正在通过 aria2 并发下载 $Description..." -ForegroundColor Cyan
+Write-Host "▶ 正在通过 aria2 并发下载 $Description..." -ForegroundColor Cyan
 
 # 3. 构造参数并通过进程宿主捕获流式输出，实施高信噪比精炼呈现
 $cleanDestDir = if ($destDir.Length -gt 3) { $destDir.TrimEnd('\') } else { $destDir }
@@ -131,7 +131,7 @@ try {
                 $speed = $Matches['speed'].Trim()
                 $etaStr = if ($Matches['eta']) { " | 剩余: $($Matches['eta'].Trim())" } else { "" }
                 $cnStr = if ($Matches['cn']) { " | 并发: $($Matches['cn'].Trim())" } else { "" }
-                $statusLine = "   ⬇️ 进度: {0,4} ({1}) [速度: {2}/s{3}{4}]" -f $pct, $transferred, $speed, $etaStr, $cnStr
+                $statusLine = "   ▶ 进度: {0,4} ({1}) [速度: {2}/s{3}{4}]" -f $pct, $transferred, $speed, $etaStr, $cnStr
                 Write-Host -NoNewline ("`r" + $statusLine.PadRight(90))
             }
         } elseif ($line -match '\[ERROR\]|errorCode=') {

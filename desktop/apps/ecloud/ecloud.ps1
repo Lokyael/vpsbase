@@ -34,16 +34,16 @@
 
 .EXAMPLE
     # 只查不改体检巡检
-    pwsh -File .\desktop\apps\ecloud.ps1 -Action Check
+    pwsh -File .\desktop\apps\ecloud\ecloud.ps1 -Action Check
 
     # 交互式检查并增量对齐工程基线
-    pwsh -File .\desktop\apps\ecloud.ps1
+    pwsh -File .\desktop\apps\ecloud\ecloud.ps1
 
     # 使用指定离线安装包增量对齐
-    pwsh -File .\desktop\apps\ecloud.ps1 -InstallerPath "D:\Downloads\ecloud_setup.exe"
+    pwsh -File .\desktop\apps\ecloud\ecloud.ps1 -InstallerPath "D:\Downloads\ecloud_setup.exe"
 
     # 安全清洁卸载 (调用官方卸载器并清理声明残留)
-    pwsh -File .\desktop\apps\ecloud.ps1 -Action Uninstall
+    pwsh -File .\desktop\apps\ecloud\ecloud.ps1 -Action Uninstall
 #>
 
 [CmdletBinding()]
@@ -412,7 +412,7 @@ if ($Action -eq "Uninstall") {
         return
     }
 
-    Write-Host "`n🧹 [清洁卸载模式] 正在调用官方卸载器并清理天翼云盘受控基线..." -ForegroundColor Yellow
+    Write-Host "`n▶ [清洁卸载模式] 正在调用官方卸载器并清理天翼云盘受控基线..." -ForegroundColor Yellow
 
     # 1. 运行态并发防覆写硬门禁
     if (Get-Process -ErrorAction Stop | Where-Object ProcessName -in $ProcessNames) {
@@ -425,7 +425,7 @@ if ($Action -eq "Uninstall") {
     # 3. 原生卸载器调用与终态独立核验
     $uninstExe = Join-Path $InstallDir "uninst.exe"
     if (Test-Path -LiteralPath $uninstExe) {
-        Write-Host "🔄 正在调用官方原生卸载核心 (uninst.exe /S)..." -ForegroundColor Cyan
+        Write-Host "▶ 正在调用官方原生卸载核心 (uninst.exe /S)..." -ForegroundColor Cyan
         $cleanDir = $InstallDir.TrimEnd('\')
         $uninstArgs = @("/S", "_?=$cleanDir")
         $p = Start-Process -FilePath $uninstExe -ArgumentList $uninstArgs -PassThru -ErrorAction Stop
@@ -507,7 +507,7 @@ if ($Action -eq "Uninstall") {
             }
         }
     }
-    Write-Host "`n✅ [清洁卸载完成] 天翼云盘客户端本体已退役，声明残留已审计清理。`n" -ForegroundColor Green
+    Write-Host "`n✔ [清洁卸载完成] 天翼云盘客户端本体已退役，声明残留已审计清理。`n" -ForegroundColor Green
     return
 }
 
@@ -757,8 +757,7 @@ if ($needBinaryDeploy) {
         }
 
         if (-not $isCacheHit) {
-            Write-Host "`n🚀 正在准备获取天翼云盘官方安装包 (v$($latestInfo.Version))..." -ForegroundColor Cyan
-            Write-Host "⬇️  正在通过 aria2 并发下载 天翼云盘官方安装包 (v$($latestInfo.Version))..." -ForegroundColor Cyan
+            Write-Host "`n▶ 正在准备获取天翼云盘官方安装包 (v$($latestInfo.Version))..." -ForegroundColor Cyan
             Invoke-DownloadFile -Url $latestInfo.DownloadUrl -OutFile $cachedPkg -Description "天翼云盘官方安装包 (v$($latestInfo.Version))" -MinBytes (100 * 1024 * 1024)
         }
         $installerPkg = $cachedPkg
@@ -783,7 +782,7 @@ if ($needBinaryDeploy) {
         throw "未找到 7z 解压引擎，请先就绪 7zip。"
     }
 
-    Write-Host "`n📦 正在通过 7z 纯净解包天翼云盘至 $InstallDir (0 弹窗，零流氓后台常驻)..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在通过 7z 纯净解包天翼云盘至 $InstallDir (0 弹窗，零流氓后台常驻)..." -ForegroundColor Cyan
     Ensure-Dir $InstallDir
 
     $global:LASTEXITCODE = $null
@@ -812,11 +811,11 @@ if ($needBinaryDeploy) {
 
 # 6.3 原厂注册表定位索引与 Windows 卸载登记 (100% 对齐官方结构，杜绝自指向)
 if (-not $isHklmAppAligned -or -not $isUninstallRegValid -or $needBinaryDeploy) {
-    Write-Host "⚙️  正在单向对齐原厂注册表定位项 ($hklmAppKey)..." -ForegroundColor Cyan
+    Write-Host "▶ 正在单向对齐原厂注册表定位项 ($hklmAppKey)..." -ForegroundColor Cyan
     Ensure-RegKey $hklmAppKey
     Set-ItemProperty -Path $hklmAppKey -Name "InstallDir" -Value $InstallDir -Force
 
-    Write-Host "📝 正在规范登记 Windows 应用列表元数据 (原生对接 uninst.exe)..." -ForegroundColor Cyan
+    Write-Host "▶ 正在规范登记 Windows 应用列表元数据 (原生对接 uninst.exe)..." -ForegroundColor Cyan
     Ensure-RegKey $officialUninstallKey
 
     $currentVer = if ($latestInfo) { $latestInfo.Version } else { $targetVersion }
@@ -835,7 +834,7 @@ if (-not $isHklmAppAligned -or -not $isUninstallRegValid -or $needBinaryDeploy) 
 
 # 6.4 校准开始菜单快捷方式并跨视图压制开机自启动项
 if (-not $isLnkAligned -or $needBinaryDeploy) {
-    Write-Host "🔗 正在校准开始菜单快捷方式..." -ForegroundColor Cyan
+    Write-Host "▶ 正在校准开始菜单快捷方式..." -ForegroundColor Cyan
     Save-ShortcutUnicode -LnkPath $startMenuLnk -TargetPath $AppExe -WorkingDir $InstallDir -Description "天翼云盘客户端" -IconLocation "$AppExe,0"
     Write-Host "✔ 开始菜单快捷方式校准完成 ($startMenuLnk)。" -ForegroundColor Green
     $appliedCount++
@@ -849,7 +848,7 @@ if (Test-Path $commonProgramsDir) {
     Remove-Item -Path $commonProgramsDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($hasRunDrift -or $needBinaryDeploy) {
-    Write-Host "⚙️  正在清除跨视图开机常驻自启动注册表项..." -ForegroundColor Cyan
+    Write-Host "▶ 正在清除跨视图开机常驻自启动注册表项..." -ForegroundColor Cyan
     foreach ($rPath in $runKeyCandidatePaths) {
         if (Get-ItemProperty -Path $rPath -Name $runKeyName -ErrorAction SilentlyContinue) {
             Remove-ItemProperty -Path $rPath -Name $runKeyName -Force -ErrorAction SilentlyContinue
@@ -861,7 +860,7 @@ if ($hasRunDrift -or $needBinaryDeploy) {
 
 # 6.5 治理资源管理器虚拟同步盘入口 (禁用同步盘)
 if ($hasSyncDiskDrift -or $needBinaryDeploy) {
-    Write-Host "🧹 正在清理资源管理器「此电脑」中的虚拟同步盘残留入口..." -ForegroundColor Cyan
+    Write-Host "▶ 正在清理资源管理器「此电脑」中的虚拟同步盘残留入口..." -ForegroundColor Cyan
     Clean-SyncDiskNamespace
     Write-Host "✔ 资源管理器同步盘虚拟入口治理完成。" -ForegroundColor Green
     $appliedCount++
@@ -875,7 +874,7 @@ Write-Host '✔ 本地 TCP/UDP 入站阻断规则及受控过滤器已回读核�
 # 7. 阶段 5: 尾部简报与闭环交付 (Report)
 # ==============================================================================
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 工程基线与策略配置完成！" -ForegroundColor Green
+Write-Host "  ✔ [$AppName] 工程基线与策略配置完成！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 
 # 动态真待办：若已部署但从未登录过（AppData 不存在凭据），输出高价值登录指引

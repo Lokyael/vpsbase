@@ -1,48 +1,31 @@
 # nftables 原子网络防火墙
 
-默认丢弃入站和转发流量，放行本地环回、已建立和关联连接、限速的 IPv4 ping，以及核验过的 IPv4 SSH 目的地址和端口。底座本身不开放 IPv6 SSH，也不保全 IPv6 邻居发现及依赖它的连接。
+**前置条件**：首次安装仅通过 [防火墙底座初始化](archlinux.md#防火墙底座初始化) 执行。底座默认丢弃入站与转发，仅放行环回、已建立/关联连接、限速 IPv4 ping、核验的 IPv4 SSH 及 `/etc/nftables.d/*.conf` 业务片段（不开放 IPv6 SSH）。
 
-SSH 新连接采用两级限流，超额仅丢弃：先按源 IP 在动态集合 `ssh_ratelimit` 中以 `6/minute`、突发容量 `5` 限速（无匹配流量 `5m` 后自动回收），再由全局兜底桶按 `30/minute`、突发容量 `15` 保护 `sshd`。业务放行规则经 `/etc/nftables.d/*.conf` 接入 `services` 子链。
+## 常用运维
 
-首次安装只通过 [防火墙底座初始化](archlinux.md#防火墙底座初始化)。首次加载只创建表，不替换已存在的同名表；本页的完整重载仅用于已安装的底座。
-
-两级限流针对的是 `ct state new` 匹配包，包含 SYN 重传，不是认证失败次数；单源超限仅丢弃该来源，但遭遇大规模分布式或随机伪造源 IP 泛洪时仍可能触发全局兜底限流导致短期新连接不可用。人工封禁集合 `ssh_dynamic_ban` 用于 IPv4 来源，命中时优先于已建立连接的放行规则；不把未认证 SYN 自动写入长期人工封禁集合，防止源 IP 伪造触发自我锁死。业务自动封禁由各入口管理，不写入宿主人工黑名单。封禁仅保存在运行态：默认从首次成功加入起计时 `365d`，按下列命令重复添加同一未到期元素不续期；完整加载主配置（含入口规则变更）或系统重启后清空，不自动保存或恢复。
-
-集合寿命与重建语义见 [nft 手册](https://netfilter.org/projects/nftables/manpage.html)，重复添加行为按 [Linux 6.12 元素更新逻辑](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/net/netfilter/nf_tables_api.c?h=v6.12)核验。
-
-## 常用运维操作
-
-### 查看运行态全量规则与封禁集合
+- **注意**：人工封禁集合 `ssh_dynamic_ban` 仅存于运行态（365 天不续期）；完整重载或系统重启会清空该集合及限速状态。
 
 ```bash
-# 查看当前加载的完整规则集
+# 查看当前规则集、监听端口与人工封禁列表
 sudo nft list ruleset
-
-# 查看系统监听端口
 sudo ss -tulanp
-
-# 查看人工封禁集合中的 IP
 sudo nft list set inet filter ssh_dynamic_ban
 
-# 手动解封误封的 IP
-sudo nft delete element inet filter ssh_dynamic_ban { [HERE_IP] }
-
-# 手动封禁指定恶意 IP
+# 手动封禁 / 解封 IPv4
 sudo nft add element inet filter ssh_dynamic_ban { [HERE_IP] }
+sudo nft delete element inet filter ssh_dynamic_ban { [HERE_IP] }
 ```
 
-### 规则重载与语法审计
-
-修改 `/etc/nftables.conf` 或增删 `/etc/nftables.d/*.conf` 片段后，预检退出状态为 0 才加载。预检失败不会替换运行态，但开机单元仍读取磁盘配置；先修正磁盘并重新预检，不要直接重启。预检和加载期间不要并行修改主配置或片段。完整加载会原子替换受控表，并清空运行态人工封禁与限速状态；不能接受清空时不要重载。
+修改 `/etc/nftables.conf` 或 `/etc/nftables.d/*.conf` 后，先预检通过再完整加载：
 
 ```bash
-sudo nft -c -f /etc/nftables.conf &&
-    sudo nft -f /etc/nftables.conf
+sudo nft -c -f /etc/nftables.conf && sudo nft -f /etc/nftables.conf
 ```
 
-### 恢复检查
+## 恢复检查
 
-保留当前 SSH 会话，确认带外控制台可用。加载或开机失败时分别检查主配置、已加载规则、SSH 实际监听和本次启动日志；开机启用、已有 SSH 会话或 `network-pre.target` 的排序都不是新连接成功的证据。先核对异常再决定是否显式重载，不用初始化接管未知规则。
+保留当前 SSH 会话并确认带外控制台可用后排查：
 
 ```bash
 systemctl is-enabled nftables.service
@@ -52,4 +35,4 @@ sudo nft list ruleset
 sudo ss -4 -ltnp
 ```
 
-从新终端验证 IPv4 SSH 登录后再关闭原会话。
+修正后从**新终端**验证 IPv4 SSH 登录成功，再关闭原会话。

@@ -21,13 +21,13 @@
 
 .EXAMPLE
     # 只查不改体检巡检
-    pwsh -File .\desktop\apps\mpv.ps1 -Action Check
+    pwsh -File .\desktop\apps\mpv\mpv.ps1 -Action Check
 
     # 交互式检查并应用工程基线
-    pwsh -File .\desktop\apps\mpv.ps1
+    pwsh -File .\desktop\apps\mpv\mpv.ps1
 
     # 安全清洁卸载 (退役本体并清理声明残留)
-    pwsh -File .\desktop\apps\mpv.ps1 -Action Uninstall
+    pwsh -File .\desktop\apps\mpv\mpv.ps1 -Action Uninstall
 #>
 
 [CmdletBinding()]
@@ -125,7 +125,7 @@ function Ensure-ScoopBucket {
         return
     }
 
-    Write-Host "📦 正在添加 Scoop '$BucketName' bucket..." -ForegroundColor Cyan
+    Write-Host "▶ 正在添加 Scoop '$BucketName' bucket..." -ForegroundColor Cyan
     $global:LASTEXITCODE = $null
     if ($BucketRepo) {
         & scoop bucket add $BucketName $BucketRepo
@@ -355,7 +355,6 @@ $ManagedSpecs = @(
 if ($Action -eq "Uninstall") {
     Assert-AppStopped
 
-    $appRoot = Join-Path $scoopRoot "apps\$ScoopApp"
     $record = Get-ScoopInstallRecord -CurrentDir $InstallDir
     $hasExe = Test-Path -LiteralPath $AppExe -PathType Leaf
     if ($record -and -not $hasExe) {
@@ -373,7 +372,7 @@ if ($Action -eq "Uninstall") {
     Assert-AppStopped
 
     if ($isInstalled) {
-        Write-Host "`n🧹 [清洁卸载] 正在调用 Scoop 退役 mpv 本体..." -ForegroundColor Yellow
+        Write-Host "`n▶ [清洁卸载] 正在调用 Scoop 退役 mpv 本体..." -ForegroundColor Yellow
         if (-not (Get-Command "scoop" -ErrorAction SilentlyContinue)) {
             throw "未检测到 scoop 命令，无法执行本体卸载；请先就绪 Scoop 环境。"
         }
@@ -392,7 +391,7 @@ if ($Action -eq "Uninstall") {
         }
         Write-Host "✔ mpv 本体已由 Scoop 安全卸载。" -ForegroundColor Green
     } else {
-        Write-Host "`nℹ️  未检测到活动的 mpv Scoop 安装实例，跳过包管理器卸载。" -ForegroundColor Gray
+        Write-Host "`n○ 未检测到活动的 mpv Scoop 安装实例，跳过包管理器卸载。" -ForegroundColor Gray
     }
 
     # 终态核验后：定点清理声明的历史残留对象（快捷方式及历史自建关联）
@@ -433,7 +432,7 @@ if ($Action -eq "Uninstall") {
         Write-Host "   - [已清理] 声明的持久化配置与缓存数据: $PersistDir" -ForegroundColor Red
     }
 
-    Write-Host "`n✅ [清洁卸载完成] mpv 本体已退役，声明残留已审计清理。`n" -ForegroundColor Green
+    Write-Host "`n✔ [清洁卸载完成] mpv 本体已退役，声明残留已审计清理。`n" -ForegroundColor Green
     return
 }
 
@@ -490,15 +489,15 @@ $diffs = @($Specs | Where-Object { -not $_.IsMatch })
 
 if ($Action -eq "Check") {
     if ($diffs.Count -eq 0) {
-        Write-Host "✨ [状态合规] 所有受控属性均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
+        Write-Host "✔ [状态合规] 所有受控属性均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
-        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $diffs.Count) -ForegroundColor Yellow
+        Write-Host ("▲ 共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $diffs.Count) -ForegroundColor Yellow
     }
     return
 }
 
 if ($diffs.Count -eq 0 -and $isInstalled) {
-    Write-Host "✨ [状态合规] 所有受控属性均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
+    Write-Host "✔ [状态合规] 所有受控属性均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
@@ -549,15 +548,15 @@ if ($needBinaryDeploy) {
 
 # 6.2 注入 mpv.conf 体验基线偏好
 Assert-AppStopped
-Write-Host "⚙️  正在对齐 mpv.conf 画质与体验基线..." -ForegroundColor Cyan
+Write-Host "▶ 正在对齐 mpv.conf 画质与体验基线..." -ForegroundColor Cyan
 Update-ManagedConfigFile -FilePath $ConfigFile -Tag "mpv-baseline" -NewContent $mpvBaseline -Specs $ManagedSpecs
-Write-Host "✅ mpv.conf 默认作用域的受控标量已写入并复验: $ConfigFile" -ForegroundColor Green
+Write-Host "✔ mpv.conf 默认作用域的受控标量已写入并复验: $ConfigFile" -ForegroundColor Green
 
 # ==============================================================================
 # 7. 阶段 4: 尾部简报与动态真待办 (Report)
 # ==============================================================================
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 基线与配置管理完成！" -ForegroundColor Green
+Write-Host "  ✔ [$AppName] 基线与配置管理完成！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 Write-Host "   - 默认渲染配置: gpu-next 与 auto-safe 受控值检查通过；实际渲染与其他配置来源待验证" -ForegroundColor Gray
 Write-Host "   - 字体与字幕默认配置: Microsoft YaHei 与智能同名模糊匹配" -ForegroundColor Gray

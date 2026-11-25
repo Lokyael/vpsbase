@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     工作站 Windows 操作系统基线总编排门面 (Thin Orchestrator Facade)。
@@ -227,7 +227,7 @@ try {
 
     # 交互式模块切片勾选 (若未传 -Modules 且非静默模式)
     if ($null -eq $Modules -and -not $Yes) {
-        Write-Host "`n💡 请选择要纳入本次调度的系统模块 [直接回车全选]:" -ForegroundColor Cyan
+        Write-Host "`n→ 请选择要纳入本次调度的系统模块 [直接回车全选]:" -ForegroundColor Cyan
         Write-Host "   - 输入序号多选 (例如: 1,2,5)" -ForegroundColor Gray
         Write-Host "   - 直接回车调度全量 7 大模块" -ForegroundColor Gray
         Write-Host "   - 输入 'Q' 退出`n" -ForegroundColor Gray
@@ -304,7 +304,7 @@ try {
     # 9. 仅汇集子模块明确交付的人类待办
     # ==============================================================================
     if ($humanHints.Count -gt 0) {
-        Write-Host "`n📋 [人类待办] 以下提示由对应子模块交付，不表示执行成功或基线合规：" -ForegroundColor Cyan
+        Write-Host "`n→ [人类待办] 以下提示由对应子模块交付，不表示执行成功或基线合规：" -ForegroundColor Cyan
         $seenHints = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($hint in $humanHints) {
             if ($seenHints.Add("$($hint.Source)`n$($hint.Message)")) {
@@ -314,7 +314,7 @@ try {
     }
 
     if ($Action -eq "Sync") {
-        Write-Host "`n💡 [按需刷新] 脚本未自动重启 Windows Explorer。若修改了外壳配置且界面尚未更新，可自行刷新：" -ForegroundColor Cyan
+        Write-Host "`n→ [按需刷新] 脚本未自动重启 Windows Explorer。若修改了外壳配置且界面尚未更新，可自行刷新：" -ForegroundColor Cyan
         Write-Host "   按 Ctrl+Shift+Esc 打开 Task Manager，在 Processes 中选中 Windows Explorer，点击 Restart task。" -ForegroundColor Gray
         Write-Host "   刷新会暂时关闭文件夹窗口并重载桌面、任务栏；可能中断由资源管理器执行的文件复制、移动、删除及剪切/粘贴操作。请先等待文件操作完成。" -ForegroundColor Yellow
         Write-Host "   刷新 Explorer 不能使所有配置立即生效，部分设置仍需重启相关应用、注销或重启系统。`n" -ForegroundColor Gray

@@ -36,19 +36,19 @@
 
 .EXAMPLE
     # 只查不改体检巡检
-    pwsh -File .\desktop\apps\zen-browser.ps1 -Action Check
+    pwsh -File .\desktop\apps\zen-browser\zen-browser.ps1 -Action Check
 
     # 交互式全流程安装与配置
-    pwsh -File .\desktop\apps\zen-browser.ps1
+    pwsh -File .\desktop\apps\zen-browser\zen-browser.ps1
 
     # 强制重新部署覆盖本体并对齐基线
-    pwsh -File .\desktop\apps\zen-browser.ps1 -Force
+    pwsh -File .\desktop\apps\zen-browser\zen-browser.ps1 -Force
 
     # 安全清洁卸载 (保留用户数据)
-    pwsh -File .\desktop\apps\zen-browser.ps1 -Action Uninstall
+    pwsh -File .\desktop\apps\zen-browser\zen-browser.ps1 -Action Uninstall
 
     # 清理卸载 (连带删除数据)
-    pwsh -File .\desktop\apps\zen-browser.ps1 -Action Uninstall -Purge
+    pwsh -File .\desktop\apps\zen-browser\zen-browser.ps1 -Action Uninstall -Purge
 #>
 
 [CmdletBinding()]
@@ -611,19 +611,19 @@ if ($Action -eq "Uninstall") {
     Assert-AppStopped
 
     if (-not $Yes) {
-        Write-Host "`n⚠️  [清洁卸载警示] 即将卸载 Zen Browser 并清理系统关联！" -ForegroundColor Yellow
+        Write-Host "`n▲ [清洁卸载警示] 即将卸载 Zen Browser 并清理系统关联！" -ForegroundColor Yellow
         if ($Purge) {
-            Write-Host "🔥 【检测到 -Purge 参数：以下用户数据将被清理】:" -ForegroundColor Red
+            Write-Host "▲ 【检测到 -Purge 参数：以下用户数据将被清理】:" -ForegroundColor Red
             foreach ($d in $HighValueUserData) {
                 Write-Host ("   - {0}" -f $d) -ForegroundColor DarkRed
             }
-            Write-Host "👉 该操作不可逆，用户 Profile 与本地数据将被删除！`n" -ForegroundColor Red
+            Write-Host "▲ 该操作不可逆，用户 Profile 与本地数据将被删除！`n" -ForegroundColor Red
         } else {
-            Write-Host "🛡️  【数据安全保护：以下高价值用户数据将默认保留在实机】:" -ForegroundColor Green
+            Write-Host "○ 【数据安全保护：以下高价值用户数据将默认保留在实机】:" -ForegroundColor Green
             foreach ($d in $HighValueUserData) {
                 Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
             }
-            Write-Host "👉 默认卸载仅移除程序本体与系统注册项。若需连带清理用户 Profile，请指定 -Purge 开关。`n" -ForegroundColor Cyan
+            Write-Host "→ 默认卸载仅移除程序本体与系统注册项。若需连带清理用户 Profile，请指定 -Purge 开关。`n" -ForegroundColor Cyan
         }
 
         $promptText = if ($Purge) {
@@ -638,7 +638,7 @@ if ($Action -eq "Uninstall") {
         }
     }
 
-    Write-Host "`n🧹 [清洁卸载模式] 正在执行系统反注册与环境清理..." -ForegroundColor Yellow
+    Write-Host "`n▶ [清洁卸载模式] 正在执行系统反注册与环境清理..." -ForegroundColor Yellow
 
     # 1. 运行态并发防覆写硬门禁
     Assert-AppStopped
@@ -752,7 +752,7 @@ if ($Action -eq "Uninstall") {
         }
     }
     if ($deadlinkDetected) {
-        Write-Host "⚠️  [系统默认浏览器提示] 检测到当前 Windows 默认 Web 浏览器曾指定为 Zen。" -ForegroundColor Yellow
+        Write-Host "▲ [系统默认浏览器提示] 检测到当前 Windows 默认 Web 浏览器曾指定为 Zen。" -ForegroundColor Yellow
         Write-Information -Tags HumanHandoff -InformationAction Continue -MessageData '因 Windows 用户协议哈希保护机制，请在 Windows 设置 → 应用 → 默认应用中确认并重新指定常用浏览器。'
     }
 
@@ -811,7 +811,7 @@ if ($Action -eq "Uninstall") {
         if (Test-Path $cp) { Remove-Item -Path $cp -Force -ErrorAction SilentlyContinue }
     }
 
-    Write-Host "`n✅ [清洁卸载完成] Zen Browser 二进制本体与系统关联已清除。`n" -ForegroundColor Green
+    Write-Host "`n✔ [清洁卸载完成] Zen Browser 二进制本体与系统关联已清除。`n" -ForegroundColor Green
     return
 }
 
@@ -1113,26 +1113,26 @@ if (-not $isDefaultsPrefReady) {
 }
 
 if (-not $Yes) {
-    Write-Host "`n📊 [巡检看板] Zen Browser 受控属性基线审计清单:" -ForegroundColor Cyan
+    Write-Host "`n▶ [巡检看板] Zen Browser 受控属性基线审计清单:" -ForegroundColor Cyan
     $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
 }
 
 if ($DiffList.Count -gt 0) {
-    Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
+    Write-Host "`n▶ [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
     $DiffList | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 }
 
 if ($Action -eq "Check") {
     if ($DiffList.Count -eq 0) {
-        Write-Host "✨ [状态合规] 所有受控属性与策略均符合工程基线，无需调整。`n" -ForegroundColor Green
+        Write-Host "✔ [状态合规] 所有受控属性与策略均符合工程基线，无需调整。`n" -ForegroundColor Green
     } else {
-        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $DiffList.Count) -ForegroundColor Yellow
+        Write-Host ("▲ 共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $DiffList.Count) -ForegroundColor Yellow
     }
     return
 }
 
 if ($DiffList.Count -eq 0 -and $isInstalled -and -not $Force) {
-    Write-Host "✨ [状态合规] 所有受控属性均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
+    Write-Host "✔ [状态合规] 所有受控属性均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
@@ -1164,7 +1164,7 @@ if ($needBinaryDeploy) {
 
 # 5.3 策略审查门禁 (Shift-Left Gate: 目的与影响结构化逐项直出)
 if (-not $Yes) {
-    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "`n▶ [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
     Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
     $idx = 1
     foreach ($p in $DiffList) {
@@ -1192,7 +1192,7 @@ if (-not $Yes) {
 # 6.1 程序本体解包安装或覆盖升级
 Assert-AppStopped
 if ($needBinaryDeploy) {
-    Write-Host "`n🚀 正在准备安装 Zen Browser 核心本体 ($osArch)..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在准备安装 Zen Browser 核心本体 ($osArch)..." -ForegroundColor Cyan
     $pkgPath = $InstallerPath
     $archCachePkg = Join-Path $env:TEMP ("zen.installer-" + $osArch.ToLower() + ".exe")
 
@@ -1264,7 +1264,7 @@ if ($needBinaryDeploy) {
 
         $isInstalled = $true
         $isArchMatch = $true
-        Write-Host "✅ Zen Browser 核心程序已部署至: $InstallDir (架构: $installedArch)" -ForegroundColor Green
+        Write-Host "✔ Zen Browser 核心程序已部署至: $InstallDir (架构: $installedArch)" -ForegroundColor Green
     } finally {
         if (Test-Path $extractTemp) { Remove-Item -Path $extractTemp -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -1272,12 +1272,12 @@ if ($needBinaryDeploy) {
 
 # 6.2 复现官方安装器 LPAC 目录访问权限
 Assert-AppStopped
-Write-Host "`n🔐 正在对齐安装目录 LPAC 读取/执行权限..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在对齐安装目录 LPAC 读取/执行权限..." -ForegroundColor Cyan
 Ensure-ZenLpacAccess -Path $InstallDir
-Write-Host "✅ 安装目录 LPAC 权限已对齐并完成继承校验: $InstallDir" -ForegroundColor Green
+Write-Host "✔ 安装目录 LPAC 权限已对齐并完成继承校验: $InstallDir" -ForegroundColor Green
 
 # 6.3 注册系统关联与开始菜单快捷方式
-Write-Host "`n⚙️  正在注册系统级默认浏览器与能力 (Capabilities)..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在注册系统级默认浏览器与能力 (Capabilities)..." -ForegroundColor Cyan
 Sync-ZenShortcuts
 
 $appKey = "HKLM:\SOFTWARE\Clients\StartMenuInternet\Zen"
@@ -1350,11 +1350,11 @@ Set-ItemProperty -Path "HKLM:\SOFTWARE\RegisteredApplications" -Name "Zen Browse
     if (-not (Test-Path $cmd)) { New-Item -Path $cmd -Force | Out-Null }
     Set-ItemProperty -Path $cmd -Name "(default)" -Value "`"$AppExe`" -osint -url `"%1`"" -Force
 }
-Write-Host "✅ 系统 Capabilities 与 默认浏览器关联注册完成。" -ForegroundColor Green
+Write-Host "✔ 系统 Capabilities 与 默认浏览器关联注册完成。" -ForegroundColor Green
 
 # 6.4 注入企业策略 policies.json
 Assert-AppStopped
-Write-Host "⚙️  正在单向对齐企业策略 (distribution/policies.json)..." -ForegroundColor Cyan
+Write-Host "▶ 正在单向对齐企业策略 (distribution/policies.json)..." -ForegroundColor Cyan
 $distDir = Join-Path $InstallDir "distribution"
 if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir -Force | Out-Null }
 
@@ -1449,22 +1449,22 @@ $policiesObj = [ordered]@{
 
 $policyOutput = [ordered]@{ policies = $policiesObj } | ConvertTo-Json -Depth 10
 [System.IO.File]::WriteAllText((Join-Path $distDir "policies.json"), $policyOutput, [System.Text.UTF8Encoding]::new($false))
-Write-Host "✅ 企业策略已原子写入: $distDir\policies.json" -ForegroundColor Green
+Write-Host "✔ 企业策略已原子写入: $distDir\policies.json" -ForegroundColor Green
 
 # 6.5 注入全局首选项 defaults\pref\ (程序级全局默认底座，零侵入用户 Profile)
 Assert-AppStopped
-Write-Host "⚙️  正在固化全局默认首选项 (defaults\pref\zen-overrides.js)..." -ForegroundColor Cyan
+Write-Host "▶ 正在固化全局默认首选项 (defaults\pref\zen-overrides.js)..." -ForegroundColor Cyan
 if (-not (Test-Path $defaultsPrefDir)) {
     New-Item -ItemType Directory -Path $defaultsPrefDir -Force | Out-Null
 }
 [System.IO.File]::WriteAllText($defaultsPrefFile, $expectedDefaultsPrefText, [System.Text.UTF8Encoding]::new($false))
-Write-Host "✅ 全局默认首选项已原子写入: $defaultsPrefFile" -ForegroundColor Green
+Write-Host "✔ 全局默认首选项已原子写入: $defaultsPrefFile" -ForegroundColor Green
 
 # ==============================================================================
 # 7. 阶段 4: 尾部简报与动态真待办 (Report)
 # ==============================================================================
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 工程基线与策略部署完成！" -ForegroundColor Green
+Write-Host "  ✔ [$AppName] 工程基线与策略部署完成！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 Write-Host "   - 部署路径: $InstallDir" -ForegroundColor Gray
 Write-Host "   - 系统关联: Capabilities 已注册，点亮 Win11 默认浏览器设置" -ForegroundColor Gray

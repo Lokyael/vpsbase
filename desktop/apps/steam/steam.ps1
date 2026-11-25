@@ -34,19 +34,19 @@
 
 .EXAMPLE
     # 只查不改体检巡检
-    pwsh -File .\desktop\apps\steam.ps1 -Action Check
+    pwsh -File .\desktop\apps\steam\steam.ps1 -Action Check
 
     # 交互式检查并应用工程基线
-    pwsh -File .\desktop\apps\steam.ps1
+    pwsh -File .\desktop\apps\steam\steam.ps1
 
     # 强制重新部署覆盖本体并对齐基线
-    pwsh -File .\desktop\apps\steam.ps1 -Force
+    pwsh -File .\desktop\apps\steam\steam.ps1 -Force
 
     # 安全清洁卸载 (保留游戏库与存档)
-    pwsh -File .\desktop\apps\steam.ps1 -Action Uninstall
+    pwsh -File .\desktop\apps\steam\steam.ps1 -Action Uninstall
 
     # 卸载并删除安装目录内游戏库与用户数据 (不处理外部库与目录外存档)
-    pwsh -File .\desktop\apps\steam.ps1 -Action Uninstall -Purge
+    pwsh -File .\desktop\apps\steam\steam.ps1 -Action Uninstall -Purge
 #>
 
 [CmdletBinding()]
@@ -296,9 +296,9 @@ function Remove-SteamInstallContent {
 if ($Action -eq "Uninstall") {
     $cleanupRoot = Assert-SteamCleanupRoot $InstallDir
     if (-not $Yes) {
-        Write-Host "`n⚠️  [清洁卸载警示] 即将清理 Steam 客户端核心、系统服务与自启动项！" -ForegroundColor Yellow
+        Write-Host "`n▲ [清洁卸载警示] 即将清理 Steam 客户端核心、系统服务与自启动项！" -ForegroundColor Yellow
         Write-Host "   安装目录: $cleanupRoot" -ForegroundColor Gray
-        Write-Host $(if ($Purge) { '🔥 以下安装目录内游戏库与用户数据将被删除，无法由脚本恢复:' } else { '🔒 以下安装目录内游戏库与用户数据将保留:' }) -ForegroundColor Yellow
+        Write-Host $(if ($Purge) { '▲ 以下安装目录内游戏库与用户数据将被删除，无法由脚本恢复:' } else { '○ 以下安装目录内游戏库与用户数据将保留:' }) -ForegroundColor Yellow
         foreach ($d in $HighValueUserData) {
             Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
         }
@@ -311,7 +311,7 @@ if ($Action -eq "Uninstall") {
         }
     }
 
-    Write-Host "`n🧹 [清洁卸载模式] 正在终止常驻进程并清理 Steam 环境..." -ForegroundColor Yellow
+    Write-Host "`n▶ [清洁卸载模式] 正在终止常驻进程并清理 Steam 环境..." -ForegroundColor Yellow
 
     Get-Process -Name "steam", "steamwebhelper", "steamservice", "gameoverlayui" -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 800
@@ -359,7 +359,7 @@ if ($Action -eq "Uninstall") {
     Remove-SteamInstallContent -Path $cleanupRoot -Purge:$Purge
 
     $dataResult = if ($Purge) { '安装目录已删除；目录内游戏库与用户数据已清理' } else { '安装目录核心组件已清理；其中原有 steamapps、userdata 已保留（若存在）' }
-    Write-Host "`n✅ [安装目录清理已核验] $dataResult。系统注销步骤已执行；其他磁盘游戏库与目录外存档不在清理范围。`n" -ForegroundColor Green
+    Write-Host "`n✔ [安装目录清理已核验] $dataResult。系统注销步骤已执行；其他磁盘游戏库与目录外存档不在清理范围。`n" -ForegroundColor Green
     return
 }
 
@@ -603,22 +603,22 @@ foreach ($spec in $ManagedSpecs) {
 }
 
 if (-not $Yes) {
-    Write-Host "`n📊 [巡检看板] Steam 原子受控属性审计清单:" -ForegroundColor Cyan
+    Write-Host "`n▶ [巡检看板] Steam 原子受控属性审计清单:" -ForegroundColor Cyan
     $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
 }
 
 $driftCount = $PendingItems.Count
 if ($Action -eq "Check") {
     if ($driftCount -eq 0) {
-        Write-Host "✨ [巡检完成] 所有受控属性与工程基线完全一致，无需调整。`n" -ForegroundColor Green
+        Write-Host "✔ [巡检完成] 所有受控属性与工程基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
-        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $driftCount) -ForegroundColor Yellow
+        Write-Host ("▲ 共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $driftCount) -ForegroundColor Yellow
     }
     return
 }
 
 if ($driftCount -eq 0 -and $isInstalled -and -not $Force) {
-    Write-Host "✨ [巡检完成] 所有受控属性与策略均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
+    Write-Host "✔ [巡检完成] 所有受控属性与策略均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
@@ -648,7 +648,7 @@ if ($needBinaryDeploy) {
 
 # 5.3 策略审查门禁 (Shift-Left Gate: 目的与影响结构化逐项直出)
 if (-not $Yes) {
-    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "`n▶ [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
     Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
     $idx = 1
     foreach ($p in $PendingItems) {
@@ -676,7 +676,7 @@ if (-not $Yes) {
 # 6.1 程序本体安装或覆盖升级
 Assert-SteamStopped
 if ($needBinaryDeploy) {
-    Write-Host "`n⬇️  正在准备通过官方安装器部署 Steam 至: $InstallDir..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在准备通过官方安装器部署 Steam 至: $InstallDir..." -ForegroundColor Cyan
 
     @(
         "HKCU:\Software\Valve\Steam",
@@ -714,16 +714,16 @@ if ($needBinaryDeploy) {
     }
     $AppExe = $actualExe
     $isInstalled = $true
-    Write-Host "✅ Steam 客户端已成功部署至基准目录: $InstallDir" -ForegroundColor Green
+    Write-Host "✔ Steam 客户端已成功部署至基准目录: $InstallDir" -ForegroundColor Green
 }
 
 # 6.2 禁用开机自启与注册表基线对齐
 Assert-SteamStopped
-Write-Host "`n⚙️  正在执行开机自启动抑制与注册表基线对齐..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在执行开机自启动抑制与注册表基线对齐..." -ForegroundColor Cyan
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 if ((Get-ItemProperty -Path $runKey -ErrorAction SilentlyContinue).Steam) {
     Remove-ItemProperty -Path $runKey -Name "Steam" -Force -ErrorAction SilentlyContinue
-    Write-Host "✅ 已从 HKCU Run 注册表中移除 Steam 自启项。" -ForegroundColor Green
+    Write-Host "✔ 已从 HKCU Run 注册表中移除 Steam 自启项。" -ForegroundColor Green
 }
 
 $steamUserReg = "HKCU:\Software\Valve\Steam"
@@ -738,7 +738,7 @@ $verifyRegLang = (Get-ItemProperty -Path $steamUserReg -ErrorAction SilentlyCont
 if ($verifyRegLang -cne "schinese") {
     throw "HKCU Valve\Steam 注册表界面语言回读校验失败，未匹配基线。"
 }
-Write-Host "✅ 已核验 HKCU Valve\Steam 注册表界面语言为 schinese。" -ForegroundColor Green
+Write-Host "✔ 已核验 HKCU Valve\Steam 注册表界面语言为 schinese。" -ForegroundColor Green
 
 $hklmSteamReg = "HKLM:\SOFTWARE\WOW6432Node\Valve\Steam"
 if (Test-Path $hklmSteamReg) {
@@ -749,7 +749,7 @@ if (Test-Path $hklmSteamReg) {
 }
 
 # 6.3 注入全局 config.vdf 性能策略
-Write-Host "⚙️  正在单向对齐全局 config.vdf 性能配置..." -ForegroundColor Cyan
+Write-Host "▶ 正在单向对齐全局 config.vdf 性能配置..." -ForegroundColor Cyan
 Ensure-Dir (Split-Path $ConfigFile -Parent)
 
 Assert-SteamStopped
@@ -784,18 +784,18 @@ try {
 } catch {
     throw "config.vdf 回读校验失败（本次已写入: $globalWritten）: $($_.Exception.Message)"
 }
-Write-Host "✅ config.vdf 受控值回读校验通过（本次已写入: $globalWritten）: $ConfigFile" -ForegroundColor Green
+Write-Host "✔ config.vdf 受控值回读校验通过（本次已写入: $globalWritten）: $ConfigFile" -ForegroundColor Green
 
 # 6.5 安装后重新发现当前组件，按同一规格收敛并回读本地规则
 $fwRules = Get-SteamFirewallSpecs
 $firewallApplied = Sync-AppFirewallRules -Specs $fwRules
-Write-Host "✅ 本地入站阻断规则及受控过滤器已回读核验，本次修改 $firewallApplied 条；未验证实际流量或上级策略。" -ForegroundColor Green
+Write-Host "✔ 本地入站阻断规则及受控过滤器已回读核验，本次修改 $firewallApplied 条；未验证实际流量或上级策略。" -ForegroundColor Green
 
 # ==============================================================================
 # 7. 阶段 4: 尾部简报与动态真待办 (Report)
 # ==============================================================================
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 基线与系统管控对齐完成！" -ForegroundColor Green
+Write-Host "  ✔ [$AppName] 基线与系统管控对齐完成！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 Write-Host "   - 开机管理: 已从注册表移除 Steam 常驻自启" -ForegroundColor Gray
 Write-Host "   - 界面偏好: Steam 默认语言已锁定为简体中文 (schinese)" -ForegroundColor Gray

@@ -100,7 +100,7 @@ apply_awk() {
     shift 2
     local staged="$BUILD_DIR/.stage.tmp"
     if ! awk "$@" "$target" > "$staged"; then
-        printf '❌ 构建阶段失败: %s\n' "$stage" >&2
+        printf '✘ 构建阶段失败: %s\n' "$stage" >&2
         exit 1
     fi
     mv -f "$staged" "$target"
@@ -109,7 +109,7 @@ apply_awk() {
 assert_no_heredoc_marker() {
     local file=$1 marker=$2
     if grep -Fxq "$marker" "$file"; then
-        printf '❌ 内联源文件包含冲突的 heredoc 定界符 (%s): %s\n' "$marker" "$file" >&2
+        printf '✘ 内联源文件包含冲突的 heredoc 定界符 (%s): %s\n' "$marker" "$file" >&2
         exit 1
     fi
 }
@@ -121,7 +121,7 @@ fetch_upstream() {
     local entry file expected actual
     local -a curl_fetch=(curl -fsSL --retry 3 --retry-delay 2)
     if [[ -n "$UPSTREAM_DIR" ]]; then
-        [[ -d "$UPSTREAM_DIR" ]] || { printf '❌ 上游目录不存在: %s\n' "$UPSTREAM_DIR" >&2; exit 1; }
+        [[ -d "$UPSTREAM_DIR" ]] || { printf '✘ 上游目录不存在: %s\n' "$UPSTREAM_DIR" >&2; exit 1; }
         printf '▶ 1. 读取本地上游组件 (Commit: %s, Dir: %s)...\n' "$UPSTREAM_COMMIT" "$UPSTREAM_DIR"
     else
         printf '▶ 1. 抓取上游组件 (Commit: %s)...\n' "$UPSTREAM_COMMIT"
@@ -137,7 +137,7 @@ fetch_upstream() {
         fi
         actual=$(sha256sum "$BUILD_DIR/$file" | awk '{print $1}')
         if [[ "$actual" != "$expected" ]]; then
-            printf '❌ 上游文件 SHA-256 不匹配 (%s): expected=%s actual=%s\n' "$file" "$expected" "$actual" >&2
+            printf '✘ 上游文件 SHA-256 不匹配 (%s): expected=%s actual=%s\n' "$file" "$expected" "$actual" >&2
             exit 1
         fi
     done
@@ -831,7 +831,7 @@ generate_audit_patch() {
             "$STAGES_DIR/01-pruned-$component.sh" "$BUILD_DIR/$component.sh" > "$BUILD_DIR/$component.patch" || {
             rc=$?
             if (( rc != 1 )); then
-                printf '❌ 无法生成 %s 的审计补丁。\n' "$component" >&2
+                printf '✘ 无法生成 %s 的审计补丁。\n' "$component" >&2
                 exit "$rc"
             fi
         }
@@ -944,71 +944,71 @@ verify_and_publish() {
 
     # 8.2 剪枝与占位展开断言
     if grep -q '@@INLINE:' "$BUILD_DIR/vps2arch.sh"; then
-        echo "❌ 断言失败: 存在未展开的 @@INLINE 占位符" >&2; exit 1
+        echo "✘ 断言失败: 存在未展开的 @@INLINE 占位符" >&2; exit 1
     fi
     if grep -qE 'install_alpine\(\) \{[[:space:]]*echo' "$BUILD_DIR/vps2arch.sh" || ! grep -q 'Alpine is not supported in this build' "$BUILD_DIR/vps2arch.sh"; then
-        echo "❌ 断言失败: Alpine 安装分支剪枝异常" >&2; exit 1
+        echo "✘ 断言失败: Alpine 安装分支剪枝异常" >&2; exit 1
     fi
     if ! grep -q 'NixOS is not supported in this build' "$BUILD_DIR/vps2arch.sh"; then
-        echo "❌ 断言失败: NixOS 安装分支剪枝异常" >&2; exit 1
+        echo "✘ 断言失败: NixOS 安装分支剪枝异常" >&2; exit 1
     fi
     if grep -En 'setup_nginx|setup_web_if_enough_ram|setup_websocketd|setup_lighttpd|logviewer|websocketd|web[_-](port|path)|http-port|get_http_log_url|is_need_web_viewer|WEB:' "$BUILD_DIR/vps2arch.sh" >&2; then
-        echo "❌ 断言失败: 未认证 Web 控制台代码泄漏" >&2; exit 1
+        echo "✘ 断言失败: 未认证 Web 控制台代码泄漏" >&2; exit 1
     fi
     if grep -En 'frpc-conf|frpc-config|get_frpc_url|add_frpc_systemd_service_if_need|get-frpc-url\.sh|frpc\.service|/configs/frpc\.' "$BUILD_DIR/vps2arch.sh" >&2; then
-        echo "❌ 断言失败: 已裁剪 frpc 代码泄漏" >&2; exit 1
+        echo "✘ 断言失败: 已裁剪 frpc 代码泄漏" >&2; exit 1
     fi
     if grep -n -- '--insecure' "$BUILD_DIR/vps2arch.sh" >&2; then
-        echo "❌ 断言失败: 源机 curl 仍残留 --insecure" >&2; exit 1
+        echo "✘ 断言失败: 源机 curl 仍残留 --insecure" >&2; exit 1
     fi
     if grep -n -- 'mv -fT' "$BUILD_DIR/vps2arch.sh" >&2; then
-        echo "❌ 断言失败: 仍残留不兼容 BusyBox 的 mv -fT" >&2; exit 1
+        echo "✘ 断言失败: 仍残留不兼容 BusyBox 的 mv -fT" >&2; exit 1
     fi
 
     # 8.3 依赖内联断言：确保无 live 阶段二次网络拉取
     if grep -q 'curl -Lo $initrd_dir/trans.sh' "$BUILD_DIR/vps2arch.sh"; then
-        echo "❌ 断言失败: trans.sh 未能成功静态内联" >&2; exit 1
+        echo "✘ 断言失败: trans.sh 未能成功静态内联" >&2; exit 1
     fi
     if grep -q 'curl -Lo $initrd_dir/initrd-network.sh' "$BUILD_DIR/vps2arch.sh"; then
-        echo "❌ 断言失败: initrd-network.sh 未能成功静态内联" >&2; exit 1
+        echo "✘ 断言失败: initrd-network.sh 未能成功静态内联" >&2; exit 1
     fi
     if grep -q 'wget $confhome/ttys.sh' "$BUILD_DIR/vps2arch.sh"; then
-        echo "❌ 断言失败: ttys.sh 未能成功静态内联" >&2; exit 1
+        echo "✘ 断言失败: ttys.sh 未能成功静态内联" >&2; exit 1
     fi
 
     # 8.4 关键向导与探针函数保留断言
     local fn sec
     for fn in prompt_username assert_username_valid resolve_mount_unique_disk get_approximate_ram_size; do
         if ! grep -q "${fn}() {" "$BUILD_DIR/vps2arch.sh"; then
-            echo "❌ 断言失败: 关键函数缺失: $fn" >&2; exit 1
+            echo "✘ 断言失败: 关键函数缺失: $fn" >&2; exit 1
         fi
     done
 
     # 8.5 Arch 终态安全加固断言
     for sec in "PermitRootLogin no" "PasswordAuthentication no" "AuthenticationMethods publickey" "PubkeyAcceptedAlgorithms ssh-ed25519" "00-hardened.conf" "%wheel ALL=(ALL:ALL) ALL" "visudo -c"; do
         if ! grep -Fq "$sec" "$BUILD_DIR/vps2arch.sh"; then
-            echo "❌ 断言失败: 核心安全加固缺失: $sec" >&2; exit 1
+            echo "✘ 断言失败: 核心安全加固缺失: $sec" >&2; exit 1
         fi
     done
 
     # 8.6 审计补丁断言（且不含上游原文展开噪音）
     if [[ ! -s "$BUILD_DIR/vps2arch.patch" ]] || ! grep -q -- '--- upstream/' "$BUILD_DIR/vps2arch.patch"; then
-        printf '❌ 断言失败: 审计补丁 %s 为空或无效\n' "$OUTPUT_PATCH" >&2; exit 1
+        printf '✘ 断言失败: 审计补丁 %s 为空或无效\n' "$OUTPUT_PATCH" >&2; exit 1
     fi
     if grep -Fq 'Waiting for the NICs to be stable' "$BUILD_DIR/vps2arch.patch"; then
-        echo "❌ 断言失败: 上游 fix-eth-name.sh 原文泄漏进审计补丁" >&2; exit 1
+        echo "✘ 断言失败: 上游 fix-eth-name.sh 原文泄漏进审计补丁" >&2; exit 1
     fi
 
     if (( CHECK_ONLY )); then
         local drift=0
         cmp -s "$BUILD_DIR/vps2arch.sh" "$OUTPUT_SCRIPT" || {
-            printf '❌ 产物漂移: %s 与构建结果不一致\n' "$OUTPUT_SCRIPT" >&2; drift=1
+            printf '✘ 产物漂移: %s 与构建结果不一致\n' "$OUTPUT_SCRIPT" >&2; drift=1
         }
         cmp -s "$BUILD_DIR/vps2arch.patch" "$OUTPUT_PATCH" || {
-            printf '❌ 产物漂移: %s 与构建结果不一致\n' "$OUTPUT_PATCH" >&2; drift=1
+            printf '✘ 产物漂移: %s 与构建结果不一致\n' "$OUTPUT_PATCH" >&2; drift=1
         }
         (( drift == 0 )) || exit 1
-        printf '\n✅ --check 校验通过：仓内产物与构建器输出完全一致。\n'
+        printf '\n✔ --check 校验通过：仓内产物与构建器输出完全一致。\n'
         return
     fi
 
@@ -1020,7 +1020,7 @@ verify_and_publish() {
     file_size=$(du -h "$OUTPUT_SCRIPT" | awk '{print $1}')
     patch_lines=$(wc -l < "$OUTPUT_PATCH")
 
-    printf '\n✅ 静态构建与审计完成！\n'
+    printf '\n✔ 静态构建与审计完成！\n'
     printf '   生产产物: %s (%s, SHA256: %s)\n' "$OUTPUT_SCRIPT" "$file_size" "$actual_sha256"
     printf '   审计补丁: %s (%s 行 diff)\n' "$OUTPUT_PATCH" "$patch_lines"
 }
@@ -1649,15 +1649,15 @@ if [ $# -eq 0 ]; then
         IFS= read -s -rp "再次输入确认密码: " p2 < /dev/tty || error_and_exit '无法读取确认密码。'
         printf '\n'
         if [[ -z "$p1" || "$p1" != "$p2" ]]; then
-            printf '❌ 两次密码输入不匹配或为空，请重新输入\n' >&2
+            printf '✘ 两次密码输入不匹配或为空，请重新输入\n' >&2
             continue
         fi
         if [[ "$p1" == *$'\n'* || "$p1" == *$'\r'* ]]; then
-            printf '❌ sudo 密码不能包含换行或回车，请重新输入\n' >&2
+            printf '✘ sudo 密码不能包含换行或回车，请重新输入\n' >&2
             continue
         fi
         if ! (LC_ALL=C; (( ${#p1} <= 256 ))); then
-            printf '❌ sudo 密码不能超过 256 字节，请重新输入\n' >&2
+            printf '✘ sudo 密码不能超过 256 字节，请重新输入\n' >&2
             continue
         fi
         TARGET_PASSWORD="$p1"
@@ -1674,7 +1674,7 @@ if [ $# -eq 0 ]; then
         done < "$AUTH_KEY_FILE"
     fi
     if [[ -n "$DEFAULT_KEY" ]]; then
-        printf '\n🔑 检测到宿主有效 Ed25519 公钥：\n%s\n' "$DEFAULT_KEY"
+        printf '\n→ 检测到宿主有效 Ed25519 公钥：\n%s\n' "$DEFAULT_KEY"
     fi
 
     TARGET_SSH_KEY=""
@@ -1687,7 +1687,7 @@ if [ $# -eq 0 ]; then
         fi
         TARGET_SSH_KEY=$(printf '%s' "$TARGET_SSH_KEY" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
         valid_ed25519_key "$TARGET_SSH_KEY" && break
-        printf '❌ 公钥无效（必须为 ssh-ed25519 格式），请重新输入\n' >&2
+        printf '✘ 公钥无效（必须为 ssh-ed25519 格式），请重新输入\n' >&2
     done
 
     # 4. SSH 端口

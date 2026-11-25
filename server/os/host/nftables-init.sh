@@ -10,7 +10,7 @@ validate_arch_host() {
     local machine release=/etc/os-release
     machine=$(uname -m) || return 1
     [[ "$machine" == x86_64 ]] || {
-        printf '❌ 仅支持 Arch Linux x86-64，检测到架构：%s\n' "$machine" >&2
+        printf '✘ 仅支持 Arch Linux x86-64，检测到架构：%s\n' "$machine" >&2
         return 1
     }
     if [[ ! -e "$release" && ! -L "$release" ]]; then release=/usr/lib/os-release; fi
@@ -18,7 +18,7 @@ validate_arch_host() {
         /^ID=/ { count++; if ($0 ~ /^ID=(arch|"arch"|\047arch\047)$/) good++ }
         END { exit (count != 1 || good != 1) }
     ' "$release"; then
-        printf '❌ 无法确认当前系统是 Arch Linux：%s\n' "$release" >&2
+        printf '✘ 无法确认当前系统是 Arch Linux：%s\n' "$release" >&2
         return 1
     fi
 }
@@ -27,15 +27,15 @@ validate_user_environment() {
     local user_name
     user_name=$(id -un) || return 1
     [[ "$user_name" != "root" ]] || {
-        printf '❌ 请以具备 sudo 权限的普通用户执行，禁止直接以 root 执行\n' >&2
+        printf '✘ 请以具备 sudo 权限的普通用户执行，禁止直接以 root 执行\n' >&2
         return 1
     }
     id -nG "$user_name" | tr ' ' '\n' | grep -Fxq wheel || {
-        printf '❌ 当前用户不在 wheel 组\n' >&2
+        printf '✘ 当前用户不在 wheel 组\n' >&2
         return 1
     }
     sudo -v || {
-        printf '❌ sudo 提权验证失败\n' >&2
+        printf '✘ sudo 提权验证失败\n' >&2
         return 1
     }
 }
@@ -52,7 +52,7 @@ unit=/usr/lib/systemd/system/nftables.service
 enabled_link=/etc/systemd/system/multi-user.target.wants/nftables.service
 modules=/usr/lib/modules
 
-fail() { printf '❌ %s\n' "$*" >&2; exit 1; }
+fail() { printf '✘ %s\n' "$*" >&2; exit 1; }
 absent() { [[ ! -e "$1" && ! -L "$1" ]]; }
 running_kernel_modules_available() {
     local kver
@@ -347,7 +347,7 @@ if [[ "$before" != ready ]] && ! running_kernel_modules_available; then
 fi
 after=$(firewall_state "$port" "$ssh_scope")
 if [[ "$before" == ready && "$after" == ready ]]; then
-    printf '✅ nftables 底座已合规；未重载，人工封禁保留。\n'
+    printf '✔ nftables 底座已合规；未重载，人工封禁保留。\n'
     exit 0
 fi
 [[ "$before" != ready && "$after" == fresh ]] || fail '包更新后的防火墙状态已变化，请核对磁盘和内核。'
@@ -375,13 +375,13 @@ systemctl enable nftables.service \
     || fail '规则已加载且主配置已发布，开机启用失败。请检查 nftables.service。'
 [[ $(firewall_state "$port" "$ssh_scope") == ready ]] \
     || fail '规则已加载且主配置已发布，但终态回读不符。请保持当前 SSH 并检查规则和开机启用。'
-printf '✅ nftables 底座已就绪，SSH 端口 %s；请保留当前会话并从新终端验证 IPv4 SSH。\n' "$port"
+printf '✔ nftables 底座已就绪，SSH 端口 %s；请保留当前会话并从新终端验证 IPv4 SSH。\n' "$port"
 ROOT
 }
 
 main() {
     if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != "--help" ]]; }; then
-        printf '❌ 不支持的参数: %s\n' "$*" >&2
+        printf '✘ 不支持的参数: %s\n' "$*" >&2
         printf '用法: %s [--help]\n' "$0" >&2
         return 2
     fi

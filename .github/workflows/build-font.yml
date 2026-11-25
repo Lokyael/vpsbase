@@ -64,24 +64,21 @@ jobs:
           find _build_maple/fonts/ -type f -name "*CN*.ttf" -exec cp {} _dist_pkg/ \;
 
           TTF_COUNT=$(find _dist_pkg/ -type f -name "*.ttf" | wc -l)
-          echo "📦 提取目标字体数量: ${TTF_COUNT}"
+          echo "▶ 提取目标字体数量: ${TTF_COUNT}"
           if [ "${TTF_COUNT}" -eq 0 ]; then
-            echo "❌ 未检索到目标 *CN*.ttf 字体文件！" >&2
+            echo "✘ 未检索到目标 *CN*.ttf 字体文件！" >&2
             exit 1
           fi
 
-          # 打入配置源文件与说明
           cp tools/fonts/maple-mono/config.json _dist_pkg/
           cp tools/fonts/maple-mono/README.md _dist_pkg/
 
-          # 子 shell 隔离打包为高压缩 zip
           (cd _dist_pkg && zip -9 -r ../latest-maple-mono-nl.zip .)
 
-          # 校验打包产物及体积边界 (防御 GitHub 100MB 硬阻断)
           ZIP_SIZE=$(stat -c%s "latest-maple-mono-nl.zip")
-          echo "📦 归档包体积: ${ZIP_SIZE} bytes"
+          echo "▶ 归档包体积: ${ZIP_SIZE} bytes"
           if [ "${ZIP_SIZE}" -gt 104857600 ]; then
-            echo "❌ 归档包体积超出 GitHub 单文件 100MB 限制 (${ZIP_SIZE} bytes)！" >&2
+            echo "✘ 归档包体积超出 GitHub 单文件 100MB 限制 (${ZIP_SIZE} bytes)！" >&2
             exit 1
           fi
 
@@ -95,10 +92,10 @@ jobs:
             'HEAD^{tree}' 'FETCH_HEAD^{tree}' -- "${paths[@]}"; then
             echo 'publish=true' >> "$GITHUB_OUTPUT"
           elif [[ $? -eq 1 ]]; then
-            echo '本次构建的字体输入与当前 main 不同，保留现有字体包。'
+            echo '▲ 本次构建的字体输入与当前 main 不同，保留现有字体包。'
             echo 'publish=false' >> "$GITHUB_OUTPUT"
           else
-            echo '无法比较本次构建与当前 main 的字体输入' >&2
+            echo '✘ 无法比较本次构建与当前 main 的字体输入' >&2
             exit 1
           fi
 
@@ -117,14 +114,13 @@ jobs:
           git add latest-maple-mono-nl.zip
           git commit -m "chore: update auto-built Maple Mono NL assets"
 
-          # 显式使用带有令牌授权的上下文强推至 assets 孤儿分支
           git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           if ! git push --force origin assets; then
-            echo "❌ 推送至 assets 孤儿分支失败！" >&2
-            echo "👉 请排查：" >&2
+            echo "✘ 推送至 assets 孤儿分支失败！" >&2
+            echo "→ 请排查：" >&2
             echo "   1. 仓库 Settings -> Actions -> General -> Workflow permissions 是否已勾选 'Read and write permissions'" >&2
             echo "   2. 仓库是否配置了分支保护规则或规则集阻断了强制推送" >&2
             exit 1
           fi
 
-          echo "🚀 成功发布最新 Maple Mono NL 等宽字体基线至 assets 孤儿分支"
+          echo "✔ 成功发布最新 Maple Mono NL 等宽字体基线至 assets 孤儿分支"

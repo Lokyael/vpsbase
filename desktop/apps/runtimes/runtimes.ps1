@@ -29,13 +29,13 @@
 
 .EXAMPLE
     # 只查不改体检巡检
-    pwsh -File .\desktop\apps\runtimes.ps1 -Action Check
+    pwsh -File .\desktop\apps\runtimes\runtimes.ps1 -Action Check
 
     # 交互式检查并增量补齐运行库与底座
-    pwsh -File .\desktop\apps\runtimes.ps1
+    pwsh -File .\desktop\apps\runtimes\runtimes.ps1
 
     # 无交互一键全量对齐
-    pwsh -File .\desktop\apps\runtimes.ps1 -Yes
+    pwsh -File .\desktop\apps\runtimes\runtimes.ps1 -Yes
 #>
 
 [CmdletBinding()]
@@ -131,7 +131,6 @@ function Get-GitGlobalConfigStatus {
 
     $global:LASTEXITCODE = $null
     $rawLines = & $GitExe config --global --list 2>$null
-    $exitCode = if ($null -ne $global:LASTEXITCODE) { $global:LASTEXITCODE } else { $LASTEXITCODE }
 
     $currentMap = @{}
     if ($rawLines) {
@@ -723,22 +722,22 @@ foreach ($key in $inv.Keys) {
 }
 
 if (-not $Yes) {
-    Write-Host "`n📊 [巡检看板] 系统底层运行库与应用底座基线审计清单:" -ForegroundColor Cyan
+    Write-Host "`n▶ [巡检看板] 系统底层运行库与应用底座基线审计清单:" -ForegroundColor Cyan
     $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
 }
 
 # 检查模式立即安全退出
 if ($Action -eq "Check") {
     if ($DiffList.Count -eq 0) {
-        Write-Host "✨ [状态合规] 系统基础底座与核心运行库均已完整就绪，无需补齐。`n" -ForegroundColor Green
+        Write-Host "✔ [状态合规] 系统基础底座与核心运行库均已完整就绪，无需补齐。`n" -ForegroundColor Green
     } else {
-        Write-Host ("⚠️  共发现 {0} 项基础组件偏离/缺失。执行默认模式 (-Action Sync) 即可自动补齐。`n" -f $DiffList.Count) -ForegroundColor Yellow
+        Write-Host ("▲ 共发现 {0} 项基础组件偏离/缺失。执行默认模式 (-Action Sync) 即可自动补齐。`n" -f $DiffList.Count) -ForegroundColor Yellow
     }
     return
 }
 
 if ($DiffList.Count -eq 0) {
-    Write-Host "✨ [状态合规] 系统基础底座与核心运行库均已在机就绪，无需安装补齐。`n" -ForegroundColor Green
+    Write-Host "✔ [状态合规] 系统基础底座与核心运行库均已在机就绪，无需安装补齐。`n" -ForegroundColor Green
     return
 }
 
@@ -746,7 +745,7 @@ if ($DiffList.Count -eq 0) {
 # 5. 阶段 2: 审查门禁 (Gate - Shift-Left: 目的与影响结构化直出)
 # ==============================================================================
 if (-not $Yes) {
-    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "`n▶ [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
     Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
     $idx = 1
     foreach ($m in $DiffList) {
@@ -774,7 +773,7 @@ $failures = [System.Collections.Generic.List[string]]::new()
 # 6.1 首先对齐 Scoop 包管理器与核心工具链（保障后续 aria2 并发下载引擎就绪）
 $scoopItem = $DiffList | Where-Object { $_.Key -eq "scoop" } | Select-Object -First 1
 if ($scoopItem) {
-    Write-Host "`n🚀 正在对齐底座: $($scoopItem.Name)..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在对齐底座: $($scoopItem.Name)..." -ForegroundColor Cyan
     try {
         $scoopRoot = $scoopItem.ScoopRoot
 
@@ -834,7 +833,7 @@ if ($scoopItem) {
 # 6.2 对齐 Git 全局基础偏好规范配置 (LF / UTF-8 / main / remote)
 $gitItem = $DiffList | Where-Object { $_.Key -eq "git" } | Select-Object -First 1
 if ($gitItem) {
-    Write-Host "`n🚀 正在对齐配置: $($gitItem.Name)..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在对齐配置: $($gitItem.Name)..." -ForegroundColor Cyan
     try {
         $targetScoopRoot = if ($inv -and $inv["scoop"]) { $inv["scoop"].ScoopRoot } else { $scoopRoot }
         $targetGitExe = if ($gitItem.GitExe -and (Test-Path -LiteralPath $gitItem.GitExe -PathType Leaf)) {
@@ -868,7 +867,7 @@ if ($gitItem) {
 # 6.3 对齐 7-Zip 极简外壳集成与核心格式关联
 $sevenZipItem = $DiffList | Where-Object { $_.Key -eq "7zip" } | Select-Object -First 1
 if ($sevenZipItem) {
-    Write-Host "`n🚀 正在对齐集成: $($sevenZipItem.Name)..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在对齐集成: $($sevenZipItem.Name)..." -ForegroundColor Cyan
     try {
         $targetScoopRoot = if ($inv -and $inv["scoop"]) { $inv["scoop"].ScoopRoot } else { $scoopRoot }
         Set-SevenZipIntegration -ScoopRoot $targetScoopRoot
@@ -882,7 +881,7 @@ if ($sevenZipItem) {
 # 6.4 依序下载并安装底层运行库 (VC++ x64/x86, .NET 10, WebView2)
 $runtimeItems = @($DiffList | Where-Object { $_.Key -notin @("scoop", "git", "7zip") })
 foreach ($m in $runtimeItems) {
-    Write-Host "`n🚀 正在对齐运行库: $($m.Name)..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在对齐运行库: $($m.Name)..." -ForegroundColor Cyan
     $tempFile = Join-Path $env:TEMP $m.FileName
     try {
         if (Test-Path -LiteralPath $tempFile) {
@@ -928,7 +927,7 @@ foreach ($k in $afterInv.Keys) {
 }
 
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 环境基线对齐检查完毕！" -ForegroundColor Green
+Write-Host "  ✔ [$AppName] 环境基线对齐检查完毕！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 
 if ($failures.Count -gt 0) {
@@ -938,7 +937,7 @@ if ($failures.Count -gt 0) {
 if ($stillMissing.Count -gt 0) {
     throw "基础底座补齐后仍有以下组件未就绪: $($stillMissing -join ', ')。请检查依赖环境或重新对齐。"
 } else {
-    Write-Host "✨ 全部基础运行库与 Scoop 应用底座均已安装就绪。`n" -ForegroundColor Green
+    Write-Host "✔ 全部基础运行库与 Scoop 应用底座均已安装就绪。`n" -ForegroundColor Green
 }
 
 return

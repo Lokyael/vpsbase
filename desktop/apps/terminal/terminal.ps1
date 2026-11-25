@@ -30,21 +30,18 @@
 .PARAMETER Force
     配合 Sync 使用，强制重新装配等宽字体并全量覆写终端与 PowerShell 7 配置块。
 
-.PARAMETER Purge
-    预留参数契约 (终端配置剥离后无用户独立数据目录)。
-
 .EXAMPLE
     # 只查不改体检巡检
-    pwsh -File .\desktop\apps\terminal.ps1 -Action Check
+    pwsh -File .\desktop\apps\terminal\terminal.ps1 -Action Check
 
     # 交互式检查并应用工程基线
-    pwsh -File .\desktop\apps\terminal.ps1
+    pwsh -File .\desktop\apps\terminal\terminal.ps1
 
     # 强制重新覆写并对齐基线
-    pwsh -File .\desktop\apps\terminal.ps1 -Force
+    pwsh -File .\desktop\apps\terminal\terminal.ps1 -Force
 
     # 清洁卸载并剥离托管配置
-    pwsh -File .\desktop\apps\terminal.ps1 -Action Uninstall
+    pwsh -File .\desktop\apps\terminal\terminal.ps1 -Action Uninstall
 #>
 
 [CmdletBinding()]
@@ -53,8 +50,7 @@ param(
     [string]$Action = "Sync",
 
     [switch]$Yes,
-    [switch]$Force,
-    [switch]$Purge
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -121,7 +117,6 @@ $pwshCandidates = @(
 $pwshExe = $pwshCandidates | Where-Object { & $testInternalValid $_ } | Select-Object -First 1
 
 $regHklm = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-$regHkcu = "HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts"
 
 $testFontInstalled = {
     $fontFile = Join-Path $env:SystemRoot "Fonts\MapleMonoNL-NFMono-CN-Regular.ttf"
@@ -392,8 +387,8 @@ $GUID_LEGACY = @("{61c54bbd-c2c6-5271-96e7-009a87ff44bf}", "{0caa0dad-35be-5f56-
 # ==============================================================================
 if ($Action -eq "Uninstall") {
     if (-not $Yes) {
-        Write-Host "`n⚠️  [清洁卸载警示] 即将重置 Windows Terminal 托管配置并剥离 PowerShell 7 配置文件托管块！" -ForegroundColor Yellow
-        Write-Host "📌 【涉及的托管配置文件清单】:" -ForegroundColor Cyan
+        Write-Host "`n▲ [清洁卸载警示] 即将重置 Windows Terminal 托管配置并剥离 PowerShell 7 配置文件托管块！" -ForegroundColor Yellow
+        Write-Host "○ 【涉及的托管配置文件清单】:" -ForegroundColor Cyan
         foreach ($d in $HighValueUserData) {
             Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
         }
@@ -404,7 +399,7 @@ if ($Action -eq "Uninstall") {
         }
     }
 
-    Write-Host "`n🧹 正在剥离受控托管配置块..." -ForegroundColor Yellow
+    Write-Host "`n▶ 正在剥离受控托管配置块..." -ForegroundColor Yellow
     Remove-ManagedConfigBlock $pwshProfilePath "pwsh-history-search"
 
     if (Test-Path $wtSettings) {
@@ -424,7 +419,7 @@ if ($Action -eq "Uninstall") {
         } catch { }
     }
 
-    Write-Host "`n✅ [清洁卸载完成] 终端底座与受控托管块已安全剥离。`n" -ForegroundColor Green
+    Write-Host "`n✔ [清洁卸载完成] 终端底座与受控托管块已安全剥离。`n" -ForegroundColor Green
     return
 }
 
@@ -645,26 +640,26 @@ if (-not $pwshHasBlock) {
 }
 
 if (-not $Yes) {
-    Write-Host "`n📊 [巡检看板] Windows Terminal 与 PowerShell 7 基线审计清单:" -ForegroundColor Cyan
+    Write-Host "`n▶ [巡检看板] Windows Terminal 与 PowerShell 7 基线审计清单:" -ForegroundColor Cyan
     $chkList | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
 }
 
 if ($Action -eq "Check") {
     if ($diffList.Count -eq 0) {
-        Write-Host "✨ [状态合规] Windows Terminal 与 Shell 配置均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
+        Write-Host "✔ [状态合规] Windows Terminal 与 Shell 配置均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
-        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $diffList.Count) -ForegroundColor Yellow
+        Write-Host ("▲ 共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $diffList.Count) -ForegroundColor Yellow
     }
     return
 }
 
 if ($diffList.Count -eq 0 -and -not $Force) {
-    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
+    Write-Host "✔ [状态合规] 所有受控属性与策略均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
 if ($diffList.Count -gt 0) {
-    Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
+    Write-Host "`n▶ [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
     $diffList | Format-Table -AutoSize | Out-String | Write-Host
 }
 
@@ -672,7 +667,7 @@ if ($diffList.Count -gt 0) {
 # 5. 阶段 2: 审查门禁 (Gate - Shift-Left: 目的与影响结构化直出)
 # ==============================================================================
 if (-not $Yes) {
-    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "`n▶ [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
     Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
     $idx = 1
     foreach ($p in $diffList) {
@@ -704,7 +699,7 @@ if (-not $hasMapleFont -or $Force) {
 }
 
 # 6.2 注入并调优 Windows Terminal settings.json
-Write-Host "`n⚙️  正在单向对齐 Windows Terminal 工程基线策略..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在单向对齐 Windows Terminal 工程基线策略..." -ForegroundColor Cyan
 if (Test-Path $wtSettings) {
     # 在分支内赋值，避免 if 的输出管道再次展开根数组。
     $jsonObj = ConvertFrom-Json -InputObject (Get-Content -Path $wtSettings -Raw -Encoding UTF8 -ErrorAction Stop) -NoEnumerate -Depth 100 -ErrorAction Stop
@@ -750,21 +745,21 @@ $finalJsonStr = $jsonObj | ConvertTo-Json -Depth 100 -WarningAction Stop -ErrorA
 $parent = Split-Path -Path $wtSettings -Parent
 if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
 [System.IO.File]::WriteAllText($wtSettings, $finalJsonStr, [System.Text.UTF8Encoding]::new($false))
-Write-Host "✅ Windows Terminal 策略已写入: $wtSettings" -ForegroundColor Green
+Write-Host "✔ Windows Terminal 策略已写入: $wtSettings" -ForegroundColor Green
 
 # 6.3 注入 PowerShell 7 历史按键与行内预测托管块
-Write-Host "⚙️  正在注入 PowerShell 7 前缀历史智能检索与行内预测基线..." -ForegroundColor Cyan
+Write-Host "▶ 正在注入 PowerShell 7 前缀历史智能检索与行内预测基线..." -ForegroundColor Cyan
 Update-ManagedConfigFile -FilePath $pwshProfilePath -BlockTag 'pwsh-history-search' -BlockContent $pwshBlock
 if (-not (Test-ManagedConfigBlock $pwshProfilePath 'pwsh-history-search' $pwshBlock)) {
     throw "PowerShell Profile 托管块写后回读不匹配: $pwshProfilePath"
 }
-Write-Host "✅ PowerShell 7 历史检索体验基线对齐完毕。" -ForegroundColor Green
+Write-Host "✔ PowerShell 7 历史检索体验基线对齐完毕。" -ForegroundColor Green
 
 # ==============================================================================
 # 7. 阶段 4: 尾部简报与动态真待办 (Report)
 # ==============================================================================
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 基线配置已全部闭环自愈！" -ForegroundColor Green
+Write-Host "  ✔ [$AppName] 基线配置已全部闭环自愈！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 Write-Host "   - 默认终端: PowerShell 7 ($GUID_PWSH)" -ForegroundColor Gray
 Write-Host "   - 启动目录: $targetStartDir (Acrylic 0.85 磨砂开启)" -ForegroundColor Gray

@@ -224,7 +224,7 @@ if ($null -ne $Apps -and $Apps.Count -gt 0) {
 }
 
 if ($selectedIds.Count -eq 0 -and -not $Yes) {
-    Write-Host "💡 请选择要纳入本次编排的应用:" -ForegroundColor Cyan
+    Write-Host "→ 请选择要纳入本次编排的应用:" -ForegroundColor Cyan
     Write-Host "   - 输入序号多选 (例如: 1,3)" -ForegroundColor Gray
     Write-Host "   - 输入 'A' 或 'all' 选中全量应用" -ForegroundColor Gray
     Write-Host "   - 输入 'Q' 退出`n" -ForegroundColor Gray
@@ -260,7 +260,7 @@ if ($selectedIds.Count -eq 0) {
 
 # 2. 判定生命周期操作模式
 if ([string]::IsNullOrWhiteSpace($Action) -and -not $Yes) {
-    Write-Host "`n⚙️  请选择生命周期模式:" -ForegroundColor Cyan
+    Write-Host "`n→ 请选择生命周期模式:" -ForegroundColor Cyan
     Write-Host "  [1] 增量对齐受控基线 (Sync)     - 推荐：缺失/版本漂移则装、偏离则修，保留用户数据" -ForegroundColor White
     Write-Host "  [2] 状态体检只读巡检 (Check)    - 只读比对受控属性 Diff，零写入安全退出" -ForegroundColor Green
     Write-Host "  [3] 清洁卸载退役 (Uninstall)    - 调用固定提供者退役本体并清理声明残留 (默认保留数据)" -ForegroundColor Yellow
@@ -286,7 +286,7 @@ if ($Action -eq 'Uninstall' -and $selectedIds.Contains('bulk-crap-uninstaller'))
     $selectedIds.Add('bulk-crap-uninstaller')
 }
 
-Write-Host "`n🎯 编排目标: [ $($selectedIds -join ', ') ] | 执行模式: [ $Action ]`n" -ForegroundColor Green
+Write-Host "`n○ 编排目标: [ $($selectedIds -join ', ') ] | 执行模式: [ $Action ]`n" -ForegroundColor Green
 
 # ==============================================================================
 # 阶段 3: 单向流水线调度 (Apply)
@@ -333,7 +333,7 @@ foreach ($key in $selectedIds) {
 # 阶段 4: 仅汇集子脚本明确交付的人类待办
 # ==============================================================================
 if ($humanHints.Count -gt 0) {
-    Write-Host "`n📋 [人类待办] 以下提示由对应子脚本交付，不表示执行成功或基线合规：" -ForegroundColor Cyan
+    Write-Host "`n→ [人类待办] 以下提示由对应子脚本交付，不表示执行成功或基线合规：" -ForegroundColor Cyan
     $seenHints = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($hint in $humanHints) {
         if ($seenHints.Add("$($hint.Source)`n$($hint.Message)")) {

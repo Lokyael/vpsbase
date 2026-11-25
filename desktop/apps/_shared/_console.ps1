@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 <#
 .SYNOPSIS
     应用生命周期控制台呈现与守门算子 (Console & Gatekeeper)
@@ -90,7 +90,7 @@ if ($Task -eq "RenderDiff") {
         if ($w -ge 100) { $w } else { 120 }
     } catch { 120 }
 
-    Write-Host "`n📊 [巡检看板] 原子受控属性审计清单:" -ForegroundColor Cyan
+    Write-Host "`n▶ [巡检看板] 原子受控属性审计清单:" -ForegroundColor Cyan
     $rows | Format-Table -AutoSize | Out-String -Width $targetWidth | Write-Host
     Write-Host ("巡检统计: 共 {0} 项受控属性 | 已就绪 {1} 项 | 存在偏离 {2} 项`n" -f $rows.Count, $alignedCount, ($rows.Count - $alignedCount)) -ForegroundColor Cyan
     return
@@ -112,7 +112,7 @@ if ($Task -eq "ConfirmGate") {
         return $false
     }
 
-    Write-Host "⚠️  检测到以下 $($diffs.Count) 处受控属性偏离工程基线，待执行对齐变更:" -ForegroundColor Yellow
+    Write-Host "▲ 检测到以下 $($diffs.Count) 处受控属性偏离工程基线，待执行对齐变更:" -ForegroundColor Yellow
     foreach ($d in $diffs) {
         $propName = if ($d.Property) { $d.Property } else { "未指定属性" }
         Write-Host ("`n▶ 属性: {0}" -f $propName) -ForegroundColor Cyan
@@ -154,16 +154,16 @@ if ($Task -eq "ConfirmUninstall") {
 
     $hasDeclaredData = $UserDataList -and $UserDataList.Count -gt 0
     if ($hasDeclaredData) {
-        Write-Host "`n⚠️  [清洁卸载警示] 即将退役 $AppName 本体并彻底清理受控配置与声明残留！" -ForegroundColor Yellow
+        Write-Host "`n▲ [清洁卸载警示] 即将退役 $AppName 本体并彻底清理受控配置与声明残留！" -ForegroundColor Yellow
     } else {
-        Write-Host "`n⚠️  即将退役 $AppName 本体；未声明用户数据清理。" -ForegroundColor Yellow
+        Write-Host "`n▲ 即将退役 $AppName 本体；未声明用户数据清理。" -ForegroundColor Yellow
     }
     if ($hasDeclaredData) {
-        Write-Host "📌 【即将被清理的受控配置与声明数据】:" -ForegroundColor Cyan
+        Write-Host "○ 【即将被清理的受控配置与声明数据】:" -ForegroundColor Cyan
         foreach ($d in $UserDataList) {
             Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
         }
-        Write-Host "🛡️  注：个人文档、外部项目等非声明数据受硬边界保护，绝不触碰。`n" -ForegroundColor DarkCyan
+        Write-Host "○ 注：个人文档、外部项目等非声明数据受硬边界保护，绝不触碰。`n" -ForegroundColor DarkCyan
     }
 
     $promptText = if ($hasDeclaredData) { "确认退役 $AppName 并清理其声明数据? [y/N]" } else { "确认退役 $AppName 本体（保留用户数据）? [y/N]" }

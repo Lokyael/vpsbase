@@ -12,7 +12,7 @@ validate_arch_host() {
     local machine release=/etc/os-release
     machine=$(uname -m) || return 1
     [[ "$machine" == x86_64 ]] || {
-        printf '❌ 仅支持 Arch Linux x86-64，检测到架构：%s\n' "$machine" >&2
+        printf '✘ 仅支持 Arch Linux x86-64，检测到架构：%s\n' "$machine" >&2
         return 1
     }
     if [[ ! -e "$release" && ! -L "$release" ]]; then release=/usr/lib/os-release; fi
@@ -20,7 +20,7 @@ validate_arch_host() {
         /^ID=/ { count++; if ($0 ~ /^ID=(arch|"arch"|\047arch\047)$/) good++ }
         END { exit (count != 1 || good != 1) }
     ' "$release"; then
-        printf '❌ 无法确认当前系统是 Arch Linux：%s\n' "$release" >&2
+        printf '✘ 无法确认当前系统是 Arch Linux：%s\n' "$release" >&2
         return 1
     fi
 }
@@ -31,9 +31,9 @@ validate_arch_host() {
 # ========================================================
 
 validate_bashrc() {
-    [[ ! -L "$BASHRC" ]] || { printf '❌ ~/.bashrc 是符号链接，停止\n' >&2; return 1; }
-    [[ ! -e "$BASHRC" || ( -f "$BASHRC" && -r "$BASHRC" && -w "$BASHRC" ) ]] || { printf '❌ ~/.bashrc 无法读写，停止\n' >&2; return 1; }
-    [[ ! -e "$BASHRC" ]] || bash -n "$BASHRC" || { printf '❌ 已有 ~/.bashrc 语法异常，停止\n' >&2; return 1; }
+    [[ ! -L "$BASHRC" ]] || { printf '✘ ~/.bashrc 是符号链接，停止\n' >&2; return 1; }
+    [[ ! -e "$BASHRC" || ( -f "$BASHRC" && -r "$BASHRC" && -w "$BASHRC" ) ]] || { printf '✘ ~/.bashrc 无法读写，停止\n' >&2; return 1; }
+    [[ ! -e "$BASHRC" ]] || bash -n "$BASHRC" || { printf '✘ 已有 ~/.bashrc 语法异常，停止\n' >&2; return 1; }
 }
 
 process_managed_block() {
@@ -41,7 +41,7 @@ process_managed_block() {
     MANAGED_BLOCK_CONTENT="$content_file" awk -v b="# >>> managed:${tag} >>>" -v e="# <<< managed:${tag} <<<" '
         BEGIN { cfile = ENVIRON["MANAGED_BLOCK_CONTENT"] }
         function reject_markers() {
-            printf "❌ 受控块标记残缺、重复或重叠：%s\n", b > "/dev/stderr"
+            printf "✘ 受控块标记残缺、重复或重叠：%s\n", b > "/dev/stderr"
             failed = 1
             exit 1
         }
@@ -50,7 +50,7 @@ process_managed_block() {
             while ((status = (getline line < cfile)) > 0) print line
             close(cfile)
             if (status < 0) {
-                printf "❌ 无法读取受控块内容：%s\n", b > "/dev/stderr"
+                printf "✘ 无法读取受控块内容：%s\n", b > "/dev/stderr"
                 failed = 1
                 exit 1
             }
@@ -119,7 +119,7 @@ upsert_managed_block() {
     rm -f -- "$content_file"
     if ! bash -n "$tmp_file"; then
         rm -f -- "$tmp_file"
-        printf '❌ %s 受控块语法校验失败，请检查配置\n' "$target_file" >&2
+        printf '✘ %s 受控块语法校验失败，请检查配置\n' "$target_file" >&2
         return 1
     fi
     if [[ -e "$target_file" ]] && cmp -s -- "$target_file" "$tmp_file"; then
@@ -162,7 +162,7 @@ normalize_history() {
     mapfile -t raw_lines < "$histfile"
 
     local count=0 needs_rewrite=0 seen_stamp=0 current_stamp=""
-    local line cand err j k n split_end tail_bs tmp_l complete_end
+    local cand err j k n split_end tail_bs tmp_l complete_end
 
     # 按行扫描：单行时间戳条目零开销原样保留；多行块用 bash -n 区分真多行命令与混入的裸行
     local total=${#raw_lines[@]} idx=0
@@ -287,7 +287,7 @@ normalize_history() {
         mv -f -- "$tmp_norm" "$histfile"
         history -c 2>/dev/null || true
         history -r 2>/dev/null || true
-        printf '  ℹ️  已自动规范化已有历史记录的时间戳格式\n'
+        printf '  ○ 已自动规范化已有历史记录的时间戳格式\n'
     else
         rm -f -- "$tmp_norm"
     fi
@@ -307,16 +307,16 @@ write_managed_dropin() {
     local target="$1" mode="$2" content="$3"
     local parent="${target%/*}"
     if sudo test -L "$target"; then
-        printf '❌ 受控配置路径是符号链接，停止：%s\n' "$target" >&2
+        printf '✘ 受控配置路径是符号链接，停止：%s\n' "$target" >&2
         return 1
     fi
     if sudo test -e "$target"; then
         sudo test -f "$target" || {
-            printf '❌ 受控配置路径不是普通文件，停止：%s\n' "$target" >&2
+            printf '✘ 受控配置路径不是普通文件，停止：%s\n' "$target" >&2
             return 1
         }
         sudo grep -Fqx '# managed-by: archlinux-init' "$target" || {
-            printf '❌ 存在未纳管的同名配置文件，拒绝覆盖：%s\n' "$target" >&2
+            printf '✘ 存在未纳管的同名配置文件，拒绝覆盖：%s\n' "$target" >&2
             return 1
         }
     fi
@@ -443,14 +443,14 @@ EOF
     if running_kernel_modules_available; then
         sudo modprobe tcp_bbr
         sudo sysctl --system > /dev/null
-        printf '  ✅ 内核网络与资源上限已生效 (内存: %s MB | 缓冲区: %s | 队列: %s | nofile: %s/%s)\n' \
+        printf '  ✔ 内核网络与资源上限已生效 (内存: %s MB | 缓冲区: %s | 队列: %s | nofile: %s/%s)\n' \
             "$total_ram_mb" \
             "$tier_desc" \
             "$(sysctl -n net.core.somaxconn 2>/dev/null || echo "$somaxconn")" \
             "$nofile_soft" \
             "$nofile_hard"
     else
-        printf '  ⚠️  当前运行内核 (%s) 的模块目录缺失（通常因本次升级了内核），配置已落盘；将在重启进入新内核后生效。\n' "$(uname -r)"
+        printf '  ▲ 当前运行内核 (%s) 的模块目录缺失（通常因本次升级了内核），配置已落盘；将在重启进入新内核后生效。\n' "$(uname -r)"
     fi
     NETWORK_TIER_DESC="$tier_desc"
 }
@@ -463,38 +463,38 @@ run_base_init() {
     local user_name
     user_name="$(id -un)"
     [[ "$user_name" != "root" ]] || {
-        printf '❌ 请以具备 sudo 权限的普通用户执行，禁止直接以 root 执行\n' >&2
+        printf '✘ 请以具备 sudo 权限的普通用户执行，禁止直接以 root 执行\n' >&2
         exit 1
     }
 
     # 1. 验证用户环境与权限基线
-    printf '\n==> [1/7] 验证用户权限与 SSH 基线...\n'
+    printf '\n▶ [1/7] 验证用户权限与 SSH 基线...\n'
     IFS=: read -r _ _ _ _ _ expected_home _ < <(getent passwd "$user_name")
     [[ "$HOME" == "$expected_home" ]] || {
-        printf '❌ HOME 环境变量 (%s) 与系统家目录 (%s) 不一致\n' "$HOME" "$expected_home" >&2
+        printf '✘ HOME 环境变量 (%s) 与系统家目录 (%s) 不一致\n' "$HOME" "$expected_home" >&2
         exit 1
     }
     cd "$expected_home" || exit 1
 
     id -nG "$user_name" | tr ' ' '\n' | grep -Fxq wheel || {
-        printf '❌ 当前用户不在 wheel 组\n' >&2
+        printf '✘ 当前用户不在 wheel 组\n' >&2
         exit 1
     }
     validate_bashrc_block archlinux-base || return 1
     mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
     [[ -f "$HOME/.ssh/authorized_keys" ]] || {
-        printf '❌ 未找到 ~/.ssh/authorized_keys\n' >&2
+        printf '✘ 未找到 ~/.ssh/authorized_keys\n' >&2
         exit 1
     }
     chmod 600 "$HOME/.ssh/authorized_keys"
 
     sudo -v || {
-        printf '❌ sudo 提权验证失败\n' >&2
+        printf '✘ sudo 提权验证失败\n' >&2
         exit 1
     }
 
     # 2. 设置主机名
-    printf '==> [2/7] 配置系统主机名...\n'
+    printf '▶ [2/7] 配置系统主机名...\n'
     local current_host input_host new_host
     current_host=$(hostnamectl hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || true)
     input_host=""
@@ -503,17 +503,17 @@ run_base_init() {
     fi
     new_host="${input_host:-${current_host:-archlinux}}"
     [[ -n "$new_host" ]] || {
-        printf '❌ 主机名不能为空\n' >&2
+        printf '✘ 主机名不能为空\n' >&2
         exit 1
     }
     sudo hostnamectl set-hostname "$new_host"
 
     # 3. 官方密钥环与基础包更新
-    printf '==> [3/7] 初始化官方密钥环并更新基础系统包...\n'
+    printf '▶ [3/7] 初始化官方密钥环并更新基础系统包...\n'
     run_package_init || return 1
 
     # 4. 本地化与时区
-    printf '==> [4/7] 配置系统 Locale (en_US.UTF-8)、统一时区 (UTC) 与 NTP 时间同步...\n'
+    printf '▶ [4/7] 配置系统 Locale (en_US.UTF-8)、统一时区 (UTC) 与 NTP 时间同步...\n'
     # 直接修改系统主配置：取消 /etc/locale.gen 中 en_US.UTF-8 的注释并重置 /etc/locale.conf
     sudo sed -i 's/^#[[:space:]]*\(en_US\.UTF-8[[:space:]]\+UTF-8\)/\1/' /etc/locale.gen
     grep -qE '^[[:space:]]*en_US\.UTF-8[[:space:]]+UTF-8([[:space:]]|$)' /etc/locale.gen || echo 'en_US.UTF-8 UTF-8' | sudo tee -a /etc/locale.gen >/dev/null
@@ -523,7 +523,7 @@ run_base_init() {
     sudo timedatectl set-ntp true
 
     # 5. ~/.bashrc 通用受控配置
-    printf '==> [5/7] 写入 ~/.bashrc 通用受控基础配置...\n'
+    printf '▶ [5/7] 写入 ~/.bashrc 通用受控基础配置...\n'
     validate_bashrc || return 1
 
     local default_skeleton base_input="$BASHRC"
@@ -587,18 +587,18 @@ EOF
     normalize_history
 
     # 6. 内核网络自适应调优 (BBR + 内存自适应长管道缓冲区 + 资源限制)
-    printf '==> [6/7] 配置内核网络参数与系统资源上限...\n'
+    printf '▶ [6/7] 配置内核网络参数与系统资源上限...\n'
     NETWORK_TIER_DESC=""
     configure_network_and_limits || return 1
 
     # 7. 内存管理与 Swap 策略 (先检后配，单向打底)
-    printf '==> [7/7] 检查系统内存管理与 Swap 状态...\n'
+    printf '▶ [7/7] 检查系统内存管理与 Swap 状态...\n'
     manage_swap
 
-    printf '\n✅ 基础环境初始化完成。\n'
+    printf '\n✔ 基础环境初始化完成。\n'
     printf '   用户: %s | 主机名: %s | 时区: UTC (NTP 同步) | 语言: en_US.UTF-8 | 网络缓冲: %s\n' "$user_name" "$new_host" "$NETWORK_TIER_DESC"
     if ! running_kernel_modules_available; then
-        printf '   ⚠️  检测到内核已升级（当前运行内核模块目录已移除），请先执行 sudo reboot 重启后再初始化防火墙或验证 BBR/zram。\n'
+        printf '   ▲ 检测到内核已升级（当前运行内核模块目录已移除），请先执行 sudo reboot 重启后再初始化防火墙或验证 BBR/zram。\n'
     fi
 }
 
@@ -633,15 +633,15 @@ manage_swap() {
 
     # 常规初始化打底逻辑：已有 Swap 则保持现状跳过
     if (( ${#active_swaps[@]} > 0 )); then
-        printf '  ℹ️  检测到活动 Swap 已就绪: %s，保持现状跳过\n' "${active_swaps[*]}"
+        printf '  ○ 检测到活动 Swap 已就绪: %s，保持现状跳过\n' "${active_swaps[*]}"
         return 0
     fi
     if (( ${#fstab_swaps[@]} > 0 )); then
-        printf '  ℹ️  检测到 /etc/fstab 中已声明 Swap (%s)，跳过自动配置以防冲突\n' "${fstab_swaps[*]}"
+        printf '  ○ 检测到 /etc/fstab 中已声明 Swap (%s)，跳过自动配置以防冲突\n' "${fstab_swaps[*]}"
         return 0
     fi
     if [[ -f /etc/systemd/zram-generator.conf.d/zram0.conf ]]; then
-        printf '  ℹ️  检测到 zram-generator 配置已存在，保持现状跳过\n'
+        printf '  ○ 检测到 zram-generator 配置已存在，保持现状跳过\n'
         return 0
     fi
 
@@ -656,7 +656,7 @@ manage_swap() {
         suggest_mode=3
     fi
 
-    printf '  🖥️  硬件信息: %s MB RAM | %s vCPU\n' "$total_ram_mb" "$cpu_cores"
+    printf '  ○ 硬件信息: %s MB RAM | %s vCPU\n' "$total_ram_mb" "$cpu_cores"
     printf '  模式选项 (推荐 [%s]):\n' "$suggest_mode"
     printf '    1) 经典磁盘 Swapfile (1GB, 低 CPU 开销)\n'
     printf '    2) zram 压缩内存盘 (1/2 内存, zstd, 零磁盘磨损)\n'
@@ -672,13 +672,13 @@ manage_swap() {
         while true; do
             if ! read -r -u "$tty_fd" -p "  请选择内存模式 [1-3, 默认 $suggest_mode]: " chosen_mode; then
                 (( close_tty )) && exec {tty_fd}<&-
-                printf '\n❌ 未读取到有效的内存模式选择，停止配置 Swap\n' >&2
+                printf '\n✘ 未读取到有效的内存模式选择，停止配置 Swap\n' >&2
                 return 1
             fi
             chosen_mode="${chosen_mode:-$suggest_mode}"
             case "$chosen_mode" in
                 1|2|3) break ;;
-                *) printf '  ⚠️  输入无效 (%s)，请输入 1、2 或 3\n' "$chosen_mode" >&2 ;;
+                *) printf '  ▲ 输入无效 (%s)，请输入 1、2 或 3\n' "$chosen_mode" >&2 ;;
             esac
         done
         (( close_tty )) && exec {tty_fd}<&-
@@ -688,15 +688,15 @@ manage_swap() {
 
     case "$chosen_mode" in
         1)
-            printf '  ==> 配置 1GB 经典磁盘 Swapfile...\n'
+            printf '  ▶ 配置 1GB 经典磁盘 Swapfile...\n'
             local root_fstype=""
             root_fstype=$(findmnt -no FSTYPE / 2>/dev/null) || root_fstype=""
             if [[ "$root_fstype" == "btrfs" ]]; then
-                printf '❌ 检测到根文件系统为 btrfs，不支持直接 fallocate + swapon 创建 /swapfile；请选择 zram 或按 Btrfs swapfile 规范单独配置子卷\n' >&2
+                printf '✘ 检测到根文件系统为 btrfs，不支持直接 fallocate + swapon 创建 /swapfile；请选择 zram 或按 Btrfs swapfile 规范单独配置子卷\n' >&2
                 return 1
             fi
             if ! sudo dd if=/dev/null of=/swapfile count=0 conv=excl status=none; then
-                printf '❌ 无法新建 /swapfile，请核对该路径及权限。\n' >&2
+                printf '✘ 无法新建 /swapfile，请核对该路径及权限。\n' >&2
                 return 1
             fi
             sudo chmod 0600 /swapfile
@@ -713,10 +713,10 @@ EOF
             )
             write_managed_dropin /etc/sysctl.d/99-memory.conf 0644 "$mem_conf" || return 1
             sudo sysctl -w vm.swappiness=10 >/dev/null
-            printf '  ✅ 经典磁盘 Swapfile (1GB) 已激活并持久化\n'
+            printf '  ✔ 经典磁盘 Swapfile (1GB) 已激活并持久化\n'
             ;;
         2)
-            printf '  ==> 配置 zram-generator 压缩内存盘...\n'
+            printf '  ▶ 配置 zram-generator 压缩内存盘...\n'
             local zswap_exists=0 zswap_active=0
             if [[ -e /sys/module/zswap/parameters/enabled ]]; then
                 zswap_exists=1
@@ -766,7 +766,7 @@ EOF
                 local rc=0
                 echo 0 | sudo tee /sys/module/zswap/parameters/enabled >/dev/null || rc=$?
                 if (( rc != 0 )); then
-                    printf '❌ 运行时停用 zswap 失败；已保留 /etc/systemd/zram-generator.conf.d/zram0.conf，重跑脚本将跳过已有 Swap 配置，请手工停用 zswap 并激活 dev-zram0.swap\n' >&2
+                    printf '✘ 运行时停用 zswap 失败；已保留 /etc/systemd/zram-generator.conf.d/zram0.conf，重跑脚本将跳过已有 Swap 配置，请手工停用 zswap 并激活 dev-zram0.swap\n' >&2
                     return "$rc"
                 fi
                 zswap_runtime_disabled=1
@@ -783,22 +783,19 @@ EOF
                 fi
                 if (( rc != 0 )); then
                     if (( zswap_runtime_disabled )); then
-                        printf '❌ zram 激活或内存参数应用失败（运行时 zswap 已被停用）；已保留 /etc/systemd/zram-generator.conf.d/zram0.conf，重跑脚本将跳过已有 Swap 配置，请手工完成校验并激活 dev-zram0.swap\n' >&2
+                        printf '✘ zram 激活或内存参数应用失败（运行时 zswap 已被停用）；已保留 /etc/systemd/zram-generator.conf.d/zram0.conf，重跑脚本将跳过已有 Swap 配置，请手工完成校验并激活 dev-zram0.swap\n' >&2
                     else
-                        printf '❌ zram 激活或内存参数应用失败；已保留 /etc/systemd/zram-generator.conf.d/zram0.conf，重跑脚本将跳过已有 Swap 配置，请手工完成校验并激活 dev-zram0.swap\n' >&2
+                        printf '✘ zram 激活或内存参数应用失败；已保留 /etc/systemd/zram-generator.conf.d/zram0.conf，重跑脚本将跳过已有 Swap 配置，请手工完成校验并激活 dev-zram0.swap\n' >&2
                     fi
                     return "$rc"
                 fi
-                printf '  ✅ zram 压缩内存盘已激活 (1/2 内存, zstd 算法, swappiness=%s, page-cluster=0)\n' "$zram_swappiness"
+                printf '  ✔ zram 压缩内存盘已激活 (1/2 内存, zstd 算法, swappiness=%s, page-cluster=0)\n' "$zram_swappiness"
             else
-                printf '  ⚠️  当前运行内核模块目录缺失，zram 与内存参数配置已落盘 (swappiness=%s, page-cluster=0)，将在重启进入新内核后自动激活\n' "$zram_swappiness"
+                printf '  ▲ 当前运行内核模块目录缺失，zram 与内存参数配置已落盘 (swappiness=%s, page-cluster=0)，将在重启进入新内核后自动激活\n' "$zram_swappiness"
             fi
             ;;
         3)
-            printf '  ⏭️  保持纯物理内存运行，未配置 Swap\n'
-            ;;
-        *)
-            return 1
+            printf '  ○ 保持纯物理内存运行，未配置 Swap\n'
             ;;
     esac
 }
@@ -809,7 +806,7 @@ EOF
 
 main() {
     if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != "--help" ]]; }; then
-        printf '❌ 不支持的参数: %s\n' "$*" >&2
+        printf '✘ 不支持的参数: %s\n' "$*" >&2
         printf '用法: %s [--help]\n' "$0" >&2
         return 2
     fi
@@ -817,7 +814,7 @@ main() {
         "")
             validate_arch_host || return 1
             run_base_init
-            printf '\n👉 执行 exec bash -i 重载当前终端即可生效。\n'
+            printf '\n→ 执行 exec bash -i 重载当前终端即可生效。\n'
             ;;
         --help)
             printf '用法: %s [--help]\n' "$0"

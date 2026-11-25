@@ -246,7 +246,7 @@ foreach ($rule in $Rules) {
     }
 }
 
-Write-Host "`n📊 [巡检看板] 搜索与 Copilot 原子受控属性审计清单:" -ForegroundColor Cyan
+Write-Host "`n▶ [巡检看板] 搜索与 Copilot 原子受控属性审计清单:" -ForegroundColor Cyan
 $AuditBoard | Select-Object 状态, 规则, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
 
 if ($probeErrors.Count -gt 0) {
@@ -255,20 +255,20 @@ if ($probeErrors.Count -gt 0) {
 
 $driftCount = $PendingItems.Count
 if ($driftCount -eq 0) {
-    Write-Host "✨ [状态合规] 搜索与 AI 助理切断基线全部合规，无需调整。`n" -ForegroundColor Green
+    Write-Host "✔ [状态合规] 搜索与 AI 助理切断基线全部合规，无需调整。`n" -ForegroundColor Green
     return
 }
 
-Write-Host ("⚠️  共检测到 {0} 项原子受控属性偏离工程基线。" -f $driftCount) -ForegroundColor Yellow
+Write-Host ("▲ 共检测到 {0} 项原子受控属性偏离工程基线。" -f $driftCount) -ForegroundColor Yellow
 
 if ($Action -eq "Check") {
-    Write-Host "💡 当前处于 -Action Check 只读巡检模式，未执行任何系统改动。`n" -ForegroundColor DarkGray
+    Write-Host "○ 当前处于 -Action Check 只读巡检模式，未执行任何系统改动。`n" -ForegroundColor DarkGray
     return
 }
 
 # 阶段 2: Gate (Shift-Left: 目的与影响结构化直出)
 if (-not $Yes) {
-    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "`n▶ [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
     Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
     $idx = 1
     foreach ($p in $PendingItems) {
@@ -292,7 +292,7 @@ if (-not $Yes) {
 }
 
 # 阶段 3: Apply
-Write-Host "`n🚀 正在单向对齐搜索与 Copilot 切断基线..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在单向对齐搜索与 Copilot 切断基线..." -ForegroundColor Cyan
 $appliedCount = 0
 $applyErrors = [System.Collections.Generic.List[string]]::new()
 
@@ -315,6 +315,6 @@ if ($applyErrors.Count -gt 0) {
 
 # 阶段 4: Report
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host ("  ✅ [搜索加固完成] 成功对齐 {0} / {1} 项基线配置" -f $appliedCount, $driftCount) -ForegroundColor Green
+Write-Host ("  ✔ [搜索加固完成] 成功对齐 {0} / {1} 项基线配置" -f $appliedCount, $driftCount) -ForegroundColor Green
 Write-Host "====================================================================`n" -ForegroundColor Green
 return

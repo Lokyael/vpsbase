@@ -36,19 +36,19 @@
 
 .EXAMPLE
     # 只查不改体检巡检
-    pwsh -File .\desktop\apps\rime.ps1 -Action Check
+    pwsh -File .\desktop\apps\rime\rime.ps1 -Action Check
 
     # 交互式全流程安装与配置
-    pwsh -File .\desktop\apps\rime.ps1
+    pwsh -File .\desktop\apps\rime\rime.ps1
 
     # 强制重新安装本体并对齐基线
-    pwsh -File .\desktop\apps\rime.ps1 -Force
+    pwsh -File .\desktop\apps\rime\rime.ps1 -Force
 
     # 安全清洁卸载 (保留用户词库)
-    pwsh -File .\desktop\apps\rime.ps1 -Action Uninstall
+    pwsh -File .\desktop\apps\rime\rime.ps1 -Action Uninstall
 
     # 清理卸载 (连带删除用户词库)
-    pwsh -File .\desktop\apps\rime.ps1 -Action Uninstall -Purge
+    pwsh -File .\desktop\apps\rime\rime.ps1 -Action Uninstall -Purge
 #>
 
 [CmdletBinding()]
@@ -282,7 +282,7 @@ function Invoke-RimeDeployment {
     if (-not $status.SchemaMatches -or -not $status.PrismMatches) {
         throw "部署命令退出成功，但产物检查未通过：default.yaml=$($status.SchemaActual)；Prism=$($status.PrismActual)；未启动 WeaselServer，已写入的配置保留。"
     }
-    Write-Host '✅ /deploy 命令完成；方案声明与 Prism 文件大小检查通过。未验证输入法运行时加载或二进制索引完整性。' -ForegroundColor Green
+    Write-Host '✔ /deploy 命令完成；方案声明与 Prism 文件大小检查通过。未验证输入法运行时加载或二进制索引完整性。' -ForegroundColor Green
 }
 
 # 权威输入法 TIP 标识符 (依据 Weasel TSF 注册及 Windows 语言列表规范)
@@ -458,12 +458,6 @@ function Get-RimeLanguagePackStatus {
         $override = Get-WinUILanguageOverride -ErrorAction SilentlyContinue
     } catch { }
 
-    $overrideMatch = $false
-    if ($null -ne $override) {
-        $overrideStr = if ($override -is [System.Globalization.CultureInfo]) { $override.Name } else { [string]$override }
-        $overrideMatch = ($overrideStr -match '^(?i)zh(-Hans)?-CN$')
-    }
-
     $isPreferredDisplay = $false
     if ($null -ne $override) {
         $overrideStr = if ($override -is [System.Globalization.CultureInfo]) { $override.Name } else { [string]$override }
@@ -537,19 +531,19 @@ $HighValueUserData = @(
 # ==============================================================================
 if ($Action -eq "Uninstall") {
     if (-not $Yes) {
-        Write-Host "`n⚠️  [清洁卸载警示] 即将注销系统 TSF 组件并卸载小狼毫输入法！" -ForegroundColor Yellow
+        Write-Host "`n▲ [清洁卸载警示] 即将注销系统 TSF 组件并卸载小狼毫输入法！" -ForegroundColor Yellow
         if ($Purge) {
-            Write-Host "🔥 【检测到 -Purge 参数：以下用户数据将被清理】:" -ForegroundColor Red
+            Write-Host "▲ 【检测到 -Purge 参数：以下用户数据将被清理】:" -ForegroundColor Red
             foreach ($d in $HighValueUserData) {
                 Write-Host ("   - {0}" -f $d) -ForegroundColor DarkRed
             }
-            Write-Host "👉 该操作不可逆，用户词库、短语与客制配置将被删除！`n" -ForegroundColor Red
+            Write-Host "▲ 该操作不可逆，用户词库、短语与客制配置将被删除！`n" -ForegroundColor Red
         } else {
-            Write-Host "🛡️  【数据安全保护：以下高价值用户数据将默认保留在实机】:" -ForegroundColor Green
+            Write-Host "○ 【数据安全保护：以下高价值用户数据将默认保留在实机】:" -ForegroundColor Green
             foreach ($d in $HighValueUserData) {
                 Write-Host ("   - {0}" -f $d) -ForegroundColor Gray
             }
-            Write-Host "👉 默认卸载仅移除程序本体与系统 TSF 注册。若需连带清理词库，请指定 -Purge 开关。`n" -ForegroundColor Cyan
+            Write-Host "→ 默认卸载仅移除程序本体与系统 TSF 注册。若需连带清理词库，请指定 -Purge 开关。`n" -ForegroundColor Cyan
         }
 
         $promptText = if ($Purge) {
@@ -564,7 +558,7 @@ if ($Action -eq "Uninstall") {
         }
     }
 
-    Write-Host "`n🧹 [清洁卸载模式] 正在终止进程、注销系统 TSF 组件并清理环境..." -ForegroundColor Yellow
+    Write-Host "`n▶ [清洁卸载模式] 正在终止进程、注销系统 TSF 组件并清理环境..." -ForegroundColor Yellow
 
     # 1. 强制终止常驻进程
     Get-Process -Name "WeaselServer", "WeaselDeployer", "WeaselSetup" -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -636,7 +630,7 @@ if ($Action -eq "Uninstall") {
         if (Test-Path $_) { Remove-Item -Path $_ -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    Write-Host "`n✅ [清洁卸载完成] 小狼毫输入法核心组件已成功移除。`n" -ForegroundColor Green
+    Write-Host "`n✔ [清洁卸载完成] 小狼毫输入法核心组件已成功移除。`n" -ForegroundColor Green
     return
 }
 
@@ -1018,7 +1012,7 @@ if (-not $hasPrismBin) {
 }
 
 if (-not $Yes) {
-    Write-Host "`n📊 [巡检看板] 小狼毫输入法受控属性基线审计清单:" -ForegroundColor Cyan
+    Write-Host "`n▶ [巡检看板] 小狼毫输入法受控属性基线审计清单:" -ForegroundColor Cyan
     $AuditBoard | Select-Object 状态, 模块, 属性, 实机, 基线 | Format-Table -AutoSize | Out-String | Write-Host
 }
 
@@ -1026,20 +1020,20 @@ $isInstalled = $isServerMatch -and $isDeployerReady -and $isTsfMatch
 
 if ($Action -eq "Check") {
     if ($DiffList.Count -eq 0) {
-        Write-Host "✨ [状态合规] 所有受控属性与编译产物均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
+        Write-Host "✔ [状态合规] 所有受控属性与编译产物均与工程基线完全一致，无需调整。`n" -ForegroundColor Green
     } else {
-        Write-Host ("⚠️  共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $DiffList.Count) -ForegroundColor Yellow
+        Write-Host ("▲ 共发现 {0} 项基线偏离。执行默认模式 (-Action Sync) 即可自动对齐。`n" -f $DiffList.Count) -ForegroundColor Yellow
     }
     return
 }
 
 if ($DiffList.Count -eq 0 -and $isInstalled -and -not $Force) {
-    Write-Host "✨ [状态合规] 所有受控属性与策略均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
+    Write-Host "✔ [状态合规] 所有受控属性与策略均已符合工程基线，无需执行写入变更。`n" -ForegroundColor Green
     return
 }
 
 if ($DiffList.Count -gt 0) {
-    Write-Host "`n📋 [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
+    Write-Host "`n▶ [差异清单] 检测到以下受控属性偏离工程基线:" -ForegroundColor Cyan
     $DiffList | Format-Table -AutoSize | Out-String | Write-Host
 }
 
@@ -1074,7 +1068,7 @@ if ($needBinaryDeploy) {
 
 # 6.3 策略审查门禁 (Shift-Left Gate: 目的与影响结构化逐项直出)
 if (-not $Yes) {
-    Write-Host "`n💡 [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
+    Write-Host "`n▶ [改动意图与技术边界审查 (Gate)]" -ForegroundColor Cyan
     Write-Host "   本次即将对齐以下偏离项，请逐项评估改动 [目的] 与 [影响]:" -ForegroundColor Gray
     $idx = 1
     foreach ($p in $DiffList) {
@@ -1102,7 +1096,7 @@ if (-not $Yes) {
 # 7.1 程序本体安装或覆盖升级
 Assert-AppStopped
 if ($needBinaryDeploy) {
-    Write-Host "`n🚀 正在准备安装小狼毫输入法核心本体至受控基线 [$cleanInstallDir]..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在准备安装小狼毫输入法核心本体至受控基线 [$cleanInstallDir]..." -ForegroundColor Cyan
     $installerExe = $InstallerPath
     if (-not $installerExe -or -not (Test-Path $installerExe)) {
         $installerExe = Join-Path $env:TEMP "weasel-installer.exe"
@@ -1164,7 +1158,7 @@ if ($needBinaryDeploy) {
         throw "小狼毫安装完成，但在目标基准目录 [$cleanInstallDir] 下未能定位到 WeaselDeployer.exe！"
     }
 
-    Write-Host "✅ 小狼毫二进制本体已成功就绪于受控基线: $realServerExe" -ForegroundColor Green
+    Write-Host "✔ 小狼毫二进制本体已成功就绪于受控基线: $realServerExe" -ForegroundColor Green
 }
 
 if ((Get-RimeUserDirectory) -ine $ConfDir) {
@@ -1174,7 +1168,7 @@ if ((Get-RimeUserDirectory) -ine $ConfDir) {
 # 7.2 部署雾凇拼音词库 (rime-ice)
 Assert-AppStopped
 if (-not $hasIceDict) {
-    Write-Host "`n📦 正在拉取雾凇拼音 (rime-ice) 词库资产..." -ForegroundColor Cyan
+    Write-Host "`n▶ 正在拉取雾凇拼音 (rime-ice) 词库资产..." -ForegroundColor Cyan
     $iceZip = Join-Path $env:TEMP "rime-ice.zip"
     $iceUrl = "https://github.com/iDvel/rime-ice/archive/refs/heads/main.zip"
     Invoke-DownloadFile -Url $iceUrl -OutFile $iceZip -Description "雾凇拼音词库包"
@@ -1196,7 +1190,7 @@ if (-not $hasIceDict) {
 
         Assert-AppStopped
         Copy-Item -Path "$unzippedDir\*" -Destination $ConfDir -Recurse -Force
-        Write-Host "✅ 雾凇拼音词库资产已成功解压部署至: $ConfDir" -ForegroundColor Green
+        Write-Host "✔ 雾凇拼音词库资产已成功解压部署至: $ConfDir" -ForegroundColor Green
     } finally {
         if (Test-Path $iceZip) { Remove-Item -Path $iceZip -Force -ErrorAction SilentlyContinue }
         if (Test-Path $iceTemp) { Remove-Item -Path $iceTemp -Recurse -Force -ErrorAction SilentlyContinue }
@@ -1205,7 +1199,7 @@ if (-not $hasIceDict) {
 
 # 7.3 注入声明式 YAML 补丁
 Assert-AppStopped
-Write-Host "`n⚙️  正在单向对齐声明式 YAML 受控基线补丁..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在单向对齐声明式 YAML 受控基线补丁..." -ForegroundColor Cyan
 
 # default.custom.yaml: 纯全拼、Control 切换中英
 $defaultYaml = @'
@@ -1254,7 +1248,7 @@ patch:
     comment_text_color: 0x888888
 '@
 [System.IO.File]::WriteAllText($weaselCustom, $weaselYaml, [System.Text.UTF8Encoding]::new($false))
-Write-Host "✅ default.custom.yaml 与 weasel.custom.yaml 补丁注入完成。" -ForegroundColor Green
+Write-Host "✔ default.custom.yaml 与 weasel.custom.yaml 补丁注入完成。" -ForegroundColor Green
 
 # 保证雾凇词库纯净性 (清理非基线客制补丁)
 $iceCustom = Join-Path $ConfDir "rime_ice.custom.yaml"
@@ -1263,7 +1257,7 @@ if (Test-Path -LiteralPath $iceCustom) {
 }
 
 # 7.4 调用 WeaselDeployer 编译部署
-Write-Host "`n⚙️  正在调用 WeaselDeployer 进行词库编译与衍生状态收敛..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在调用 WeaselDeployer 进行词库编译与衍生状态收敛..." -ForegroundColor Cyan
 if (-not $deployerExe -or -not (Test-Path -LiteralPath $deployerExe)) {
     $deployerExe = Find-WeaselExecutable -BaseDir $cleanInstallDir -ExeName "WeaselDeployer.exe"
 }
@@ -1275,7 +1269,7 @@ Assert-AppStopped
 Invoke-RimeDeployment -Deployer $deployerExe -Directory $ConfDir
 
 # 7.5 用户输入法激活与系统显示语言原子收敛
-Write-Host "`n⚙️  正在单向对齐当前用户输入法配置与中文语言环境 (WinUserLanguageList)..." -ForegroundColor Cyan
+Write-Host "`n▶ 正在单向对齐当前用户输入法配置与中文语言环境 (WinUserLanguageList)..." -ForegroundColor Cyan
 Set-RimeInputMethodActive -Status (Get-RimeInputMethodStatus)
 
 $langPackCurrent = Get-RimeLanguagePackStatus
@@ -1284,7 +1278,7 @@ if (-not $langPackCurrent.IsCompliant) {
     Set-RimeInputMethodActive -Status (Get-RimeInputMethodStatus)
     Write-Information -Tags HumanHandoff -InformationAction Continue -MessageData '已安装简体中文语言包并锁定小狼毫为中文唯一输入法；请在部署完成后统一重启计算机以完全生效。'
 }
-Write-Host "✅ 当前用户输入法与显示语言已对齐：已激活小狼毫并排除系统自带微软拼音。" -ForegroundColor Green
+Write-Host "✔ 当前用户输入法与显示语言已对齐：已激活小狼毫并排除系统自带微软拼音。" -ForegroundColor Green
 
 # 启动 WeaselServer 服务
 if (-not $realServerExe -or -not (Test-Path $realServerExe)) {
@@ -1298,7 +1292,7 @@ if ($realServerExe -and (Test-Path $realServerExe)) {
 # 8. 阶段 4: 尾部简报与动态真待办 (Report)
 # ==============================================================================
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "  ✅ [$AppName] 工程基线与词库部署完成！" -ForegroundColor Green
+Write-Host "  ✔ [$AppName] 工程基线与词库部署完成！" -ForegroundColor Green
 Write-Host "====================================================================" -ForegroundColor Green
 Write-Host "   - 部署路径: $cleanInstallDir" -ForegroundColor Gray
 Write-Host "   - 编译检查: /deploy 退出成功，rime_ice 方案声明与 Prism 文件大小检查通过；实际输入待验证" -ForegroundColor Gray

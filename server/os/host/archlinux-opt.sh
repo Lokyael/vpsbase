@@ -14,9 +14,9 @@ BASHRC="$HOME/.bashrc"
 # ========================================================
 
 validate_bashrc() {
-    [[ ! -L "$BASHRC" ]] || { printf '❌ ~/.bashrc 是符号链接，停止\n' >&2; return 1; }
-    [[ ! -e "$BASHRC" || ( -f "$BASHRC" && -r "$BASHRC" && -w "$BASHRC" ) ]] || { printf '❌ ~/.bashrc 无法读写，停止\n' >&2; return 1; }
-    [[ ! -e "$BASHRC" ]] || bash -n "$BASHRC" || { printf '❌ 已有 ~/.bashrc 语法异常，停止\n' >&2; return 1; }
+    [[ ! -L "$BASHRC" ]] || { printf '✘ ~/.bashrc 是符号链接，停止\n' >&2; return 1; }
+    [[ ! -e "$BASHRC" || ( -f "$BASHRC" && -r "$BASHRC" && -w "$BASHRC" ) ]] || { printf '✘ ~/.bashrc 无法读写，停止\n' >&2; return 1; }
+    [[ ! -e "$BASHRC" ]] || bash -n "$BASHRC" || { printf '✘ 已有 ~/.bashrc 语法异常，停止\n' >&2; return 1; }
 }
 
 process_managed_block() {
@@ -24,7 +24,7 @@ process_managed_block() {
     MANAGED_BLOCK_CONTENT="$content_file" awk -v b="# >>> managed:${tag} >>>" -v e="# <<< managed:${tag} <<<" '
         BEGIN { cfile = ENVIRON["MANAGED_BLOCK_CONTENT"] }
         function reject_markers() {
-            printf "❌ 受控块标记残缺、重复或重叠：%s\n", b > "/dev/stderr"
+            printf "✘ 受控块标记残缺、重复或重叠：%s\n", b > "/dev/stderr"
             failed = 1
             exit 1
         }
@@ -33,7 +33,7 @@ process_managed_block() {
             while ((status = (getline line < cfile)) > 0) print line
             close(cfile)
             if (status < 0) {
-                printf "❌ 无法读取受控块内容：%s\n", b > "/dev/stderr"
+                printf "✘ 无法读取受控块内容：%s\n", b > "/dev/stderr"
                 failed = 1
                 exit 1
             }
@@ -102,7 +102,7 @@ upsert_managed_block() {
     rm -f -- "$content_file"
     if ! bash -n "$tmp_file"; then
         rm -f -- "$tmp_file"
-        printf '❌ %s 受控块语法校验失败，请检查配置\n' "$target_file" >&2
+        printf '✘ %s 受控块语法校验失败，请检查配置\n' "$target_file" >&2
         return 1
     fi
     if [[ -e "$target_file" ]] && cmp -s -- "$target_file" "$tmp_file"; then
@@ -154,7 +154,7 @@ normalize_history() {
     mapfile -t raw_lines < "$histfile"
 
     local count=0 needs_rewrite=0 seen_stamp=0 current_stamp=""
-    local line cand err j k n split_end tail_bs tmp_l complete_end
+    local cand err j k n split_end tail_bs tmp_l complete_end
 
     # 按行扫描：单行时间戳条目零开销原样保留；多行块用 bash -n 区分真多行命令与混入的裸行
     local total=${#raw_lines[@]} idx=0
@@ -279,7 +279,7 @@ normalize_history() {
         mv -f -- "$tmp_norm" "$histfile"
         history -c 2>/dev/null || true
         history -r 2>/dev/null || true
-        printf '  ℹ️  已自动规范化已有历史记录的时间戳格式\n'
+        printf '  ○ 已自动规范化已有历史记录的时间戳格式\n'
     else
         rm -f -- "$tmp_norm"
     fi
@@ -289,7 +289,7 @@ normalize_history() {
 opt_sync_history() {
     local action="配置"
     has_managed_block "$BASHRC" "archlinux:sync-history" && action="覆盖更新"
-    printf '==> [%s] 多终端历史实时同步...\n' "$action"
+    printf '▶ [%s] 多终端历史实时同步...\n' "$action"
     local content
     content=$(cat <<'EOF'
 __sync_history() {
@@ -304,14 +304,14 @@ fi
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:sync-history" "$content"
-    printf '  ✅ 多终端历史实时同步已生效\n'
+    printf '  ✔ 多终端历史实时同步已生效\n'
 }
 
 # 2. Git 分支状态提示符
 opt_git_prompt() {
     local action="配置"
     has_managed_block "$BASHRC" "archlinux:git-prompt" && action="覆盖更新"
-    printf '==> [%s] Git 分支状态提示符...\n' "$action"
+    printf '▶ [%s] Git 分支状态提示符...\n' "$action"
     local content
     content=$(cat <<'EOF'
 __git_info() {
@@ -336,14 +336,14 @@ fi
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:git-prompt" "$content"
-    printf '  ✅ Git 分支状态提示符已生效\n'
+    printf '  ✔ Git 分支状态提示符已生效\n'
 }
 
 # 3. 非零退出码错误高亮
 opt_exit_status() {
     local action="配置"
     has_managed_block "$BASHRC" "archlinux:exit-status" && action="覆盖更新"
-    printf '==> [%s] 非零退出码错误高亮...\n' "$action"
+    printf '▶ [%s] 非零退出码错误高亮...\n' "$action"
     local content
     content=$(cat <<'EOF'
 __exit_status() {
@@ -356,14 +356,14 @@ fi
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:exit-status" "$content"
-    printf '  ✅ 非零退出码错误高亮已生效\n'
+    printf '  ✔ 非零退出码错误高亮已生效\n'
 }
 
 # 4. 历史记录去重函数
 opt_dedup_history() {
     local action="配置"
     has_managed_block "$BASHRC" "archlinux:dedup-history" && action="覆盖更新"
-    printf '==> [%s] 历史记录去重函数 (dedup-history)...\n' "$action"
+    printf '▶ [%s] 历史记录去重函数 (dedup-history)...\n' "$action"
 
     # 执行首次合规化清洗（确保历史文件具备完整时间戳，防止去重校验失败）
     normalize_history
@@ -446,14 +446,14 @@ dedup-history() {
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:dedup-history" "$content"
-    printf '  ✅ 历史去重函数已注入，可通过 dedup-history 手动调用\n'
+    printf '  ✔ 历史去重函数已注入，可通过 dedup-history 手动调用\n'
 }
 
 # 5. Micro 编辑器
 opt_micro() {
     local action="安装与配置"
     command -v micro >/dev/null 2>&1 && action="覆盖更新"
-    printf '==> [%s] Micro 终端编辑器...\n' "$action"
+    printf '▶ [%s] Micro 终端编辑器...\n' "$action"
     sudo pacman -S --needed --noconfirm micro
     mkdir -p "$HOME/.config/micro"
     if [[ ! -f "$HOME/.config/micro/settings.json" ]]; then
@@ -474,16 +474,16 @@ export VISUAL=micro
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:editor-micro" "$content"
-    printf '  ✅ Micro 编辑器已就绪，并设为默认系统编辑器\n'
+    printf '  ✔ Micro 编辑器已就绪，并设为默认系统编辑器\n'
 }
 
 # 6. 从 AUR 独立编译构建 paru (AUR 助手)
 opt_paru() {
     local action="从 AUR 构建安装"
     command -v paru >/dev/null 2>&1 && action="覆盖重新构建"
-    printf '==> [%s] paru (AUR 助手)...\n' "$action"
+    printf '▶ [%s] paru (AUR 助手)...\n' "$action"
 
-    printf '  📦 安装构建依赖 (git, base-devel)...\n'
+    printf '  ▶ 安装构建依赖 (git, base-devel)...\n'
     sudo pacman -S --needed --noconfirm git base-devel || return 1
 
     # 内存 / 交换空间检测
@@ -496,37 +496,37 @@ opt_paru() {
     # zram 按 disksize 一半保守估算可利用量
     avail_mib=$(( mem_available_mib + swap_free_mib + zram_total_mib / 2 ))
 
-    printf '  💾 物理内存 %d MiB（可用 %d MiB），swap 空闲 %d MiB，zram %d MiB\n' \
+    printf '  ○ 物理内存 %d MiB（可用 %d MiB），swap 空闲 %d MiB，zram %d MiB\n' \
         "$mem_total_mib" "$mem_available_mib" "$swap_free_mib" "$zram_total_mib"
-    printf '  📊 可用缓冲合计 %d MiB\n' "$avail_mib"
+    printf '  ○ 可用缓冲合计 %d MiB\n' "$avail_mib"
 
     local install_mode compile_profile="default"
     if (( mem_total_mib <= 1024 )); then
         install_mode="prebuilt"
-        printf '  🎯 ≤1024 MiB：预编译 (paru-bin)\n'
+        printf '  ○ ≤1024 MiB：预编译 (paru-bin)\n'
     elif (( mem_total_mib <= 2048 )); then
         install_mode="source"; compile_profile="low-memory"
-        printf '  🎯 ≤2048 MiB：限制内存编译\n'
-        (( avail_mib < 1536 )) && printf '  ⚠️  可用缓冲 %d MiB < 1536 MiB，编译可能失败\n' "$avail_mib" >&2
+        printf '  ○ ≤2048 MiB：限制内存编译\n'
+        (( avail_mib < 1536 )) && printf '  ▲ 可用缓冲 %d MiB < 1536 MiB，编译可能失败\n' "$avail_mib" >&2
     else
         install_mode="source"
-        printf '  🎯 >2048 MiB：默认编译\n'
-        (( avail_mib < 3584 )) && printf '  ⚠️  可用缓冲 %d MiB < 3584 MiB，有 OOM 风险\n' "$avail_mib" >&2
+        printf '  ○ >2048 MiB：默认编译\n'
+        (( avail_mib < 3584 )) && printf '  ▲ 可用缓冲 %d MiB < 3584 MiB，有 OOM 风险\n' "$avail_mib" >&2
     fi
 
     local build_parent="${XDG_CACHE_HOME:-$HOME/.cache}"
     mkdir -p "$build_parent"
     local build_dir
     build_dir=$(mktemp -d "$build_parent/paru-build.XXXXXX") || {
-        printf '❌ 无法创建临时构建目录\n' >&2
+        printf '✘ 无法创建临时构建目录\n' >&2
         return 1
     }
 
     local repo="paru"
     [[ "$install_mode" == "prebuilt" ]] && repo="paru-bin"
-    printf '  📥 拉取 %s 仓库...\n' "$repo"
+    printf '  ▶ 拉取 %s 仓库...\n' "$repo"
     if ! git clone --depth=1 "https://aur.archlinux.org/$repo.git" "$build_dir"; then
-        printf '❌ 拉取 %s 失败\n' "$repo" >&2
+        printf '✘ 拉取 %s 失败\n' "$repo" >&2
         rm -rf "$build_dir"
         return 1
     fi
@@ -559,9 +559,9 @@ EOF
                 exit 1
             fi
             build_options+=(--config "$tmp_conf")
-            printf '  ⚙️  低内存：-j1，CARGO_BUILD_JOBS=1，!lto !debug，CARGO_LTO=off\n'
+            printf '  ○ 低内存：-j1，CARGO_BUILD_JOBS=1，!lto !debug，CARGO_LTO=off\n'
         else
-            printf '  🔨 makepkg %s\n' "$([[ "$install_mode" == "prebuilt" ]] && echo "安装预编译" || echo "默认编译")"
+            printf '  ▶ makepkg %s\n' "$([[ "$install_mode" == "prebuilt" ]] && echo "安装预编译" || echo "默认编译")"
         fi
         makepkg "${build_options[@]}" -sri --noconfirm || result=$?
         if [[ -n "$tmp_conf" ]]; then rm -f "$tmp_conf"; fi
@@ -570,18 +570,18 @@ EOF
 
     rm -rf "$build_dir"
     if [[ $build_err -ne 0 ]]; then
-        printf '❌ paru 安装失败，请检查构建、依赖清理或安装日志。\n' >&2
+        printf '✘ paru 安装失败，请检查构建、依赖清理或安装日志。\n' >&2
         return 1
     fi
 
-    printf '  ✅ paru 已就绪: %s\n' "$(paru --version | head -n1)"
+    printf '  ✔ paru 已就绪: %s\n' "$(paru --version | head -n1)"
 }
 
 # 7. Node.js (fnm)
 opt_fnm() {
     local action="安装与配置"
     command -v fnm >/dev/null 2>&1 && action="覆盖更新"
-    printf '==> [%s] Node.js 环境 (fnm)...\n' "$action"
+    printf '▶ [%s] Node.js 环境 (fnm)...\n' "$action"
     local content fnm_env node_version
     sudo pacman -S --needed --noconfirm fnm || return $?
     fnm_env=$(fnm env --shell bash) || return $?
@@ -597,25 +597,25 @@ fi
 EOF
     )
     upsert_managed_block "$BASHRC" "archlinux:fnm" "$content" || return $?
-    printf '  ✅ Node.js LTS 已就绪: %s (fnm)\n' "$node_version"
+    printf '  ✔ Node.js LTS 已就绪: %s (fnm)\n' "$node_version"
 }
 
 # 8. Python 工具链 (uv)
 opt_uv() {
     local action="安装"
     command -v uv >/dev/null 2>&1 && action="更新"
-    printf '==> [%s] Python 工具链 (uv)...\n' "$action"
+    printf '▶ [%s] Python 工具链 (uv)...\n' "$action"
     sudo pacman -S --needed --noconfirm uv
-    printf '  ✅ uv 已就绪: %s\n' "$(uv --version)"
+    printf '  ✔ uv 已就绪: %s\n' "$(uv --version)"
 }
 
 # 9. GitHub CLI (gh)
 opt_gh() {
     local action="安装"
     command -v gh >/dev/null 2>&1 && action="更新"
-    printf '==> [%s] GitHub CLI (gh)...\n' "$action"
+    printf '▶ [%s] GitHub CLI (gh)...\n' "$action"
     sudo pacman -S --needed --noconfirm github-cli
-    printf '  ✅ GitHub CLI 已就绪: %s\n' "$(gh --version | head -n1)"
+    printf '  ✔ GitHub CLI 已就绪: %s\n' "$(gh --version | head -n1)"
 }
 
 # ========================================================
@@ -691,11 +691,11 @@ run_opt_menu() {
             7) opt_fnm ;;
             8) opt_uv ;;
             9) opt_gh ;;
-            *) printf '⚠️  忽略未知选项编号: %s\n' "$item" ;;
+            *) printf '▲ 忽略未知选项编号: %s\n' "$item" ;;
         esac
     done
 
-    printf '\n✅ 所选组件配置处理完成。\n'
+    printf '\n✔ 所选组件配置处理完成。\n'
 }
 
 # ========================================================
@@ -706,15 +706,15 @@ validate_user_environment() {
     local user_name expected_home
     user_name=$(id -un) || return 1
     [[ "$user_name" != "root" ]] || {
-        printf '❌ 请以具备 sudo 权限的普通用户执行，禁止直接以 root 执行\n' >&2
+        printf '✘ 请以具备 sudo 权限的普通用户执行，禁止直接以 root 执行\n' >&2
         return 1
     }
     IFS=: read -r _ _ _ _ _ expected_home _ < <(getent passwd "$user_name") || {
-        printf '❌ 无法查询当前用户的系统家目录\n' >&2
+        printf '✘ 无法查询当前用户的系统家目录\n' >&2
         return 1
     }
     [[ -n "$expected_home" && "$HOME" == "$expected_home" ]] || {
-        printf '❌ HOME 环境变量 (%s) 与系统家目录 (%s) 不一致\n' "$HOME" "$expected_home" >&2
+        printf '✘ HOME 环境变量 (%s) 与系统家目录 (%s) 不一致\n' "$HOME" "$expected_home" >&2
         return 1
     }
     cd "$expected_home" || return 1
@@ -722,7 +722,7 @@ validate_user_environment() {
 
 main() {
     if (( $# > 1 )) || { (( $# == 1 )) && [[ "$1" != "--help" ]]; }; then
-        printf '❌ 不支持的参数: %s\n' "$*" >&2
+        printf '✘ 不支持的参数: %s\n' "$*" >&2
         printf '用法: %s [--help]\n' "$0" >&2
         return 2
     fi
@@ -730,7 +730,7 @@ main() {
         "")
             validate_user_environment
             run_opt_menu
-            printf '\n👉 执行 exec bash -i 重载当前终端即可生效。\n'
+            printf '\n→ 执行 exec bash -i 重载当前终端即可生效。\n'
             ;;
         --help)
             printf '用法: %s [--help]\n' "$0"

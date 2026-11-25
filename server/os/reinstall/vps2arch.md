@@ -1,10 +1,12 @@
 # vps2arch
 
-将 VPS 跨发行版全盘重装为 Arch Linux。验收基线为 x86-64；ARM 未验收，不保证支持。重装前需在客户端生成 Ed25519 登录密钥。`443/tcp` 预留给业务入口，不能用作新系统的 SSH 端口。
+将 Linux VPS 全盘重装为 Arch Linux（仅 x86-64 已验收，ARM 不保证支持）。
 
-## 客户端准备（生成登录密钥）
+**前置条件**：确认带外控制台可用、备妥重要数据；源系统须具备 `ssh-keygen` 与 util-linux `blkid`；`443/tcp` 预留给业务入口，勿作新系统 SSH 端口。
 
-在本地工作站的 pwsh 中生成专用 Ed25519 密钥对：
+## 1. 客户端密钥与配置 `[工作站 pwsh]`
+
+生成专用 Ed25519 密钥对：
 
 ```pwsh
 . {
@@ -21,7 +23,7 @@
 }
 ```
 
-### 客户端主机配置 (SSH Config)
+写入 `~/.ssh/config`（若有通配 `Host` 块，将本块置于其前）：
 
 ```pwsh
 . {
@@ -53,62 +55,41 @@ Host $name
 }
 ```
 
-如果已有匹配该别名的通配 `Host` 块，将专用块放在它们之前。连接前运行 `ssh -G [HERE_SSH_ALIAS]`（替换为实际别名），确认显示 `identitiesonly yes`，且 `identityfile` 只列专用密钥；若其他匹配块也设置了 `IdentityFile`，缩小这些块的匹配范围。
+核验匹配规则仅使用专用密钥（确认 `identitiesonly yes` 与 `identityfile`）：
 
-## 全盘自动化重装（抹盘重建）
+```pwsh
+ssh -G [HERE_SSH_ALIAS]
+```
+
+## 2. 执行全盘重装 `[源机 root]`
 
 > [!CAUTION]
-> 清空**整块硬盘**并重建分区表，所有原有数据均会被格式化。实操前请备份重要数据。
-
-Arch x86-64 面向服务商已分配固定 IPv4 的 VPS。先查服务商说明：由 DHCP 保留固定地址就选 `dhcp`，要求手填地址、前缀和网关才选 `static`；地址长期不变不代表手填静态。向导和 CLI 都会显示源机采集的 IPv4 参数。若 `/etc/network/interfaces`、`/etc/systemd/network` 或 `/etc/netplan` 中明确声明所选网卡使用静态 IPv4，且地址、前缀和网关与实时采集值吻合、没有 DHCP 迹象，脚本会显示并自动采用 `static`；否则仍要求手选，没有默认值。若源机网络改过，先核对其配置是否符合服务商要求；不清楚取址方式，或显示的地址与应配置在网卡上的地址不符时，不要继续。救援按上游方式取址，可能临时尝试旧参数；擦盘前若地址改变、取址方式不符或无法核验，就停止。先确认能使用带外控制台；救援取址成功不保证新系统首启取得相同地址。
-
-源系统须为 Linux，并有 `ssh-keygen` 和 util-linux 的 `blkid`。目标盘必须有唯一的分区表 ID（PTUUID），不要求磁盘序列号或 WWID；有整盘探测失败则停止。Btrfs／bcachefs 根或无法唯一推断根盘时，须用 `--target-disk` 显式指定整盘。BIOS 源系统还必须能从 `/boot` 所在的文件系统确认唯一的引导候选盘；`--target-disk` 只指定擦除目标，不能覆盖这项检查。若 Extlinux 或 Limine 需要将救援 initrd 复制到独立引导分区，该目录必须能实际创建由 root 所有、权限为 `0600` 的文件；否则不会安排本次重装。向导和 CLI 都要求原样输入显示的设备路径；救援会按 PTUUID 重新查找目标盘，并在擦盘前复核。重装期间不要替换、热插拔目标盘或接入其克隆盘：如果原盘被换成保留同一 PTUUID 的克隆，脚本无法区分。也不要并行改变网络。进入救援后失败时，从控制台查看磁盘和安装日志；若已尝试擦除，不要盲目重试。
-
-向导收集新运维用户名、sudo 密码、Ed25519 公钥及端口。用户名不能与救援系统或新装系统中的现有账号重名；源系统是否已有同名账号不限制选名。CLI 必须显式给出 `--username`、`--password`、`--ssh-key`；端口省略时为 22，远程公钥来源只接受 HTTPS。sudo 密码不得为空、包含换行或回车，且最多 256 字节。CLI 密码会进入进程参数；直接键入明文还可能被 Shell 历史记录。手动操作优先使用向导。重装入口不接受 `--debug` 或 `-x`。新系统只允许非 root 用户用普通 Ed25519 公钥登录。
-
-在目标 VPS 上以 root 执行：
+> 清空**整块目标硬盘**并重建分区表，原数据全部清除。手动操作请使用交互向导；若不清楚服务商是 `dhcp` 保留地址还是手填 `static`，或重装中目标盘存在热插拔/克隆冲突，请停止操作。
 
 ```bash
-(
-set -Eeuo pipefail
-[[ $EUID -eq 0 ]] || { printf '❌ 必须以 root 执行\n' >&2; exit 1; }
-
+[[ $EUID -eq 0 ]] || { printf '✘ 必须以 root 执行\n' >&2; exit 1; }
 URL=https://raw.githubusercontent.com/Lokyael/vpsbase/main/server/os/reinstall/vps2arch.sh
-
 if command -v wget >/dev/null; then wget -q --show-progress -O /root/vps2arch.sh "$URL"
 else curl -fL --progress-bar "$URL" -o /root/vps2arch.sh; fi
-
 bash /root/vps2arch.sh
-)
 ```
 
-仅在脚本成功退出并显示 `本次已安排重装` 后，才执行 `reboot` 或通过控制台冷重启。需要在重启前撤销安排时，使用脚本打印的 `reset` 命令。`已取消` 也会退出 0，但没有安排本次重装，也不会清除先前安排的任务；若曾安排旧任务，请先核对引导状态再决定是否重启。进入新系统后先在控制台核对实际 IPv4 地址，再从新终端验证 SSH 和 sudo 密码。
+**结果核验**：
+1. 仅在脚本输出 `本次已安排重装` 后执行 `reboot`（如需重启前撤销，执行脚本打印的 `reset` 命令）。
+2. 重装期间若失败，通过带外控制台查看磁盘与安装日志，已尝试擦除时勿盲目重试。
+3. 新系统就绪后，先在控制台核对实际 IPv4 地址，再从新终端验证 SSH 公钥登录与 `sudo` 密码。
 
-## 服务商回收与整盘销毁（在线抹盘）
-
-重装系统（包括上方 `vps2arch`）通过格式化重建文件系统元数据，**无需且不应**前置执行整盘覆写（写入全零在未开启 TRIM 的虚拟化磁盘上会导致严重的写放大并消耗 I/O 信用）。
-
-仅在 VPS **彻底退租、销毁实例并交还服务商**，且需防止后继租户或非规范服务商扫描底层磁盘残留时，才需对整盘进行擦除。
-
-在缺乏服务商救援系统（Rescue Mode）的常见环境中，直接在线裸写磁盘设备会导致内核发生 I/O 错误紧急锁定，使覆写半途截断。[`vps-wipe.sh`](vps-wipe.sh) 提供免救援系统的在线自包含销毁：依次**粉碎敏感凭据、填零所有未分配空闲扇区，并最终物理抹除磁盘分区表与引导头部**。
+## 3. 退租整盘销毁（可选）`[源机 root]`
 
 > [!CAUTION]
-> 此操作**绝对不可逆**！执行后当前系统所有凭据与数据将被彻底抹除，系统将立即瘫痪断联。必须在已确定 VPS 彻底废弃退租、无任何保留价值时执行。
+> **绝对不可逆**：仅用于退租交还 VPS（重装前勿执行）。执行后凭据、空闲空间与磁盘头部将被物理抹除并立即断联。
 
-在目标 VPS 上以 root 执行交互式销毁（需手动输入 `DESTROY` 确认）：
+交互确认需输入 `DESTROY`，完成后在服务商控制台销毁实例：
 
 ```bash
-(
-set -Eeuo pipefail
-[[ $EUID -eq 0 ]] || { printf '❌ 必须以 root 执行\n' >&2; exit 1; }
-
+[[ $EUID -eq 0 ]] || { printf '✘ 必须以 root 执行\n' >&2; exit 1; }
 URL=https://raw.githubusercontent.com/Lokyael/vpsbase/main/server/os/reinstall/vps-wipe.sh
-
 if command -v wget >/dev/null; then wget -q --show-progress -O /root/vps-wipe.sh "$URL"
 else curl -fL --progress-bar "$URL" -o /root/vps-wipe.sh; fi
-
 bash /root/vps-wipe.sh
-)
 ```
-
-脚本执行完毕并输出销毁完成提示后，直接在服务商控制台彻底**删除／销毁（Destroy / Terminate）实例**。
