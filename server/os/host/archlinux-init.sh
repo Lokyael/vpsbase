@@ -162,54 +162,24 @@ normalize_history() {
     mapfile -t raw_lines < "$histfile"
 
     local count=0 needs_rewrite=0 seen_stamp=0 current_stamp=""
-    local cand err j k n split_end tail_bs tmp_l complete_end
+    local cand err j k n use_existing_stamp tail_bs tmp_l complete_end
 
     # 按行扫描：单行时间戳条目零开销原样保留；多行块用 bash -n 区分真多行命令与混入的裸行
     local total=${#raw_lines[@]} idx=0
     while (( idx <= total )); do
         if (( idx == total )) || [[ "${raw_lines[idx]}" =~ ^#[0-9]+$ ]]; then
             n=${#block_lines[@]}
-            if (( seen_stamp == 0 )); then
-                if (( n > 0 )); then
-                    needs_rewrite=1
-                    j=0
-                    while (( j < n )); do
-                        cand=""
-                        complete_end=-1
-                        for (( k = j; k < n; k++ )); do
-                            cand+="${cand:+$'\n'}${block_lines[k]}"
-                            tail_bs=0
-                            tmp_l="${block_lines[k]}"
-                            while [[ "$tmp_l" == *\\ ]]; do
-                                tmp_l="${tmp_l%?}"
-                                tail_bs=$(( tail_bs + 1 ))
-                            done
-                            if (( tail_bs % 2 == 1 && k < n - 1 )); then continue; fi
-                            if err=$(printf '%s\n' "$cand" | bash -n 2>&1) && [[ -z "$err" ]]; then
-                                complete_end=$k
-                                break
-                            fi
-                        done
-                        if (( complete_end < 0 )); then
-                            complete_end=$j
-                        fi
-                        out_lines+=("#$(( base_time + count ))")
-                        count=$(( count + 1 ))
-                        for (( k = j; k <= complete_end; k++ )); do
-                            out_lines+=("${block_lines[k]}")
-                        done
-                        j=$(( complete_end + 1 ))
-                    done
-                fi
-            else
-                if (( n == 0 )); then
-                    out_lines+=("$current_stamp")
-                elif (( n == 1 )); then
-                    out_lines+=("$current_stamp" "${block_lines[0]}")
-                else
+            if (( seen_stamp == 1 && n == 0 )); then
+                out_lines+=("$current_stamp")
+            elif (( seen_stamp == 1 && n == 1 )); then
+                out_lines+=("$current_stamp" "${block_lines[0]}")
+            elif (( n > 0 )); then
+                use_existing_stamp=$seen_stamp
+                j=0
+                while (( j < n )); do
                     cand=""
-                    split_end=-1
-                    for (( k = 0; k < n; k++ )); do
+                    complete_end=-1
+                    for (( k = j; k < n; k++ )); do
                         cand+="${cand:+$'\n'}${block_lines[k]}"
                         tail_bs=0
                         tmp_l="${block_lines[k]}"
@@ -219,49 +189,29 @@ normalize_history() {
                         done
                         if (( tail_bs % 2 == 1 && k < n - 1 )); then continue; fi
                         if err=$(printf '%s\n' "$cand" | bash -n 2>&1) && [[ -z "$err" ]]; then
-                            split_end=$k
+                            complete_end=$k
                             break
                         fi
                     done
-                    if (( split_end < 0 )); then
-                        split_end=0
+                    if (( complete_end < 0 )); then
+                        complete_end=$j
                     fi
-                    out_lines+=("$current_stamp")
-                    for (( k = 0; k <= split_end; k++ )); do
+                    if (( use_existing_stamp )); then
+                        out_lines+=("$current_stamp")
+                        use_existing_stamp=0
+                        if (( complete_end < n - 1 )); then
+                            needs_rewrite=1
+                        fi
+                    else
+                        needs_rewrite=1
+                        out_lines+=("#$(( base_time + count ))")
+                        count=$(( count + 1 ))
+                    fi
+                    for (( k = j; k <= complete_end; k++ )); do
                         out_lines+=("${block_lines[k]}")
                     done
-                    if (( split_end < n - 1 )); then
-                        needs_rewrite=1
-                        j=$(( split_end + 1 ))
-                        while (( j < n )); do
-                            cand=""
-                            complete_end=-1
-                            for (( k = j; k < n; k++ )); do
-                                cand+="${cand:+$'\n'}${block_lines[k]}"
-                                tail_bs=0
-                                tmp_l="${block_lines[k]}"
-                                while [[ "$tmp_l" == *\\ ]]; do
-                                    tmp_l="${tmp_l%?}"
-                                    tail_bs=$(( tail_bs + 1 ))
-                                done
-                                if (( tail_bs % 2 == 1 && k < n - 1 )); then continue; fi
-                                if err=$(printf '%s\n' "$cand" | bash -n 2>&1) && [[ -z "$err" ]]; then
-                                    complete_end=$k
-                                    break
-                                fi
-                            done
-                            if (( complete_end < 0 )); then
-                                complete_end=$j
-                            fi
-                            out_lines+=("#$(( base_time + count ))")
-                            count=$(( count + 1 ))
-                            for (( k = j; k <= complete_end; k++ )); do
-                                out_lines+=("${block_lines[k]}")
-                            done
-                            j=$(( complete_end + 1 ))
-                        done
-                    fi
-                fi
+                    j=$(( complete_end + 1 ))
+                done
             fi
             block_lines=()
             if (( idx < total )); then
