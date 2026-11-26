@@ -1,6 +1,6 @@
 # nftables 原子网络防火墙
 
-**前置条件**：首次安装仅通过 [防火墙底座初始化](archlinux.md#防火墙底座初始化) 执行。底座默认丢弃入站与转发，仅放行环回、已建立/关联连接、限速 IPv4 ping、核验的 IPv4 SSH 及 `/etc/nftables.d/*.conf` 业务片段（不开放 IPv6 SSH）。
+**前置条件**：首次安装仅通过 [2. 防火墙底座初始化](archlinux.md#2-防火墙底座初始化) 执行。底座默认丢弃入站与转发，仅放行环回、已建立/关联连接、限速 IPv4 ping、核验的 IPv4 SSH 及 `/etc/nftables.d/*.conf` 业务片段（不开放 IPv6 SSH）。
 
 ## 常用运维
 

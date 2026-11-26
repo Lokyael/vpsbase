@@ -54,8 +54,10 @@ const ANSI = {
   reset: '\x1b[0m',
   dim: '\x1b[2m',
   redBold: '\x1b[1;31m',
+  redDim: '\x1b[2;31m',
   green: '\x1b[32m',
   yellow: '\x1b[33m',
+  yellowDim: '\x1b[2;33m',
   cyan: '\x1b[36m',
   cyanDim: '\x1b[2;36m',
 };
@@ -361,8 +363,11 @@ function sanitizeWarn(raw) {
   if (!isPlainObject(raw)) return null;
   const kind = typeof raw.kind === 'string' ? raw.kind : '';
   const text = typeof raw.text === 'string' ? raw.text : '';
+  const short = typeof raw.short === 'string' ? raw.short : '';
   const at = toFiniteNumber(raw.at);
-  return kind && text && at !== null ? { kind, text, severe: raw.severe === true, at } : null;
+  return kind && text && short && at !== null
+    ? { kind, text, short, severe: raw.severe === true, at }
+    : null;
 }
 
 function sanitizeMonitor(raw) {
@@ -380,15 +385,31 @@ function sanitizeMonitor(raw) {
   };
 }
 
+const SLOW_PHASE_LABELS = {
+  tool_use: { kind: 'TOOL', label: 'Slow tool' },
+  thinking: { kind: 'THK', label: 'Slow think' },
+  working: { kind: 'WRK', label: 'Slow work' },
+};
+
 function classifySlowPhase(prevPhase, elapsedMs) {
   if (elapsedMs < SLOW_PHASE_MS) return null;
-  const labels = { tool_use: 'TOOL', thinking: 'THK', working: 'WRK' };
-  const kind = labels[prevPhase];
-  if (!kind) return null;
+  const entry = SLOW_PHASE_LABELS[prevPhase];
+  if (!entry) return null;
   return {
-    kind,
-    text: `${kind} ${formatDuration(elapsedMs / 1000, true)}`,
+    kind: entry.kind,
+    text: `${entry.label} ${formatDuration(elapsedMs / 1000, true)}`,
+    short: entry.label,
     severe: elapsedMs >= SLOW_PHASE_MS * 2,
+  };
+}
+
+function makeBurnWarn(usd, burnThreshold, nowMs) {
+  return {
+    kind: 'BURN',
+    text: `High spend +${formatUsdCompact(usd)}`,
+    short: 'High spend',
+    severe: usd >= burnThreshold * 2,
+    at: nowMs,
   };
 }
 
@@ -408,12 +429,7 @@ function updateSessionMonitor(sess, agentState, dUsd, wkCalibration, nowMs) {
     }
     if (dUsd >= burnThreshold) {
       mon = mon || { phase: 'unknown', phaseAt: nowMs, turnAt: 0, turnUsd: 0, toolHops: 0, warn: null };
-      mon.warn = {
-        kind: 'BURN',
-        text: `BURN +${formatUsdCompact(dUsd)}`,
-        severe: dUsd >= burnThreshold * 2,
-        at: nowMs,
-      };
+      mon.warn = makeBurnWarn(dUsd, burnThreshold, nowMs);
       changed = true;
     } else if (dUsd > 0 && mon?.warn?.kind === 'BURN') {
       mon.warn = null;
@@ -425,15 +441,7 @@ function updateSessionMonitor(sess, agentState, dUsd, wkCalibration, nowMs) {
   if (!mon) {
     const active = ACTIVE_AGENT_STATES.has(agentState);
     const turnUsd = active ? dUsd : 0;
-    const burnWarn =
-      dUsd >= burnThreshold
-        ? {
-            kind: 'BURN',
-            text: `BURN +${formatUsdCompact(dUsd)}`,
-            severe: dUsd >= burnThreshold * 2,
-            at: nowMs,
-          }
-        : null;
+    const burnWarn = dUsd >= burnThreshold ? makeBurnWarn(dUsd, burnThreshold, nowMs) : null;
     return {
       mon: {
         phase: agentState,
@@ -493,7 +501,8 @@ function updateSessionMonitor(sess, agentState, dUsd, wkCalibration, nowMs) {
   const loopWarn = isLoop
     ? {
         kind: 'LOOP',
-        text: `LOOP ${mon.toolHops}t (${formatDuration(turnElapsed / 1000, true)})`,
+        text: `Loop ${mon.toolHops} tools (${formatDuration(turnElapsed / 1000, true)})`,
+        short: `Loop ${mon.toolHops} tools`,
         severe: mon.toolHops >= LOOP_HARD_HOPS,
         at: nowMs,
       }
@@ -501,14 +510,7 @@ function updateSessionMonitor(sess, agentState, dUsd, wkCalibration, nowMs) {
 
   const activeSpend = Math.max(completedTurnUsd, mon.turnUsd, dUsd);
   const burnWarn =
-    activeSpend >= burnThreshold
-      ? {
-          kind: 'BURN',
-          text: `BURN +${formatUsdCompact(activeSpend)}`,
-          severe: activeSpend >= burnThreshold * 2,
-          at: nowMs,
-        }
-      : null;
+    activeSpend >= burnThreshold ? makeBurnWarn(activeSpend, burnThreshold, nowMs) : null;
 
   const candidate = loopWarn || slowWarn || burnWarn;
   if (candidate) {
@@ -520,6 +522,7 @@ function updateSessionMonitor(sess, agentState, dUsd, wkCalibration, nowMs) {
       (nextPri === prevPri &&
         (mon.warn.kind !== candidate.kind ||
           mon.warn.text !== candidate.text ||
+          mon.warn.short !== candidate.short ||
           mon.warn.severe !== candidate.severe))
     ) {
       mon.warn = candidate;
@@ -530,12 +533,47 @@ function updateSessionMonitor(sess, agentState, dUsd, wkCalibration, nowMs) {
   return { mon, changed };
 }
 
-function renderAlertLine(warn, maxWidth, useColor) {
-  if (!warn) return null;
-  const color = warn.severe ? ANSI.redBold : ANSI.yellow;
-  const full = paint(`! ${warn.text}`, color, useColor);
-  if (maxWidth === null || stripAnsi(full).length <= maxWidth) return full;
-  return paint(`! ${warn.kind}`, color, useColor);
+function truncateAnsi(str, maxWidth) {
+  if (maxWidth === null || maxWidth <= 0) return maxWidth === 0 ? '' : str;
+  if (stripAnsi(str).length <= maxWidth) return str;
+  const reserve = maxWidth >= 4 ? 1 : 0;
+  const limit = maxWidth - reserve;
+  let out = '';
+  let vis = 0;
+  let hasAnsi = false;
+  let i = 0;
+  while (i < str.length) {
+    if (str[i] === '\x1b' && str[i + 1] === '[') {
+      const mIdx = str.indexOf('m', i + 2);
+      if (mIdx !== -1) {
+        out += str.slice(i, mIdx + 1);
+        hasAnsi = true;
+        i = mIdx + 1;
+        continue;
+      }
+    }
+    if (vis >= limit) break;
+    out += str[i];
+    vis += 1;
+    i += 1;
+  }
+  if (reserve) out += '…';
+  if (hasAnsi) out += ANSI.reset;
+  return out;
+}
+
+function renderAlertBadge(warn, warnMode, isIdle, useColor) {
+  if (!warn || warnMode === 'none') return null;
+  const prefix = warn.severe ? '!!' : '!';
+  const body = warnMode === 'short' ? warn.short : warn.text;
+  const color = isIdle
+    ? warn.severe
+      ? ANSI.redDim
+      : ANSI.yellowDim
+    : warn.severe
+      ? ANSI.redBold
+      : ANSI.yellow;
+  return paint(`${prefix} ${body}`, color, useColor);
 }
 
 function quotaColor(rem) {
@@ -561,12 +599,9 @@ function formatWindow(label, bucket, rem, tier, useColor) {
 }
 
 function renderTier(state, tier, useColor) {
-  const { pool, ctxPct, b5h, rem5h, bWk, remWk, wkCalibration, sessionUsd, costEstimated } = state;
+  const { ctxPct, b5h, rem5h, bWk, remWk, wkCalibration, sessionUsd, costEstimated, activeWarn, isIdle } =
+    state;
   const parts = [];
-
-  if (tier.showPool && pool) {
-    parts.push(paint(pool === '3p' ? '3P' : 'GEM', ANSI.cyanDim, useColor));
-  }
 
   const ctxVal =
     ctxPct !== null
@@ -576,7 +611,7 @@ function renderTier(state, tier, useColor) {
   parts.push(formatWindow('5h', b5h, rem5h, tier, useColor));
   parts.push(formatWindow('Wk', bWk, remWk, tier, useColor));
 
-  if (sessionUsd !== null) {
+  if (tier.showCost && sessionUsd !== null) {
     const approx = costEstimated ? '~' : '';
     parts.push(paint(`${approx}${formatUsdCompact(sessionUsd)}`, ANSI.dim, useColor));
   }
@@ -589,7 +624,7 @@ function renderTier(state, tier, useColor) {
       const mark = uncertain ? '?' : '';
       const remTxt = paint(`~${formatEstUsd(remUsd, round, false)}${mark}`, color, useColor);
       const slash = paint('/', ANSI.dim, useColor);
-      const fullTxt = paint(`~${formatEstUsd(fullUsd, round, true)}${mark}`, color, useColor);
+      const fullTxt = paint(`${formatEstUsd(fullUsd, round, true)}${mark}`, color, useColor);
       parts.push(`${remTxt}${slash}${fullTxt}`);
     } else if (tier.estMode !== 'round') {
       const { usd, drop, pending } = wkCalibration;
@@ -598,13 +633,29 @@ function renderTier(state, tier, useColor) {
     }
   }
 
+  const alertBadge = renderAlertBadge(activeWarn, tier.warnMode, isIdle, useColor);
+  if (alertBadge) {
+    parts.push(alertBadge);
+  }
+
   return parts.join(paint(' │ ', ANSI.dim, useColor));
 }
 
-const LAYOUT_TIERS = [
-  { showPool: true, decimals: 1, showReset: true, estMode: 'detail' },
-  { showPool: false, decimals: 0, showReset: true, estMode: 'round' },
-  { showPool: false, decimals: 0, showReset: false, estMode: 'none' },
+const BASE_TIERS = [
+  { decimals: 1, showReset: true, estMode: 'detail', showCost: true, warnMode: 'none' },
+  { decimals: 0, showReset: true, estMode: 'round', showCost: true, warnMode: 'none' },
+  { decimals: 0, showReset: true, estMode: 'none', showCost: true, warnMode: 'none' },
+  { decimals: 0, showReset: false, estMode: 'none', showCost: true, warnMode: 'none' },
+  { decimals: 0, showReset: false, estMode: 'none', showCost: false, warnMode: 'none' },
+];
+
+const ALERT_TIERS = [
+  { decimals: 1, showReset: true, estMode: 'detail', showCost: true, warnMode: 'full' },
+  { decimals: 1, showReset: true, estMode: 'none', showCost: true, warnMode: 'full' },
+  { decimals: 0, showReset: true, estMode: 'none', showCost: true, warnMode: 'full' },
+  { decimals: 0, showReset: false, estMode: 'none', showCost: true, warnMode: 'full' },
+  { decimals: 0, showReset: false, estMode: 'none', showCost: true, warnMode: 'short' },
+  { decimals: 0, showReset: false, estMode: 'none', showCost: false, warnMode: 'short' },
 ];
 
 /**
@@ -705,8 +756,8 @@ export function evaluateStatusLine(data, ledgerInput, nowMs = Date.now(), useCol
     ledgerChanged = true;
   }
 
+  const isIdle = Boolean(agentState) && !ACTIVE_AGENT_STATES.has(agentState);
   const renderState = {
-    pool,
     ctxPct,
     b5h,
     rem5h,
@@ -715,19 +766,20 @@ export function evaluateStatusLine(data, ledgerInput, nowMs = Date.now(), useCol
     wkCalibration,
     sessionUsd,
     costEstimated,
+    activeWarn,
+    isIdle,
   };
 
-  let line1 = renderTier(renderState, LAYOUT_TIERS[0], useColor);
-  if (maxWidth !== null && stripAnsi(line1).length > maxWidth) {
-    for (let i = 1; i < LAYOUT_TIERS.length; i++) {
-      const candidate = renderTier(renderState, LAYOUT_TIERS[i], useColor);
-      line1 = candidate;
+  const tiers = activeWarn ? ALERT_TIERS : BASE_TIERS;
+  let line = renderTier(renderState, tiers[0], useColor);
+  if (maxWidth !== null && stripAnsi(line).length > maxWidth) {
+    for (let i = 1; i < tiers.length; i++) {
+      const candidate = renderTier(renderState, tiers[i], useColor);
+      line = candidate;
       if (stripAnsi(candidate).length <= maxWidth) break;
     }
+    line = truncateAnsi(line, maxWidth);
   }
-
-  const line2 = renderAlertLine(activeWarn, maxWidth, useColor);
-  const line = line2 ? `${line1}\n${line2}` : line1;
 
   return { line, ledger, ledgerChanged };
 }
