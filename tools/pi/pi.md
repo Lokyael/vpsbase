@@ -17,7 +17,7 @@ Pi（pi-coding-agent 1.5.2）端点配置、工具链就绪与扩展参考。
 
 **交互流程**：
 1. 选择目标 Provider，输入 URL 与 API Key（直接回车保留已有值，取消即停止）。
-2. 若发现严格小写 `gpt-` 模型，逐一确认协议（回车探测 / `n` 用 Chat Completions / `y` 用 Responses API）。
+2. 自动过滤 `gpt-6.2` 以下（如 `gpt-6.1`、`gpt-5.6`）及媒体/向量类模型；若仍有严格小写 `gpt-` 模型，逐一确认协议（回车探测 / `n` 用 Chat Completions / `y` 用 Responses API，多模型时支持 `a`/`na`/`ya` 批量选择）。
 3. 脚本不写入默认模型；完成后在 Pi 会话输入 `/model` 选择模型并按 `Ctrl+S` 保存。
 
 ## 2. 配置文件与结果核验

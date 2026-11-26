@@ -9,7 +9,8 @@ show_help() {
 通过终端交互输入 Provider ID、Base URL 和 API Key，回车保留已有值。
   -h, --help  显示帮助
 
-有效列表按 models.dev 规格重建目标 Provider；gpt- 前缀模型逐个询问 Responses API 策略，发现失败、能力未知或无候选模型时不更新配置。
+有效列表排除媒体/向量类及 gpt-6.2 以下模型，按 models.dev 规格重建目标 Provider；
+gpt-6.2 及以上前缀模型逐个询问 Responses API 策略，发现失败、能力未知或无候选模型时不更新配置。
 非 gpt- 模型使用 openai-completions；确认或探测支持的 gpt- 模型优先使用 openai-responses。默认模型在 Pi /model 中选择，按 Ctrl+S 保存。
 Windows pwsh: sh.exe -c "bash tools/pi/pi.sh"
 EOF
@@ -37,11 +38,11 @@ else
         FNM_ENV=$(fnm env --shell bash)
         eval "$FNM_ENV"
     fi
-    if command -v paru >/dev/null 2>&1; then
+    if command -v paru >/dev/null 2>&1 && { ! command -v pi >/dev/null 2>&1 || ! command -v rg >/dev/null 2>&1 || ! command -v fd >/dev/null 2>&1; }; then
         paru -S --needed --noconfirm --skipreview pi-coding-agent-bin ripgrep fd
     fi
 fi
-for tool in node curl pi rg fd; do
+for tool in node pi rg fd; do
     command -v "$tool" >/dev/null 2>&1 || { printf '✘ 缺少依赖: %s\n' "$tool" >&2; exit 1; }
 done
 node -e 'const [a,b]=process.versions.node.split(".").map(Number); if(a<22 || (a===22 && b<19)) { console.error("✘ 需要 Node.js 22.19 或更新版本"); process.exit(1); }'
@@ -57,18 +58,26 @@ trap 'rm -rf -- "$WORK_DIR"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# 配置读取、规格转换与写入
-cat > "$WORK_DIR/config.cjs" <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-const os = require("node:os");
-const { randomUUID } = require("node:crypto");
-const [command, configDir, providerId, ...args] = process.argv.slice(2);
-const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+# 阶段二～四：交互配置、模型发现、Responses API 探测与原子写入
+cat > "$WORK_DIR/pi.mjs" <<'NODE'
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { randomUUID } from "node:crypto";
+import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
+import { pathToFileURL } from "node:url";
+
 const PROBE_MAX_OUTPUT_TOKENS = 256;
 const SETTINGS_SCHEMA = "https://pi.dev/schemas/settings.schema.json";
-function check(condition, message) { if (!condition) throw new Error(message); }
-function readConfig(name, fallback) {
+const MODELS_DEV_URL = "https://models.dev/api.json";
+const PROVIDER_PRIORITY = ["anthropic", "openai", "google", "deepseek", "meta", "alibaba", "qwen", "mistral"];
+
+const isObject = value => value !== null && typeof value === "object" && !Array.isArray(value);
+const check = (condition, message) => { if (!condition) throw new Error(message); };
+const isSingleLine = value => typeof value === "string" && !/[\r\n]/.test(value);
+
+export function readConfig(configDir, name, fallback) {
   const file = path.join(configDir, name);
   let text;
   try { text = fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""); }
@@ -78,94 +87,43 @@ function readConfig(name, fallback) {
     // models.json：移除行注释和尾逗号，保留字符串。
     const json = name === "models.json" ? text
       .replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, m => m[0] === '"' ? m : "")
-      .replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (m, tail) => tail ?? (m[0] === '"' ? m : "")) : text;
+      .replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (m, tail) => tail ?? m) : text;
     value = JSON.parse(json);
   } catch { throw new Error(`${name} JSON 无法解析`); }
-  check(object(value), `${name} 顶层必须为对象`);
+  check(isObject(value), `${name} 顶层必须为对象`);
   return { value, text };
 }
-function loadConfigs() {
-  const models = readConfig("models.json", { providers: {} });
-  const auth = readConfig("auth.json", {});
-  const settings = readConfig("settings.json", {});
-  check(object(models.value.providers), "models.json providers 必须为对象");
+
+export function validateSettings(settings) {
+  for (const key of ["defaultProvider", "shellPath"]) {
+    check(settings[key] === undefined || typeof settings[key] === "string", `settings.json ${key} 必须为字符串`);
+  }
+  for (const key of ["compaction", "terminal", "markdown"]) {
+    check(settings[key] === undefined || isObject(settings[key]), `settings.json ${key} 必须为对象`);
+  }
+}
+
+export function loadConfigs(configDir) {
+  const models = readConfig(configDir, "models.json", { providers: {} });
+  const auth = readConfig(configDir, "auth.json", {});
+  const settings = readConfig(configDir, "settings.json", {});
+  check(isObject(models.value.providers), "models.json providers 必须为对象");
   for (const provider of Object.values(models.value.providers)) {
-    check(object(provider), "models.json Provider 必须为对象");
+    check(isObject(provider), "models.json Provider 必须为对象");
     check(provider.baseUrl === undefined || typeof provider.baseUrl === "string", "Provider baseUrl 必须为字符串");
-    check(provider.models === undefined || (Array.isArray(provider.models) && provider.models.every(m => object(m) && typeof m.id === "string" && m.id.trim())), "Provider models 必须包含有效模型 ID");
+    check(provider.models === undefined || (Array.isArray(provider.models) && provider.models.every(m => isObject(m) && typeof m.id === "string" && m.id.trim())), "Provider models 必须包含有效模型 ID");
   }
   for (const credential of Object.values(auth.value)) {
-    check(object(credential), "auth.json 凭据项必须为对象");
-    check(credential.env === undefined || (object(credential.env) && Object.values(credential.env).every(v => typeof v === "string")), "auth.json env 必须为字符串映射");
+    check(isObject(credential), "auth.json 凭据项必须为对象");
+    check(credential.env === undefined || (isObject(credential.env) && Object.values(credential.env).every(v => typeof v === "string")), "auth.json env 必须为字符串映射");
     check((credential.type === "api_key" && (credential.key === undefined || typeof credential.key === "string")) ||
       (credential.type === "oauth" && typeof credential.access === "string" && typeof credential.refresh === "string" && Number.isFinite(credential.expires)), "auth.json 凭据结构无效");
   }
   validateSettings(settings.value);
   return { models, auth, settings };
 }
-function validateSettings(settings) {
-  const strings = [
-    "defaultProvider", "defaultModel", "theme", "shellPath", "shellCommandPrefix", "externalEditor",
-    "sessionDir", "httpProxy", "markdown.codeBlockIndent"
-  ];
-  for (const key of strings) {
-    const value = key.includes(".") ? settings[key.split(".")[0]]?.[key.split(".")[1]] : settings[key];
-    check(value === undefined || typeof value === "string", `settings.json ${key} 必须为字符串`);
-  }
-  const enums = {
-    defaultThinkingLevel: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
-    tuiMode: ["regular", "fullscreen"],
-    sessionShareDestination: ["auto", "gist", "radius"],
-    cacheWarming: ["off", "streaming", "idle"],
-    steeringMode: ["all", "one-at-a-time"],
-    followUpMode: ["all", "one-at-a-time"],
-    doubleEscapeAction: ["tree", "fork", "none"],
-    treeFilterMode: ["default", "no-tools", "user-only", "labeled-only", "all"],
-    defaultProjectTrust: ["ask", "always", "never"],
-    transport: ["auto", "sse", "websocket", "websocket-cached"]
-  };
-  for (const [key, values] of Object.entries(enums)) {
-    check(settings[key] === undefined || values.includes(settings[key]), `settings.json ${key} 值无效`);
-  }
-  const booleans = [
-    "hideThinkingBlock", "showCacheMissNotices", "enableInstallTelemetry", "enableAnalytics",
-    "collapseChangelog", "enableSkillCommands", "fullscreenCopyOnSelect", "showHardwareCursor"
-  ];
-  for (const key of booleans) check(settings[key] === undefined || typeof settings[key] === "boolean", `settings.json ${key} 必须为布尔值`);
-  check(settings.quietStartup === undefined || typeof settings.quietStartup === "boolean" || settings.quietStartup === "header", "settings.json quietStartup 值无效");
-  for (const key of ["compaction", "branchSummary", "terminal", "markdown", "images", "retry", "codemode", "warnings"]) {
-    check(settings[key] === undefined || object(settings[key]), `settings.json ${key} 必须为对象`);
-  }
-  for (const key of ["defaultTools", "packages", "extensions", "skills", "prompts", "themes", "npmCommand", "selfUpdateCommand"]) {
-    check(settings[key] === undefined || (Array.isArray(settings[key]) && settings[key].every(value => typeof value === "string")), `settings.json ${key} 必须为字符串数组`);
-  }
-  const nonNegativeInteger = (value, key) => check(value === undefined || (Number.isSafeInteger(value) && value >= 0), `settings.json ${key} 必须为非负安全整数`);
-  if (settings.compaction) {
-    check(settings.compaction.enabled === undefined || typeof settings.compaction.enabled === "boolean", "settings.json compaction.enabled 必须为布尔值");
-    nonNegativeInteger(settings.compaction.reserveTokens, "compaction.reserveTokens");
-    nonNegativeInteger(settings.compaction.keepRecentTokens, "compaction.keepRecentTokens");
-    check(settings.compaction.modelOverrides === undefined || object(settings.compaction.modelOverrides), "settings.json compaction.modelOverrides 必须为对象");
-  }
-  if (settings.branchSummary) {
-    nonNegativeInteger(settings.branchSummary.reserveTokens, "branchSummary.reserveTokens");
-    check(settings.branchSummary.skipPrompt === undefined || typeof settings.branchSummary.skipPrompt === "boolean", "settings.json branchSummary.skipPrompt 必须为布尔值");
-  }
-  if (settings.terminal) {
-    check(settings.terminal.showImages === undefined || typeof settings.terminal.showImages === "boolean", "settings.json terminal.showImages 必须为布尔值");
-    check(settings.terminal.clearOnShrink === undefined || typeof settings.terminal.clearOnShrink === "boolean", "settings.json terminal.clearOnShrink 必须为布尔值");
-    check(settings.terminal.showTerminalProgress === undefined || typeof settings.terminal.showTerminalProgress === "boolean", "settings.json terminal.showTerminalProgress 必须为布尔值");
-    check(settings.terminal.hyperlinks === undefined || typeof settings.terminal.hyperlinks === "boolean" || settings.terminal.hyperlinks === "auto", "settings.json terminal.hyperlinks 值无效");
-    check(settings.terminal.images === undefined || settings.terminal.images === false || ["kitty", "iterm2", "auto"].includes(settings.terminal.images), "settings.json terminal.images 值无效");
-    check(settings.terminal.trueColor === undefined || typeof settings.terminal.trueColor === "boolean" || settings.terminal.trueColor === "auto", "settings.json terminal.trueColor 值无效");
-  }
-  if (settings.markdown) check(settings.markdown.mermaid === undefined || ["off", "final", "streaming"].includes(settings.markdown.mermaid), "settings.json markdown.mermaid 值无效");
-  if (settings.images) {
-    check(settings.images.autoResize === undefined || typeof settings.images.autoResize === "boolean", "settings.json images.autoResize 必须为布尔值");
-    check(settings.images.blockImages === undefined || typeof settings.images.blockImages === "boolean", "settings.json images.blockImages 必须为布尔值");
-  }
-  if (settings.retry) check(settings.retry.enabled === undefined || typeof settings.retry.enabled === "boolean", "settings.json retry.enabled 必须为布尔值");
-}
-function prepareSettings(settings, bashPath) {
+
+export function prepareSettings(settings, bashPath) {
   const shell = settings.shellPath;
   const detected = process.platform === "win32"
     ? bashPath.replace(/([/\\]apps[/\\]git[/\\])[^/\\]+(?=[/\\])/i, "$1current")
@@ -192,54 +150,41 @@ function prepareSettings(settings, bashPath) {
     markdown: { ...settings.markdown, mermaid: "off" }
   });
 }
-function reportSettingsPolicy() {
-  console.log("○ settings.json 个人偏好覆盖（脚本重复运行会重新应用；不采用此偏好可按下列原生值手动改回）:");
-  console.log("  - defaultThinkingLevel: high ← 原生 medium；更偏向充分推理，增加耗时与用量");
-  console.log("  - quietStartup: true ← 原生 false；隐藏启动头部和资源加载信息");
-  console.log("  - enableInstallTelemetry: false ← 原生 true；关闭安装／更新遥测及 Provider 归因");
-  console.log("  - cacheWarming: off ← 原生 idle；关闭提示缓存预热，可能减少缓存命中");
-  console.log("  - compaction.enabled: false ← 原生 true；关闭自动压缩，长会话可能更早触及上下文限制");
-  console.log("  - terminal.showImages: false ← 原生 true；关闭终端内联图片");
-  console.log("  - markdown.mermaid: off ← 原生 streaming；关闭 Mermaid 图表渲染");
-  console.log("  - Windows shellPath: 缺失时写入已验证的 Bash 路径；已有值不替换（运行必需项，非 Pi 偏好）");
+
+export function isObsoleteGpt(id) {
+  const match = id.match(/(?:^|\/)gpt-(\d+)(?:\.(\d+))?/i);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2] ?? 0);
+  return major < 6 || (major === 6 && minor < 2);
 }
-function discover(file) {
-  const parsed = readJsonFile(file, "模型列表不是有效 JSON");
+
+export function discoverModels(parsed) {
   const list = Array.isArray(parsed) ? parsed : parsed?.data;
   check(Array.isArray(list), "模型列表结构无效：需要 data 数组或顶层数组");
-  check(list.every(m => object(m) && typeof m.id === "string" && m.id.trim() && !/[\r\n\t]/.test(m.id)), "模型列表包含无效模型 ID");
-  const ids = [...new Set(list.map(m => m.id).filter(id => !/image|embed|tts|audio|whisper|batch/i.test(id)))];
+  check(list.every(m => isObject(m) && typeof m.id === "string" && m.id.trim() && !/[\r\n\t]/.test(m.id)), "模型列表包含无效模型 ID");
+  const ids = [...new Set(list.map(m => m.id).filter(id => !/image|embed|tts|audio|whisper|batch/i.test(id) && !isObsoleteGpt(id)))];
   check(ids.length > 0, list.length ? "模型列表经当前名称过滤后没有候选模型" : "端点返回空模型列表");
   return ids;
 }
-function validGptDecision(decisions, id) {
-  return object(decisions[id]) && ["openai-completions", "openai-responses"].includes(decisions[id].api);
-}
-function applyDecision(model, id, decisions) {
-  if (!id.startsWith("gpt-")) return;
-  const decision = decisions[id];
-  if (decision.api === "openai-responses") model.api = "openai-responses";
-  if (object(decision.compat) && Object.keys(decision.compat).length) model.compat = decision.compat;
-}
-function makeModels(ids, db, decisions = {}) {
-  check(object(db) && Object.keys(db).length > 0, "models.dev 参数库必须为非空对象");
-  check(object(decisions), "Responses API 决策必须为对象");
+
+export function makeModels(ids, db, decisions = {}) {
+  check(isObject(db) && Object.keys(db).length > 0, "models.dev 参数库必须为非空对象");
+  check(isObject(decisions), "Responses API 决策必须为对象");
   for (const id of ids) {
-    if (id.startsWith("gpt-") && !validGptDecision(decisions, id)) {
+    if (id.startsWith("gpt-") && !(isObject(decisions[id]) && ["openai-completions", "openai-responses"].includes(decisions[id].api))) {
       throw new Error(`gpt- 模型 ${id} 缺少有效 Responses API 决策`);
     }
   }
   const exact = new Map(), canonical = new Map();
-  const providers = [...new Set(["anthropic", "openai", "google", "deepseek", "meta", "alibaba", "qwen", "mistral", ...Object.keys(db)])];
-  for (const pid of providers) {
+  for (const pid of new Set([...PROVIDER_PRIORITY, ...Object.keys(db)])) {
     if (!Object.hasOwn(db, pid)) continue;
-    check(object(db[pid]) && object(db[pid].models), "models.dev Provider models 结构无效");
+    check(isObject(db[pid]) && isObject(db[pid].models), "models.dev Provider models 结构无效");
     for (const [id, spec] of Object.entries(db[pid].models)) {
-      check(object(spec), "models.dev 模型规格必须为对象");
       for (const key of [id.toLowerCase(), `${pid}/${id}`.toLowerCase()]) {
         if (!exact.has(key)) exact.set(key, spec);
       }
-      if (typeof spec.canonical_model_id === "string" && !canonical.has(spec.canonical_model_id.toLowerCase())) {
+      if (isObject(spec) && typeof spec.canonical_model_id === "string" && !canonical.has(spec.canonical_model_id.toLowerCase())) {
         canonical.set(spec.canonical_model_id.toLowerCase(), spec);
       }
     }
@@ -251,11 +196,16 @@ function makeModels(ids, db, decisions = {}) {
     const base = bare.replace(/-(thinking|high|low|medium|search)$/, "");
     const spec = [clean, bare, base].map(key => exact.get(key) || canonical.get(key)).find(Boolean);
     const model = { id };
-    applyDecision(model, id, decisions);
+    if (id.startsWith("gpt-")) {
+      const decision = decisions[id];
+      if (decision.api === "openai-responses") model.api = "openai-responses";
+      if (isObject(decision.compat) && Object.keys(decision.compat).length) model.compat = decision.compat;
+    }
     if (!spec) {
       unmatched++;
       return model;
     }
+    check(isObject(spec), `models.dev 模型规格无效: ${id}`);
     if (spec.name !== undefined) {
       check(typeof spec.name === "string" && spec.name.trim(), `models.dev ${id} name 无效`);
       model.name = spec.name;
@@ -276,7 +226,7 @@ function makeModels(ids, db, decisions = {}) {
       if (input.length) model.input = input;
     }
     if (spec.cost !== undefined) {
-      check(object(spec.cost), `models.dev ${id} cost 无效`);
+      check(isObject(spec.cost), `models.dev ${id} cost 无效`);
       if (spec.cost.input !== undefined && spec.cost.output !== undefined) {
         model.cost = { input: spec.cost.input, output: spec.cost.output, cacheRead: spec.cost.cache_read ?? 0, cacheWrite: spec.cost.cache_write ?? 0 };
         check(Object.values(model.cost).every(n => typeof n === "number" && Number.isFinite(n) && n >= 0), `models.dev ${id} cost 无效`);
@@ -286,26 +236,8 @@ function makeModels(ids, db, decisions = {}) {
   });
   return { models, unmatched };
 }
-function readJsonFile(file, message) {
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch { throw new Error(message); }
-}
-function saveDecision(file, id, decision) {
-  check(typeof id === "string" && id && !/[\r\n\t]/.test(id), "模型 ID 无效");
-  const decisions = fs.existsSync(file) ? readJsonFile(file, "Responses API 决策文件无效") : {};
-  check(object(decisions), "Responses API 决策必须为对象");
-  decisions[id] = decision;
-  fs.writeFileSync(file, JSON.stringify(decisions));
-}
-function checkDecisions(idsFile, decisionsFile) {
-  const ids = readJsonFile(idsFile, "模型 ID 文件无效");
-  const decisions = readJsonFile(decisionsFile, "Responses API 决策文件无效");
-  check(Array.isArray(ids) && object(decisions), "Responses API 决策结构无效");
-  for (const id of ids.filter(id => id.startsWith("gpt-"))) {
-    check(validGptDecision(decisions, id), `gpt- 模型 ${id} 的 Responses API 决策未完成`);
-  }
-}
-function classifyProbeFailure(status, body) {
+
+export function classifyProbeFailure(status, body) {
   const text = String(body || "").toLowerCase();
   if (status === 401 || status === 403) return "auth-unknown";
   if (status === 429) return "quota-unknown";
@@ -318,78 +250,89 @@ function classifyProbeFailure(status, body) {
   if (/tool[^\n]*(not supported|unsupported|invalid|unknown)|unsupported[^\n]*tool/i.test(text)) return "tools-unsupported";
   return "unknown";
 }
+
 function extractSseData(block) {
   return block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n");
-}
-function parseSse(text) {
-  const events = [];
-  let sawSse = false;
-  for (const block of String(text).split(/\r?\n\r?\n/)) {
-    const data = extractSseData(block);
-    if (!data) continue;
-    sawSse = true;
-    if (data === "[DONE]") { events.push({ type: "done" }); continue; }
-    try { events.push(JSON.parse(data)); }
-    catch { return { events, sawSse, malformed: true }; }
-  }
-  return { events, sawSse, malformed: false };
 }
 function terminalEvent(event) {
   return ["response.completed", "response.failed", "response.incomplete", "error"].includes(event?.type);
 }
-async function readSseResponse(response) {
+function createSseState() {
+  const events = [];
+  let text = "", sawSse = false, malformed = false, stopped = false;
+  return {
+    consume(block, stopOnTerminal) {
+      const data = extractSseData(block);
+      if (!data) return;
+      sawSse = true;
+      text += `data: ${data}\n\n`;
+      if (data === "[DONE]") {
+        events.push({ type: "done" });
+        if (stopOnTerminal) stopped = true;
+        return;
+      }
+      try {
+        const event = JSON.parse(data);
+        events.push(event);
+        if (stopOnTerminal && terminalEvent(event)) stopped = true;
+      } catch {
+        malformed = true;
+        stopped = true;
+      }
+    },
+    get stopped() { return stopped; },
+    result(rawText) { return { text: sawSse ? text : (rawText ?? text), events, sawSse, malformed }; }
+  };
+}
+
+export async function readSseResponse(response) {
   // 保留文本响应 fallback，便于离线替身和不提供 ReadableStream 的实现工作。
   if (!response.body?.getReader) {
     const text = await response.text();
-    return { text, ...parseSse(text) };
+    const state = createSseState();
+    for (const block of String(text).split(/\r?\n\r?\n/)) {
+      state.consume(block, false);
+      if (state.stopped) break;
+    }
+    return state.result(text);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const events = [];
-  let buffer = "", text = "", sawSse = false, malformed = false, stopped = false;
-  const consume = block => {
-    const data = extractSseData(block);
-    if (!data) return;
-    sawSse = true;
-    text += `data: ${data}\n\n`;
-    if (data === "[DONE]") { events.push({ type: "done" }); stopped = true; return; }
-    try {
-      const event = JSON.parse(data);
-      events.push(event);
-      if (terminalEvent(event)) stopped = true;
-    } catch {
-      malformed = true;
-      stopped = true;
-    }
-  };
+  const state = createSseState();
+  let buffer = "", raw = "";
   try {
-    while (!stopped) {
+    while (!state.stopped) {
       const part = await reader.read();
       if (part.done) {
-        buffer += decoder.decode();
+        const tail = decoder.decode();
+        buffer += tail;
+        if (!state.sawSse) raw += tail;
         break;
       }
-      buffer += decoder.decode(part.value, { stream: true });
+      const chunk = decoder.decode(part.value, { stream: true });
+      buffer += chunk;
+      if (!state.sawSse && raw.length < 16384) raw += chunk;
       const blocks = buffer.split(/\r?\n\r?\n/);
       buffer = blocks.pop() || "";
       for (const block of blocks) {
-        consume(block);
-        if (stopped) break;
+        state.consume(block, true);
+        if (state.stopped) break;
       }
     }
-    if (!stopped && buffer) consume(buffer);
+    if (!state.stopped && buffer) state.consume(buffer, true);
   } finally {
-    if (stopped) {
+    if (state.stopped) {
       try { await reader.cancel(); } catch { /* 终止事件后取消读取不影响探测结论 */ }
     }
   }
-  return { text, events, sawSse, malformed };
+  return state.result(raw);
 }
-async function probeRequest(baseUrl, key, payload) {
+
+async function probeRequest(fetchImpl, baseUrl, key, payload) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await fetch(`${baseUrl}/responses`, {
+    const response = await fetchImpl(`${baseUrl}/responses`, {
       method: "POST",
       headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(payload), signal: controller.signal
@@ -403,24 +346,20 @@ async function probeRequest(baseUrl, key, payload) {
     return { status: 0, text: error.name === "AbortError" ? "timeout" : "network error", events: [], sawSse: false, malformed: false };
   } finally { clearTimeout(timer); }
 }
-function probeText(result) {
-  return [result.text, ...(result.events || []).map(event => JSON.stringify(event))].filter(Boolean).join("\n");
-}
-function probeFailure(result) { return classifyProbeFailure(result.status, probeText(result)); }
-function successful(result) { return result.status >= 200 && result.status < 300; }
-function completed(parsed) {
-  return parsed.events.some(event => event.type === "response.completed") &&
-    !parsed.events.some(event => event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error");
-}
-function isProbeComplete(result) {
-  return successful(result) && result.sawSse && !result.malformed && completed(result);
-}
-function functionCall(parsed) {
+
+const probeText = result => [result.text, ...(result.events || []).map(event => JSON.stringify(event))].filter(Boolean).join("\n");
+const probeFailure = result => classifyProbeFailure(result.status, probeText(result));
+const successful = result => result.status >= 200 && result.status < 300;
+const completed = parsed => parsed.events.some(event => event.type === "response.completed") &&
+  !parsed.events.some(event => event.type === "response.failed" || event.type === "response.incomplete" || event.type === "error");
+const isProbeComplete = result => successful(result) && result.sawSse && !result.malformed && completed(result);
+
+export function functionCall(parsed) {
   // 按官方 Responses SDK 聚合；不可将 output_item.added 视为完整调用（参数可能为空或未完成）。
   const calls = new Map();
   const keyOf = (event, item) => Number.isSafeInteger(event.output_index)
     ? `index:${event.output_index}`
-    : item?.id ? `id:${item.id}` : undefined;
+    : (item?.id || event.item_id) ? `id:${item?.id || event.item_id}` : undefined;
   for (const event of parsed.events) {
     if (event.type === "response.output_item.added" && event.item?.type === "function_call") {
       const key = keyOf(event, event.item);
@@ -448,56 +387,59 @@ function functionCall(parsed) {
     if (!call.done || typeof call.call_id !== "string" || !call.call_id || typeof call.name !== "string" || !call.name || typeof call.arguments !== "string") continue;
     try {
       const argumentsValue = JSON.parse(call.arguments);
-      if (!object(argumentsValue)) continue;
+      if (!isObject(argumentsValue)) continue;
     } catch { continue; }
     const { done, ...complete } = call;
     return complete;
   }
   return undefined;
 }
-async function runProbe(baseUrl, model, key) {
+
+export async function runProbe(baseUrl, model, key, fetchImpl = globalThis.fetch) {
   const user = { role: "user", content: [{ type: "input_text", text: "Reply with exactly RESPONSES_PROBE_OK." }] };
   // 256 是有限但不过分激进的探测预算，限制冗余推理，同时给正常完成和工具调用留出空间。
-  const base = { model, input: [user], stream: true, store: false, max_output_tokens: PROBE_MAX_OUTPUT_TOKENS };
-  const result = await probeRequest(baseUrl, key, base);
+  let supportsMaxOutputTokens = true;
+  const makePayload = body => ({ model, stream: true, store: false, ...(supportsMaxOutputTokens ? { max_output_tokens: PROBE_MAX_OUTPUT_TOKENS } : {}), ...body });
+  let result = await probeRequest(fetchImpl, baseUrl, key, makePayload({ input: [user] }));
+  if (!isProbeComplete(result) && probeFailure(result) === "max-output-unsupported") {
+    supportsMaxOutputTokens = false;
+    result = await probeRequest(fetchImpl, baseUrl, key, makePayload({ input: [user] }));
+  }
   if (!isProbeComplete(result)) {
     const failure = probeFailure(result);
     if (failure === "endpoint-unsupported" || failure === "model-unsupported") return { status: failure };
     if (!successful(result)) return { status: failure === "unknown" && result.status === 0 ? "server-unknown" : failure };
     return { status: failure === "unknown" ? "malformed" : failure };
   }
-  const developerInput = [{ role: "developer", content: "Protocol probe." }, user];
-  const developerPayload = { model, input: developerInput, stream: true, store: false, max_output_tokens: PROBE_MAX_OUTPUT_TOKENS };
-  const developerResult = await probeRequest(baseUrl, key, developerPayload);
+  const developerResult = await probeRequest(fetchImpl, baseUrl, key, makePayload({ input: [{ role: "developer", content: "Protocol probe." }, user] }));
   let supportsDeveloperRole = true;
   if (!isProbeComplete(developerResult)) {
     if (probeFailure(developerResult) !== "developer-unsupported") return { status: "developer-unknown" };
     supportsDeveloperRole = false;
-    const systemPayload = { model, input: [{ role: "system", content: "Protocol probe." }, user], stream: true, store: false, max_output_tokens: PROBE_MAX_OUTPUT_TOKENS };
-    const systemResult = await probeRequest(baseUrl, key, systemPayload);
+    const systemResult = await probeRequest(fetchImpl, baseUrl, key, makePayload({ input: [{ role: "system", content: "Protocol probe." }, user] }));
     if (!isProbeComplete(systemResult)) return { status: "developer-unknown" };
   }
   const instruction = supportsDeveloperRole ? { role: "developer", content: "Protocol probe. Use the tool exactly once." } : { role: "system", content: "Protocol probe. Use the tool exactly once." };
   const toolUser = { role: "user", content: [{ type: "input_text", text: "Call responses_probe_tool with value probe." }] };
   const tool = { type: "function", name: "responses_probe_tool", description: "A no-side-effect protocol probe.", parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false } };
-  const toolPayload = { model, input: [instruction, toolUser], tools: [tool], tool_choice: "required", stream: true, store: false, max_output_tokens: PROBE_MAX_OUTPUT_TOKENS };
-  const toolResult = await probeRequest(baseUrl, key, toolPayload);
+  const toolResult = await probeRequest(fetchImpl, baseUrl, key, makePayload({ input: [instruction, toolUser], tools: [tool], tool_choice: "required" }));
   let tools = "unknown";
   if (isProbeComplete(toolResult)) {
     const call = functionCall(toolResult);
     if (call) {
-      const followup = { model, input: [instruction, toolUser, { type: "function_call", ...(call.id ? { id: call.id } : {}), call_id: call.call_id, name: call.name, arguments: call.arguments }, { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ value: "probe-ok" }) }], stream: true, store: false, max_output_tokens: PROBE_MAX_OUTPUT_TOKENS };
-      const followupResult = await probeRequest(baseUrl, key, followup);
+      const followup = makePayload({ input: [instruction, toolUser, { type: "function_call", ...(call.id ? { id: call.id } : {}), call_id: call.call_id, name: call.name, arguments: call.arguments }, { type: "function_call_output", call_id: call.call_id, output: JSON.stringify({ value: "probe-ok" }) }] });
+      const followupResult = await probeRequest(fetchImpl, baseUrl, key, followup);
       tools = isProbeComplete(followupResult) ? "supported" : "insufficient";
     } else tools = "insufficient";
   } else if (probeFailure(toolResult) === "tools-unsupported") tools = "insufficient";
-  const compat = { supportsMaxOutputTokens: true };
+  const compat = { supportsMaxOutputTokens };
   if (!supportsDeveloperRole) compat.supportsDeveloperRole = false;
   return { status: "supported", tools, compat };
 }
-function writeConfigs(entries) {
+
+function writeConfigs(configDir, entries, log) {
   const changed = entries.filter(e => e.text !== e.content);
-  if (!changed.length) { console.log("○ 配置内容无变化"); return; }
+  if (!changed.length) { log("○ 配置内容无变化"); return; }
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
   const pending = [], applied = [];
   try {
@@ -510,7 +452,7 @@ function writeConfigs(entries) {
     for (const entry of pending) {
       fs.renameSync(entry.temp, path.join(configDir, entry.name));
       applied.push(entry.name);
-      console.log(`  - ${entry.name}: 已更新`);
+      log(`  - ${entry.name}: 已更新`);
     }
   } catch (error) {
     const remaining = changed.map(e => e.name).filter(name => !applied.includes(name));
@@ -523,140 +465,188 @@ function writeConfigs(entries) {
     }
   }
 }
-try {
-  if (command === "discover") {
-    fs.writeFileSync(args[0], JSON.stringify(discover(providerId)));
-  } else if (command === "list-gpt") {
-    const ids = readJsonFile(providerId, "模型 ID 文件无效");
-    check(Array.isArray(ids), "模型 ID 文件必须为数组");
-    process.stdout.write(ids.filter(id => id.startsWith("gpt-")).join("\n"));
-  } else if (command === "decision") {
-    saveDecision(configDir, providerId, { api: args[0] });
-    console.log(`○ ${providerId}: ${args[0] === "openai-responses" ? "Responses API" : "Chat Completions"}（用户确认）`);
-  } else if (command === "probe") {
-    const key = fs.readFileSync(0, "utf8");
-    check(!/[\r\n]/.test(key) && !key.startsWith("!"), "需要单行字面量 API Key");
-    runProbe(providerId, args[0], key).then(result => {
-      process.stdout.write(JSON.stringify(result));
-    }).catch(error => {
-      process.stdout.write(JSON.stringify({ status: "server-unknown", error: error.message }));
-    });
-  } else if (command === "record-probe") {
-    const result = readJsonFile(0, "Responses API 探测结果无效");
-    check(object(result) && typeof result.status === "string", "Responses API 探测结果无效");
-    if (result.status === "endpoint-unsupported" || result.status === "model-unsupported") {
-      saveDecision(configDir, providerId, { api: "openai-completions" });
-      console.log(`○ ${providerId}: Responses API 明确不支持，使用 Chat Completions`);
-    } else if (result.status === "supported") {
-      saveDecision(configDir, providerId, { api: "openai-responses", compat: result.compat || {} });
-      console.log(`✔ ${providerId}: Responses API 可用${result.tools === "supported" ? "，工具调用通过" : "，工具调用能力不足或未知"}`);
-    } else {
-      throw new Error(`${providerId} 的 Responses API 能力未知（${result.status}），未修改配置`);
+
+function reportSettingsPolicy(log) {
+  log("○ settings.json 个人偏好覆盖（脚本重复运行会重新应用；不采用此偏好可按下列原生值手动改回）:");
+  log("  - defaultThinkingLevel: high ← 原生 medium；更偏向充分推理，增加耗时与用量");
+  log("  - quietStartup: true ← 原生 false；隐藏启动头部和资源加载信息");
+  log("  - enableInstallTelemetry: false ← 原生 true；关闭安装／更新遥测及 Provider 归因");
+  log("  - cacheWarming: off ← 原生 idle；关闭提示缓存预热，可能减少缓存命中");
+  log("  - compaction.enabled: false ← 原生 true；关闭自动压缩，长会话可能更早触及上下文限制");
+  log("  - terminal.showImages: false ← 原生 true；关闭终端内联图片");
+  log("  - markdown.mermaid: off ← 原生 streaming；关闭 Mermaid 图表渲染");
+  log("  - Windows shellPath: 缺失时写入已验证的 Bash 路径；已有值不替换（运行必需项，非 Pi 偏好）");
+}
+
+export function createPrompter(input = process.stdin, output = process.stdout) {
+  let muted = false;
+  const proxy = new Writable({ write(chunk, encoding, callback) { if (!muted) output.write(chunk, encoding); callback(); } });
+  const rl = createInterface({ input, output: proxy, terminal: Boolean(input.isTTY) });
+  const lines = [], waiters = [];
+  let closed = false;
+  rl.on("line", line => (waiters.length ? waiters.shift().resolve(line) : lines.push(line)));
+  rl.on("close", () => {
+    closed = true;
+    while (waiters.length) waiters.shift().reject(new Error("输入已取消或终端不可用"));
+  });
+  const nextLine = () => {
+    if (lines.length) return Promise.resolve(lines.shift());
+    if (closed) return Promise.reject(new Error("输入已取消或终端不可用"));
+    return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+  };
+  return {
+    async ask(prompt) {
+      rl.setPrompt(prompt);
+      rl.prompt();
+      return nextLine();
+    },
+    async askSecret(prompt) {
+      output.write(prompt);
+      muted = true;
+      rl.setPrompt("");
+      rl.prompt();
+      try { return await nextLine(); }
+      finally { muted = false; output.write("\n"); }
+    },
+    close() { rl.close(); }
+  };
+}
+
+function normalizeUrl(raw) {
+  const trimmed = raw.trim();
+  check(trimmed && isSingleLine(trimmed), "Base URL 必须为非空单行");
+  const candidate = (/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`).replace(/\/+$/, "");
+  try { return new URL(candidate).href.replace(/\/+$/, ""); }
+  catch { throw new Error("Base URL 格式无效"); }
+}
+
+async function fetchJson(fetchImpl, url, init, timeoutMs, label) {
+  let response;
+  try {
+    response = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    throw new Error(`${label}请求失败（${error.name === "TimeoutError" || error.name === "AbortError" ? "超时" : error.message}），未修改 models.json、auth.json、settings.json`);
+  }
+  if (!response.ok) throw new Error(`${label}请求返回 HTTP ${response.status}，未修改 models.json、auth.json、settings.json`);
+  try { return await response.json(); }
+  catch { throw new Error(`${label}响应不是有效 JSON，未修改 models.json、auth.json、settings.json`); }
+}
+
+async function resolveGptDecisions(gptIds, baseUrl, key, { prompter, fetchImpl, log, errorLog }) {
+  const decisions = {};
+  let batchMode = null;
+  for (let i = 0; i < gptIds.length; i++) {
+    const modelId = gptIds[i];
+    let choice = batchMode;
+    while (choice === null) {
+      const remaining = gptIds.length - i;
+      const hint = remaining > 1
+        ? `[回车]探测，[n]不支持，[y]支持，[a]余下全探测，[na]余下全n，[ya]余下全y`
+        : `[回车]探测，[n]不支持，[y]支持`;
+      const raw = (await prompter.ask(`模型 ${modelId} 的 Responses API：${hint}: `)).trim().toLowerCase();
+      if (raw === "" || raw === "n" || raw === "y") { choice = raw; break; }
+      if (raw === "a") { choice = batchMode = ""; break; }
+      if (raw === "na") { choice = batchMode = "n"; break; }
+      if (raw === "ya") { choice = batchMode = "y"; break; }
+      errorLog("✘ 请输入回车、n、y、a、na 或 ya");
     }
-  } else if (command === "check-decisions") {
-    checkDecisions(providerId, args[0]);
-  } else {
-    const cfg = loadConfigs();
-    if (command === "inspect") {
-      prepareSettings(cfg.settings.value, providerId);
-      console.log(cfg.settings.value.defaultProvider || "openai");
-    } else if (command === "connection") {
-      check(providerId.trim() && !/[\r\n]/.test(providerId), "Provider ID 无效");
-      const provider = Object.hasOwn(cfg.models.value.providers, providerId) ? cfg.models.value.providers[providerId] : {};
-      const credential = Object.hasOwn(cfg.auth.value, providerId) ? cfg.auth.value[providerId] : undefined;
-      let key = "";
-      if (credential) {
-        if (credential.type === "api_key" && typeof credential.key === "string" && !credential.key.startsWith("!")) key = credential.key;
-        else throw new Error("此生成器仅复用字面量 API Key；请先在 auth.json 中移除或替换该凭据");
-      }
-      check(!/[\r\n]/.test(provider.baseUrl || "") && !/[\r\n]/.test(key), "URL 和 API Key 必须为单行");
-      process.stdout.write(`${provider.baseUrl || ""}\n${key}`);
-    } else if (command === "apply") {
-      const [baseUrl, idsPath, dbPath, bashPath, decisionsPath] = args;
-      const key = fs.readFileSync(0, "utf8");
-      check(!/[\r\n]/.test(key) && !key.startsWith("!"), "需要单行字面量 API Key");
-      prepareSettings(cfg.settings.value, bashPath);
-      const { models, unmatched } = makeModels(readJsonFile(idsPath, "模型 ID 文件无效"), readJsonFile(dbPath, "models.dev 参数库无效"), readJsonFile(decisionsPath, "Responses API 决策文件无效"));
-      cfg.models.value.$schema = "https://pi.dev/schemas/models.schema.json";
-      cfg.models.value.providers = { ...cfg.models.value.providers, [providerId]: { baseUrl, api: "openai-completions", models } };
-      if (key) cfg.auth.value = { ...cfg.auth.value, [providerId]: { type: "api_key", key } };
-      const entries = [["models.json", cfg.models], ...(key ? [["auth.json", cfg.auth]] : []), ["settings.json", cfg.settings]]
-        .map(([name, file]) => ({ name, text: file.text, content: JSON.stringify(file.value, null, 2) + "\n" }));
-      writeConfigs(entries);
-      reportSettingsPolicy();
-      console.log(`✔ 配置生成完成: ${models.length} 个模型；非 gpt- 使用 openai-completions，已确认的 gpt- 模型优先使用 openai-responses`);
-      if (unmatched) console.log(`○ ${unmatched} 个模型未匹配 models.dev，未填规格，由 Pi 使用默认值`);
-      console.log("○ models.dev 为目录参考规格与价格，不代表网关实际限制或账单；默认模型由 Pi 管理");
+    if (choice === "n") {
+      decisions[modelId] = { api: "openai-completions" };
+      log(`○ ${modelId}: Chat Completions（用户确认）`);
+    } else if (choice === "y") {
+      decisions[modelId] = { api: "openai-responses" };
+      log(`○ ${modelId}: Responses API（用户确认）`);
     } else {
-      throw new Error("未知配置操作");
+      log(`▶ 正在探测 ${modelId} 的 Responses API（探测请求临时限制 max_output_tokens=${PROBE_MAX_OUTPUT_TOKENS}；该额度包含推理与可见输出）...`);
+      const result = await runProbe(baseUrl, modelId, key, fetchImpl).catch(err => ({ status: "server-unknown", error: err.message }));
+      if (result.status === "endpoint-unsupported" || result.status === "model-unsupported") {
+        decisions[modelId] = { api: "openai-completions" };
+        log(`○ ${modelId}: Responses API 明确不支持，使用 Chat Completions`);
+      } else if (result.status === "supported") {
+        decisions[modelId] = { api: "openai-responses", compat: result.compat || {} };
+        log(`✔ ${modelId}: Responses API 可用${result.tools === "supported" ? "，工具调用通过" : "，工具调用能力不足或未知"}`);
+      } else {
+        throw new Error(`${modelId} 的 Responses API 能力未知（${result.status}），未修改配置`);
+      }
     }
   }
-} catch (error) {
-  console.error(`✘ ${error.message}`);
-  if (command !== "apply") console.error("未修改 models.json、auth.json、settings.json");
-  process.exitCode = 1;
+  return decisions;
+}
+
+export async function runFlow({
+  configDir,
+  bashPath,
+  fetchImpl = globalThis.fetch,
+  prompter = createPrompter(),
+  log = console.log,
+  errorLog = console.error,
+  modelsDevUrl = MODELS_DEV_URL
+}) {
+  let applying = false;
+  try {
+    const cfg = loadConfigs(configDir);
+    prepareSettings(cfg.settings.value, bashPath);
+
+    const defaultProvider = cfg.settings.value.defaultProvider || "openai";
+    const providerId = (await prompter.ask(`Provider ID [当前: ${defaultProvider}]: `)).trim() || defaultProvider;
+    check(providerId && isSingleLine(providerId), "Provider ID 无效");
+
+    const oldProvider = Object.hasOwn(cfg.models.value.providers, providerId) ? cfg.models.value.providers[providerId] : {};
+    const oldCredential = Object.hasOwn(cfg.auth.value, providerId) ? cfg.auth.value[providerId] : undefined;
+    let oldKey = "";
+    if (oldCredential) {
+      if (oldCredential.type === "api_key" && typeof oldCredential.key === "string" && !oldCredential.key.startsWith("!")) oldKey = oldCredential.key;
+      else throw new Error("此生成器仅复用字面量 API Key；请先在 auth.json 中移除或替换该凭据");
+    }
+    check(isSingleLine(oldProvider.baseUrl || "") && isSingleLine(oldKey), "URL 和 API Key 必须为单行");
+
+    const rawUrl = await prompter.ask(`Base URL [当前: ${oldProvider.baseUrl || "未配置"}]: `);
+    const targetUrl = normalizeUrl(rawUrl || oldProvider.baseUrl || "");
+
+    const rawKey = await prompter.askSecret(`API Key [当前: ${oldKey ? "已配置" : "未配置"}，回车保留]: `);
+    const targetKey = rawKey || oldKey;
+    check(isSingleLine(targetKey) && !targetKey.startsWith("!"), "需要单行字面量 API Key");
+
+    log(`▶ 正在探测端点模型 (${providerId})...`);
+    const remote = await fetchJson(
+      fetchImpl,
+      `${targetUrl}/models`,
+      { headers: targetKey ? { authorization: `Bearer ${targetKey}` } : {} },
+      6000,
+      "模型列表"
+    );
+    const ids = discoverModels(remote);
+    const decisions = await resolveGptDecisions(ids.filter(id => id.startsWith("gpt-")), targetUrl, targetKey, { prompter, fetchImpl, log, errorLog });
+
+    log("▶ 正在获取 models.dev 参数库...");
+    const db = await fetchJson(fetchImpl, modelsDevUrl, {}, 12000, "models.dev 参数库");
+
+    const { models, unmatched } = makeModels(ids, db, decisions);
+    cfg.models.value.$schema = "https://pi.dev/schemas/models.schema.json";
+    cfg.models.value.providers = { ...cfg.models.value.providers, [providerId]: { baseUrl: targetUrl, api: "openai-completions", models } };
+    if (targetKey) cfg.auth.value = { ...cfg.auth.value, [providerId]: { type: "api_key", key: targetKey } };
+
+    const entries = [["models.json", cfg.models], ...(targetKey ? [["auth.json", cfg.auth]] : []), ["settings.json", cfg.settings]]
+      .map(([name, file]) => ({ name, text: file.text, content: JSON.stringify(file.value, null, 2) + "\n" }));
+    applying = true;
+    writeConfigs(configDir, entries, log);
+    reportSettingsPolicy(log);
+    log(`✔ 配置生成完成: ${models.length} 个模型；非 gpt- 使用 openai-completions，已确认的 gpt- 模型优先使用 openai-responses`);
+    if (unmatched) log(`○ ${unmatched} 个模型未匹配 models.dev，未填规格，由 Pi 使用默认值`);
+    log("○ models.dev 为目录参考规格与价格，不代表网关实际限制或账单；默认模型由 Pi 管理");
+  } catch (error) {
+    errorLog(`✘ ${error.message}`);
+    if (!applying) errorLog("未修改 models.json、auth.json、settings.json");
+    throw error;
+  } finally {
+    prompter.close();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const [configDir, bashPath] = process.argv.slice(2);
+  runFlow({ configDir, bashPath }).catch(() => { process.exitCode = 1; });
 }
 NODE
 
-# 阶段二：选定 Provider 并读取连接配置
-DEFAULT_PROVIDER=$(node "$WORK_DIR/config.cjs" inspect "$CONFIG_DIR" "$BASH_PATH")
-read -rp "Provider ID [当前: $DEFAULT_PROVIDER]: " TARGET_PROVIDER_ID < /dev/tty || { printf '✘ 无法读取 Provider ID，输入已取消或终端不可用\n' >&2; exit 1; }
-TARGET_PROVIDER_ID="${TARGET_PROVIDER_ID:-$DEFAULT_PROVIDER}"
-OLD_CONNECTION=$(node "$WORK_DIR/config.cjs" connection "$CONFIG_DIR" "$TARGET_PROVIDER_ID")
-OLD_URL="${OLD_CONNECTION%%$'\n'*}"
-OLD_KEY="${OLD_CONNECTION#*$'\n'}"
-read -rp "Base URL [当前: ${OLD_URL:-未配置}]: " TARGET_URL < /dev/tty || { printf '✘ 无法读取 Base URL，输入已取消或终端不可用\n' >&2; exit 1; }
-TARGET_URL="${TARGET_URL:-$OLD_URL}"
-[[ -n "$TARGET_URL" && "$TARGET_URL" != *$'\n'* && "$TARGET_URL" != *$'\r'* ]] || { printf '✘ Base URL 必须为非空单行\n' >&2; exit 1; }
-[[ "$TARGET_URL" =~ ^https?:// ]] || TARGET_URL="https://$TARGET_URL"
-TARGET_URL="${TARGET_URL%/}"
-read -rsp "API Key [当前: $([ -n "$OLD_KEY" ] && printf 已配置 || printf 未配置)，回车保留]: " TARGET_KEY < /dev/tty || { printf '\n✘ 无法读取 API Key，输入已取消或终端不可用\n' >&2; exit 1; }
-printf '\n'
-TARGET_KEY="${TARGET_KEY:-$OLD_KEY}"
-[[ "$TARGET_KEY" != *$'\n'* && "$TARGET_KEY" != *$'\r'* && "$TARGET_KEY" != '!'* ]] || { printf '✘ 需要单行字面量 API Key\n' >&2; exit 1; }
-unset OLD_KEY OLD_CONNECTION
-
-# 阶段三：模型发现；凭据走 stdin，列表走文件
-printf '▶ 正在探测端点模型 (%s)...\n' "$TARGET_PROVIDER_ID"
-emit_auth_header() {
-    if [ -n "$TARGET_KEY" ]; then printf 'Authorization: Bearer %s\n' "$TARGET_KEY"; fi
-}
-if HTTP_CODE=$(emit_auth_header | curl -sS -m 6 --header @- -o "$WORK_DIR/remote.json" -w '%{http_code}' "${TARGET_URL}/models"); then
-    if [ "$HTTP_CODE" != "200" ]; then
-        printf '✘ 模型列表请求返回 HTTP %s，未修改 models.json、auth.json、settings.json\n' "$HTTP_CODE" >&2
-        exit 1
-    fi
-else
-    CURL_STATUS=$?
-    printf '✘ 模型列表请求失败 (curl 退出码 %s)，未修改 models.json、auth.json、settings.json\n' "$CURL_STATUS" >&2
-    exit 1
-fi
-node "$WORK_DIR/config.cjs" discover "$CONFIG_DIR" "$WORK_DIR/remote.json" "$WORK_DIR/ids.json"
-GPT_IDS=$(node "$WORK_DIR/config.cjs" list-gpt "$CONFIG_DIR" "$WORK_DIR/ids.json")
-printf '{}' > "$WORK_DIR/decisions.json"
-while IFS= read -r MODEL_ID; do
-    [[ -n "$MODEL_ID" ]] || continue
-    while true; do
-        read -rp "模型 $MODEL_ID 的 Responses API：[回车]探测，[n]不支持，[y]支持: " RESPONSES_CHOICE < /dev/tty || { printf '✘ 输入已取消，未修改配置\n' >&2; exit 1; }
-        case "$RESPONSES_CHOICE" in
-            "")
-                printf '▶ 正在探测 %s 的 Responses API（探测请求临时限制 max_output_tokens=256；该额度包含推理与可见输出）...\n' "$MODEL_ID"
-                PROBE_RESULT=$(printf '%s' "$TARGET_KEY" | node "$WORK_DIR/config.cjs" probe "$CONFIG_DIR" "$TARGET_URL" "$MODEL_ID")
-                printf '%s' "$PROBE_RESULT" | node "$WORK_DIR/config.cjs" record-probe "$WORK_DIR/decisions.json" "$MODEL_ID"
-                break ;;
-            n|N)
-                node "$WORK_DIR/config.cjs" decision "$WORK_DIR/decisions.json" "$MODEL_ID" openai-completions
-                break ;;
-            y|Y)
-                node "$WORK_DIR/config.cjs" decision "$WORK_DIR/decisions.json" "$MODEL_ID" openai-responses
-                break ;;
-            *) printf '✘ 请输入回车、n 或 y\n' >&2 ;;
-        esac
-    done
-done <<< "$GPT_IDS"
-node "$WORK_DIR/config.cjs" check-decisions "$WORK_DIR" "$WORK_DIR/ids.json" "$WORK_DIR/decisions.json"
-printf '▶ 正在获取 models.dev 参数库...\n'
-curl -fsS --compressed -m 12 -o "$WORK_DIR/models-dev.json" https://models.dev/api.json
-
-# 阶段四：预检与配置更新
-printf '%s' "$TARGET_KEY" | node "$WORK_DIR/config.cjs" apply "$CONFIG_DIR" "$TARGET_PROVIDER_ID" "$TARGET_URL" "$WORK_DIR/ids.json" "$WORK_DIR/models-dev.json" "$BASH_PATH" "$WORK_DIR/decisions.json"
+node "$WORK_DIR/pi.mjs" "$CONFIG_DIR" "$BASH_PATH" < /dev/tty
